@@ -1,9 +1,7 @@
-// use std::sync::Arc;
-use std::collections::HashMap;
-use std::collections::HashSet;
-
-use super::bag::HashBag;
-use super::term::Term;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use super::bag::BTreeBag;
+use preserves::value::AValue;
 
 pub enum Event {
     Removed,
@@ -13,45 +11,45 @@ pub enum Event {
 
 type Path = Vec<usize>;
 type Paths = Vec<Path>;
-type Captures<'a> = Vec<Term<'a>>;
+type Captures = Vec<AValue>;
 
-type Callback<'a> = FnMut(Event, Captures<'a>) -> ();
+trait HandleEvent {
+    fn handle_event<'a>(self, captures: &Captures);
+}
 
-pub enum Skeleton<'a> {
+pub enum Skeleton {
     Blank,
-    Guarded(Guard<'a>, Vec<Skeleton<'a>>)
+    Guarded(Guard, Vec<Skeleton>)
 }
 
-pub struct AnalysisResults<'a> {
-    skeleton: Skeleton<'a>,
-    constPaths: Paths,
-    constVals: Vec<Term<'a>>,
-    capturePaths: Captures<'a>,
-    assertion: Term<'a>,
+pub struct AnalysisResults {
+    skeleton: Skeleton,
+    const_paths: Paths,
+    const_vals: Vec<AValue>,
+    capture_paths: Paths,
+    assertion: AValue,
 }
 
-pub struct Index<'a> {
-    all_assertions: HashBag<Term<'a>>,
+pub struct Index {
+    all_assertions: BTreeBag<AValue>,
 }
 
-impl<'a> Index<'a> {
+impl Index {
     pub fn new() -> Self {
-        Index {
-            all_assertions: HashBag::new(),
-        }
+        Index{ all_assertions: BTreeBag::new() }
     }
 
-    pub fn add_handler(analysis_results: AnalysisResults, 
+    // pub fn add_handler(analysis_results: AnalysisResults, 
 }
 
-struct Node<'a> {
-    continuation: Continuation<'a>,
-    edges: HashMap<Selector, HashMap<Guard<'a>, Node<'a>>>,
+struct Node {
+    continuation: Continuation,
+    edges: BTreeMap<Selector, BTreeMap<Guard, Node>>,
 }
 
-struct Continuation<'a> {
-    cached_assertions: HashSet<Term<'a>>,
-    leaf_map: HashMap<Paths, HashMap<Vec<Term<'a>>, Leaf<'a>>>,
+struct Continuation {
+    cached_assertions: BTreeSet<AValue>,
+    leaf_map: BTreeMap<Paths, BTreeMap<Vec<AValue>, Leaf>>,
 }
 
 struct Selector {
@@ -59,17 +57,17 @@ struct Selector {
     index: usize,
 }
 
-enum Guard<'a> {
-    Rec(&'a Term<'a>, usize),
+enum Guard {
+    Rec(AValue, usize),
     Seq(usize),
 }
 
-struct Leaf<'a> { // aka Topic
-    cached_assertions: HashSet<Term<'a>>,
-    handler_map: HashMap<Paths, Handler<'a>>,
+struct Leaf { // aka Topic
+    cached_assertions: BTreeSet<AValue>,
+    handler_map: BTreeMap<Paths, Handler>,
 }
 
-struct Handler<'a> {
-    cached_captures: HashBag<Captures<'a>>,
-    callbacks: HashSet<&'a Callback<'a>>,
+struct Handler {
+    cached_captures: BTreeBag<Captures>,
+    callbacks: BTreeSet<Box<dyn HandleEvent>>,
 }

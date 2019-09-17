@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::hash_map::Iter;
-use std::collections::hash_map::Keys;
-use std::collections::hash_map::RandomState;
-use std::hash::BuildHasher;
-use std::hash::Hash;
+use std::collections::BTreeMap;
+use std::collections::btree_map::Iter;
+use std::collections::btree_map::Keys;
+use std::iter::{FromIterator, IntoIterator};
 
 type Count = i32;
 
@@ -16,17 +13,13 @@ pub enum Net {
 }
 
 // Allows negative counts - a "delta"
-pub struct HashBag<V, S = RandomState> {
-    counts: HashMap<V, Count, S>,
+pub struct BTreeBag<V> where V: std::cmp::Ord {
+    counts: BTreeMap<V, Count>,
 }
 
-impl<V,S> HashBag<V,S>
-where V: Eq + Hash, S: BuildHasher + Default
-{
-    pub fn new() -> HashBag<V,S> {
-        HashBag {
-            counts: HashMap::with_hasher(Default::default()),
-        }
+impl<V> BTreeBag<V> where V: std::cmp::Ord {
+    pub fn new() -> BTreeBag<V> {
+        BTreeBag { counts: BTreeMap::new() }
     }
 
     pub fn change(&mut self, key: V, delta: Count) -> Net { self._change(key, delta, false) }
@@ -64,29 +57,28 @@ where V: Eq + Hash, S: BuildHasher + Default
     pub fn keys(&self) -> Keys<V, Count> {
         self.counts.keys()
     }
+}
 
-    pub fn iter(&self) -> Iter<V, Count> {
+impl<'a, V> IntoIterator for &'a BTreeBag<V> where V: std::cmp::Ord {
+    type Item = (&'a V, &'a Count);
+    type IntoIter = Iter<'a, V, Count>;
+
+    fn into_iter(self) -> Self::IntoIter {
         self.counts.iter()
     }
 }
 
-impl<V,S> std::convert::From<HashSet<V, S>> for HashBag<V,S>
-where V: Eq + Hash + Clone, S: BuildHasher + Default
-{
-    fn from(xs: HashSet<V,S>) -> Self {
-        let mut cs = HashMap::with_hasher(Default::default());
-        for k in xs.iter() {
-            cs.insert(k.clone(), 1);
+impl<V> FromIterator<V> for BTreeBag<V> where V: std::cmp::Ord {
+    fn from_iter<I: IntoIterator<Item=V>>(iter: I) -> Self {
+        let mut bag = Self::new();
+        for k in iter {
+            bag.change(k, 1);
         }
-        HashBag {
-            counts: cs
-        }
+        bag
     }
 }
 
-impl<V,S> std::ops::Index<&V> for HashBag<V,S>
-where V: Eq + Hash, S: BuildHasher
-{
+impl<V> std::ops::Index<&V> for BTreeBag<V> where V: std::cmp::Ord {
     type Output = Count;
     fn index(&self, i: &V) -> &Count {
         self.counts.get(i).unwrap_or(&0)
