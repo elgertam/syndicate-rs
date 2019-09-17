@@ -1,0 +1,10 @@
+[package]
+name = "syndicate-rs"
+version = "0.1.0"
+authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
+edition = "2018"
+
+[dependencies]
+preserves = "0.1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
