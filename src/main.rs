@@ -4,7 +4,7 @@ mod bag;
 mod skeleton;
 
 use bytes::BytesMut;
-use preserves::value;
+use preserves::value::{self, NestedValue};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::prelude::*;
@@ -17,6 +17,9 @@ use futures::select;
 
 type ConnId = u64;
 
+// type V = value::PlainValue;
+type V = value::ArcValue;
+
 mod packets {
     #[derive(Debug, serde::Serialize, serde::Deserialize)]
     pub struct Error(pub String);
@@ -25,29 +28,29 @@ mod packets {
 #[derive(Debug)]
 pub enum RelayMessage {
     Hello(ConnId, Sender<Arc<PeerMessage>>),
-    Speak(ConnId, value::AValue),
+    Speak(ConnId, V),
     Goodbye(ConnId),
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum PeerMessage {
     Join(ConnId),
-    Speak(ConnId, value::AValue),
+    Speak(ConnId, V),
     Leave(ConnId),
 }
 
 struct ValueCodec {
-    codec: value::Codec,
+    codec: value::Codec<V>,
 }
 
 impl ValueCodec {
-    fn new(codec: value::Codec) -> Self {
+    fn new(codec: value::Codec<V>) -> Self {
         ValueCodec { codec }
     }
 }
 
 impl Decoder for ValueCodec {
-    type Item = value::AValue;
+    type Item = V;
     type Error = value::decoder::Error;
     fn decode(&mut self, bs: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let mut buf = &bs[..];
@@ -64,7 +67,7 @@ impl Decoder for ValueCodec {
 }
 
 impl Encoder for ValueCodec {
-    type Item = value::AValue;
+    type Item = V;
     type Error = value::encoder::Error;
     fn encode(&mut self, item: Self::Item, bs: &mut BytesMut) -> Result<(), Self::Error> {
         bs.extend(self.codec.encode_bytes(&item)?);
