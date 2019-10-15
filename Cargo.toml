@@ -5,7 +5,7 @@ authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
 [dependencies]
-preserves = "0.2.0"
+preserves = "0.2.1"
 
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
