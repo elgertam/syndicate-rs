@@ -1,7 +1,8 @@
-// use std::collections::BTreeMap;
-// use std::collections::BTreeSet;
-// use super::bag::BTreeBag;
-// use preserves::value::AValue;
+// pub type V = preserves::value::ArcValue;
+
+// type Map<A,B> = std::collections::BTreeMap<A,B>;
+// type Set<A> = std::collections::BTreeSet<A>;
+// type Bag<A> = super::bag::BTreeBag<A>;
 
 // pub enum Event {
 //     Removed,
@@ -11,7 +12,7 @@
 
 // type Path = Vec<usize>;
 // type Paths = Vec<Path>;
-// type Captures = Vec<AValue>;
+// type Captures = Vec<V>;
 
 // trait HandleEvent {
 //     fn handle_event<'a>(self, captures: &Captures);
@@ -25,18 +26,18 @@
 // pub struct AnalysisResults {
 //     skeleton: Skeleton,
 //     const_paths: Paths,
-//     const_vals: Vec<AValue>,
+//     const_vals: Vec<V>,
 //     capture_paths: Paths,
-//     assertion: AValue,
+//     assertion: V,
 // }
 
 // pub struct Index {
-//     all_assertions: BTreeBag<AValue>,
+//     all_assertions: Bag<V>,
 // }
 
 // impl Index {
 //     pub fn new() -> Self {
-//         Index{ all_assertions: BTreeBag::new() }
+//         Index{ all_assertions: Bag::new() }
 //     }
 
 //     // pub fn add_handler(analysis_results: AnalysisResults, 
@@ -44,12 +45,12 @@
 
 // struct Node {
 //     continuation: Continuation,
-//     edges: BTreeMap<Selector, BTreeMap<Guard, Node>>,
+//     edges: Map<Selector, Map<Guard, Node>>,
 // }
 
 // struct Continuation {
-//     cached_assertions: BTreeSet<AValue>,
-//     leaf_map: BTreeMap<Paths, BTreeMap<Vec<AValue>, Leaf>>,
+//     cached_assertions: Set<V>,
+//     leaf_map: Map<Paths, Map<Vec<V>, Leaf>>,
 // }
 
 // struct Selector {
@@ -57,17 +58,17 @@
 //     index: usize,
 // }
 
-// enum Guard {
-//     Rec(AValue, usize),
+// pub enum Guard {
+//     Rec(V, usize),
 //     Seq(usize),
 // }
 
 // struct Leaf { // aka Topic
-//     cached_assertions: BTreeSet<AValue>,
-//     handler_map: BTreeMap<Paths, Handler>,
+//     cached_assertions: Set<V>,
+//     handler_map: Map<Paths, Handler>,
 // }
 
 // struct Handler {
-//     cached_captures: BTreeBag<Captures>,
-//     callbacks: BTreeSet<Box<dyn HandleEvent>>,
+//     cached_captures: Bag<Captures>,
+//     callbacks: Set<Box<dyn HandleEvent>>,
 // }
