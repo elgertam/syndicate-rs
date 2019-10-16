@@ -4,14 +4,16 @@ mod bag;
 mod skeleton;
 
 use bytes::BytesMut;
-use preserves::value::{self, Map};
-use tokio::prelude::*;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
-use tokio::codec::{Framed, Encoder, Decoder};
+use core::time::Duration;
 use futures::select;
+use preserves::value::{self, Map};
 use std::io;
 use std::sync::{Mutex, RwLock, Arc};
+use tokio::codec::{Framed, Encoder, Decoder};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::prelude::*;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+use tokio::timer::Interval;
 
 // use self::skeleton::Index;
 
@@ -195,10 +197,13 @@ impl Peer {
                  if is_new { "new" } else { "existing" },
                  dsname);
 
+        let mut ping_timer = Interval::new_interval(Duration::from_secs(60));
+
         let mut running = true;
         while running {
             let mut to_send = Vec::new();
             select! {
+                _instant = ping_timer.next().boxed().fuse() => to_send.push(packets::Out::Ping()),
                 frame = self.frames.next().boxed().fuse() => match frame {
                     Some(res) => match res {
                         Ok(p) => {
