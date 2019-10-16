@@ -166,19 +166,19 @@ impl Peer {
     }
 
     async fn run(&mut self) -> Result<(), io::Error> {
-        println!("Got {:?} {:?}", self.id, &self.frames.get_ref());
+        println!("{:?}: got {:?}", self.id, &self.frames.get_ref());
 
         let firstpacket = self.frames.next().await;
         let dsname = if let Some(Ok(packets::In::Connect(dsname))) = firstpacket {
             dsname
         } else {
             let e: String = format!("Expected initial Connect, got {:?}", firstpacket);
-            println!("{}", e);
+            println!("{:?}: {}", self.id, e);
             self.frames.send(err(&e)).await?;
             return Ok(())
         };
 
-        println!("{}: connected to dataspace {:?}", self.id, dsname);
+        println!("{:?}: connected to dataspace {:?}", self.id, dsname);
 
         let mut running = true;
         while running {
@@ -187,7 +187,7 @@ impl Peer {
                 frame = self.frames.next().boxed().fuse() => match frame {
                     Some(res) => match res {
                         Ok(p) => {
-                            println!("Input {}: {:?}", self.id, &p);
+                            println!("{:?}: input {:?}", self.id, &p);
                             match p {
                                 packets::In::Turn(actions) => (),
                                 packets::In::Ping() => {
@@ -226,9 +226,9 @@ impl Peer {
             }
             for v in to_send {
                 if let packets::Out::Err(ref msg) = v {
-                    println!("Connection {} crashed with error {:?}", self.id, msg);
+                    println!("{:?}: Connection crashed with error {:?}", self.id, msg);
                 } else {
-                    println!("Output {}: {:?}", self.id, &v);
+                    println!("{:?}: Output {:?}", self.id, &v);
                 }
                 self.frames.send(v).await?;
             }
