@@ -2,6 +2,9 @@
 watch:
 	cargo watch -c -x check -x 'test -- --nocapture'
 
+run-watch:
+	cargo watch -c -x run
+
 inotifytest:
 	inotifytest sh -c 'reset; cargo build && RUST_BACKTRACE=1 cargo test -- --nocapture'
 
