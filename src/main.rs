@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
 use tokio::codec::{Framed, Encoder, Decoder};
 use futures::select;
 use std::io;
+use std::sync::{Mutex, RwLock, Arc};
 
 // use self::skeleton::Index;
 
@@ -165,7 +166,7 @@ impl Peer {
         Peer{ id, tx, rx, frames }
     }
 
-    async fn run(&mut self) -> Result<(), io::Error> {
+    async fn run(&mut self, spaces: Arc<Mutex<Map<V, ()>>>) -> Result<(), io::Error> {
         println!("{:?}: got {:?}", self.id, &self.frames.get_ref());
 
         let firstpacket = self.frames.next().await;
@@ -178,7 +179,21 @@ impl Peer {
             return Ok(())
         };
 
-        println!("{:?}: connected to dataspace {:?}", self.id, dsname);
+        let is_new = {
+            let mut s = spaces.lock().unwrap();
+            match s.get(&dsname) {
+                Some(_) => false,
+                None => {
+                    s.insert(dsname.clone(), ());
+                    true
+                }
+            }
+        };
+
+        println!("{:?}: connected to {} dataspace {:?}",
+                 self.id,
+                 if is_new { "new" } else { "existing" },
+                 dsname);
 
         let mut running = true;
         while running {
@@ -244,8 +259,7 @@ impl Drop for Peer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // let i = Index::new();
-
+    let spaces = Arc::new(Mutex::new(Map::new()));
     let mut id = 0;
 
     let port = 8001;
@@ -254,9 +268,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let (stream, addr) = listener.accept().await?;
         let connid = id;
+        let spaces = Arc::clone(&spaces);
         id = id + 1;
         tokio::spawn(async move {
-            match Peer::new(connid, stream).await.run().await {
+            match Peer::new(connid, stream).await.run(spaces).await {
                 Ok(_) => (),
                 Err(e) => println!("Connection {:?} died with {:?}", addr, e),
             }
