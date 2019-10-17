@@ -44,18 +44,12 @@ pub enum Out {
 #[derive(Debug)]
 pub enum DecodeError {
     Read(value::decoder::Error),
-    Parse(value::error::Error),
+    Parse(value::error::Error, V),
 }
 
 impl From<io::Error> for DecodeError {
     fn from(v: io::Error) -> Self {
         DecodeError::Read(v.into())
-    }
-}
-
-impl From<value::error::Error> for DecodeError {
-    fn from(v: value::error::Error) -> Self {
-        DecodeError::Parse(v)
     }
 }
 
@@ -111,7 +105,10 @@ impl tokio::codec::Decoder for Codec {
         let final_len = buf.len();
         bs.advance(orig_len - final_len);
         match res {
-            Ok(v) => Ok(Some(value::from_value(&v)?)),
+            Ok(v) => match value::from_value(&v) {
+                Ok(p) => Ok(Some(p)),
+                Err(e) => Err(DecodeError::Parse(e, v))
+            }
             Err(value::decoder::Error::Eof) => Ok(None),
             Err(e) => Err(DecodeError::Read(e)),
         }

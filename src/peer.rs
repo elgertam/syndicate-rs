@@ -93,8 +93,9 @@ impl Peer {
                             to_send.push(err(s));
                             running = false;
                         }
-                        Err(packets::DecodeError::Parse(e)) => {
-                            to_send.push(err(&format!("Packet deserialization error: {:?}", e)));
+                        Err(packets::DecodeError::Parse(e, v)) => {
+                            to_send.push(err(&format!(
+                                "Packet deserialization error ({}) decoding {:?} ", e, v)));
                             running = false;
                         }
                     }
