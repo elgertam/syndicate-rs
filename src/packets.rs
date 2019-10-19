@@ -103,11 +103,13 @@ impl tokio::codec::Decoder for Codec {
         let orig_len = buf.len();
         let res = self.codec.decode(&mut buf);
         let final_len = buf.len();
-        bs.advance(orig_len - final_len);
         match res {
-            Ok(v) => match value::from_value(&v) {
-                Ok(p) => Ok(Some(p)),
-                Err(e) => Err(DecodeError::Parse(e, v))
+            Ok(v) => {
+                bs.advance(orig_len - final_len);
+                match value::from_value(&v) {
+                    Ok(p) => Ok(Some(p)),
+                    Err(e) => Err(DecodeError::Parse(e, v))
+                }
             }
             Err(value::decoder::Error::Eof) => Ok(None),
             Err(e) => Err(DecodeError::Read(e)),
