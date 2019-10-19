@@ -36,7 +36,7 @@ impl Peer {
     }
 
     pub async fn run(&mut self, spaces: Arc<Mutex<Map<V, ()>>>) -> Result<(), std::io::Error> {
-        println!("{:?}: got {:?}", self.id, &self.frames.get_ref());
+        println!("{:?}: {:?}", self.id, &self.frames.get_ref());
 
         let firstpacket = self.frames.next().await;
         let dsname = if let Some(Ok(packets::In::Connect(dsname))) = firstpacket {
@@ -95,7 +95,7 @@ impl Peer {
                         }
                         Err(packets::DecodeError::Parse(e, v)) => {
                             to_send.push(err(&format!(
-                                "Packet deserialization error ({}) decoding {:?} ", e, v)));
+                                "Packet deserialization error ({}) decoding {:?}", e, v)));
                             running = false;
                         }
                     }
@@ -114,9 +114,9 @@ impl Peer {
             }
             for v in to_send {
                 if let packets::Out::Err(ref msg) = v {
-                    println!("{:?}: Connection crashed with error {:?}", self.id, msg);
+                    println!("{:?}: connection crashed: {}", self.id, msg);
                 } else {
-                    println!("{:?}: Output {:?}", self.id, &v);
+                    println!("{:?}: output {:?}", self.id, &v);
                 }
                 self.frames.send(v).await?;
             }
