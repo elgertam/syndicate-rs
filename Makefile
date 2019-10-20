@@ -5,6 +5,9 @@ watch:
 run-watch:
 	cargo watch -c -x run
 
+clippy-watch:
+	cargo watch -c -x clippy
+
 inotifytest:
 	inotifytest sh -c 'reset; cargo build && RUST_BACKTRACE=1 cargo test -- --nocapture'
 
