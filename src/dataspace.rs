@@ -1,6 +1,7 @@
 use super::V;
 use super::ConnId;
 use super::packets;
+use super::skeleton;
 
 use preserves::value::Map;
 use std::sync::{Arc, RwLock};
@@ -21,11 +22,12 @@ impl From<DataspaceError> for std::io::Error {
 pub struct Dataspace {
     name: V,
     peers: Map<ConnId, UnboundedSender<packets::Out>>,
+    index: skeleton::Index,
 }
 
 impl Dataspace {
     pub fn new(name: &V) -> Self {
-        Self { name: name.clone(), peers: Map::new() }
+        Self { name: name.clone(), peers: Map::new(), index: skeleton::Index::new() }
     }
 
     pub fn new_ref(name: &V) -> DataspaceRef {
