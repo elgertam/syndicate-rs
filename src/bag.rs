@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::collections::btree_map::Iter;
-use std::collections::btree_map::Keys;
+use std::collections::btree_map::{Iter, Keys, Entry};
 use std::iter::{FromIterator, IntoIterator};
 
 type Count = i32;
@@ -12,6 +11,7 @@ pub enum Net {
     PresentToPresent,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 // Allows negative counts - a "delta"
 pub struct BTreeBag<V: std::cmp::Ord> {
     counts: BTreeMap<V, Count>,
@@ -62,6 +62,10 @@ impl<V: std::cmp::Ord> BTreeBag<V> {
 
     pub fn keys(&self) -> Keys<V, Count> {
         self.counts.keys()
+    }
+
+    pub fn entry(&mut self, key: V) -> Entry<V, Count> {
+        self.counts.entry(key)
     }
 }
 
