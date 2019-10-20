@@ -13,11 +13,17 @@ pub enum Net {
 }
 
 // Allows negative counts - a "delta"
-pub struct BTreeBag<V> where V: std::cmp::Ord {
+pub struct BTreeBag<V: std::cmp::Ord> {
     counts: BTreeMap<V, Count>,
 }
 
-impl<V> BTreeBag<V> where V: std::cmp::Ord {
+impl<V: std::cmp::Ord> std::default::Default for BTreeBag<V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<V: std::cmp::Ord> BTreeBag<V> {
     pub fn new() -> BTreeBag<V> {
         BTreeBag { counts: BTreeMap::new() }
     }
@@ -59,7 +65,7 @@ impl<V> BTreeBag<V> where V: std::cmp::Ord {
     }
 }
 
-impl<'a, V> IntoIterator for &'a BTreeBag<V> where V: std::cmp::Ord {
+impl<'a, V: std::cmp::Ord> IntoIterator for &'a BTreeBag<V> {
     type Item = (&'a V, &'a Count);
     type IntoIter = Iter<'a, V, Count>;
 
@@ -68,7 +74,7 @@ impl<'a, V> IntoIterator for &'a BTreeBag<V> where V: std::cmp::Ord {
     }
 }
 
-impl<V> FromIterator<V> for BTreeBag<V> where V: std::cmp::Ord {
+impl<V: std::cmp::Ord> FromIterator<V> for BTreeBag<V> {
     fn from_iter<I: IntoIterator<Item=V>>(iter: I) -> Self {
         let mut bag = Self::new();
         for k in iter {
@@ -78,7 +84,7 @@ impl<V> FromIterator<V> for BTreeBag<V> where V: std::cmp::Ord {
     }
 }
 
-impl<V> std::ops::Index<&V> for BTreeBag<V> where V: std::cmp::Ord {
+impl<V: std::cmp::Ord> std::ops::Index<&V> for BTreeBag<V> {
     type Output = Count;
     fn index(&self, i: &V) -> &Count {
         self.counts.get(i).unwrap_or(&0)

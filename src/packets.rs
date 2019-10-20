@@ -63,7 +63,7 @@ pub enum EncodeError {
 
 impl From<io::Error> for EncodeError {
     fn from(v: io::Error) -> Self {
-        EncodeError::Write(v.into())
+        EncodeError::Write(v)
     }
 }
 

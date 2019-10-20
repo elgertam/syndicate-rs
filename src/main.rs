@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (stream, addr) = listener.accept().await?;
         let connid = id;
         let spaces = Arc::clone(&spaces);
-        id = id + 1;
+        id += 1;
         tokio::spawn(async move {
             match peer::Peer::new(connid, stream).await.run(spaces).await {
                 Ok(_) => (),
