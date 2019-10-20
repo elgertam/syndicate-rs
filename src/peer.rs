@@ -1,5 +1,7 @@
-use super::{ConnId, V};
+use super::ConnId;
+use super::dataspace;
 use super::packets;
+use super::spaces;
 
 use core::time::Duration;
 use futures::select;
@@ -16,6 +18,7 @@ pub struct Peer {
     tx: UnboundedSender<packets::Out>,
     rx: UnboundedReceiver<packets::Out>,
     frames: Framed<TcpStream, packets::Codec>,
+    space: Option<dataspace::DataspaceRef>,
 }
 
 fn err(s: &str) -> packets::Out {
@@ -32,10 +35,10 @@ impl Peer {
             m.insert(2, value::Value::symbol("Observe"));
             m
         })));
-        Peer{ id, tx, rx, frames }
+        Peer{ id, tx, rx, frames, space: None }
     }
 
-    pub async fn run(&mut self, spaces: Arc<Mutex<Map<V, ()>>>) -> Result<(), std::io::Error> {
+    pub async fn run(&mut self, spaces: Arc<Mutex<spaces::Spaces>>) -> Result<(), std::io::Error> {
         println!("{:?}: {:?}", self.id, &self.frames.get_ref());
 
         let firstpacket = self.frames.next().await;
@@ -48,21 +51,8 @@ impl Peer {
             return Ok(())
         };
 
-        let is_new = {
-            let mut s = spaces.lock().unwrap();
-            match s.get(&dsname) {
-                Some(_) => false,
-                None => {
-                    s.insert(dsname.clone(), ());
-                    true
-                }
-            }
-        };
-
-        println!("{:?}: connected to {} dataspace {:?}",
-                 self.id,
-                 if is_new { "new" } else { "existing" },
-                 dsname);
+        self.space = Some(spaces.lock().unwrap().lookup(&dsname));
+        self.space.as_ref().unwrap().write().unwrap().register(self.id, self.tx.clone());
 
         let mut ping_timer = Interval::new_interval(Duration::from_secs(60));
 
@@ -76,11 +66,12 @@ impl Peer {
                         Ok(p) => {
                             println!("{:?}: input {:?}", self.id, &p);
                             match p {
-                                packets::In::Turn(actions) => (),
-                                packets::In::Ping() => {
-                                    to_send.push(packets::Out::Pong())
-                                }
-                                packets::In::Pong() => (),
+                                packets::In::Turn(actions) =>
+                                    self.space.as_ref().unwrap().write().unwrap().turn(actions)?,
+                                packets::In::Ping() =>
+                                    to_send.push(packets::Out::Pong()),
+                                packets::In::Pong() =>
+                                    (),
                                 packets::In::Connect(dsname) => {
                                     to_send.push(err("Unexpected Connect"));
                                     running = false;
@@ -127,5 +118,8 @@ impl Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
+        if let Some(ref s) = self.space {
+            s.write().unwrap().deregister(self.id);
+        }
     }
 }

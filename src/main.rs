@@ -1,22 +1,22 @@
 #![recursion_limit="512"]
 
 mod bag;
-mod skeleton;
+mod dataspace;
 mod packets;
 mod peer;
+mod skeleton;
+mod spaces;
 
-use preserves::value::{self, Map};
+use preserves::value;
 use std::sync::{Mutex, Arc};
 use tokio::net::TcpListener;
-
-// use self::skeleton::Index;
 
 pub type ConnId = u64;
 pub type V = value::ArcValue;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let spaces = Arc::new(Mutex::new(Map::new()));
+    let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
     let mut id = 0;
 
     let port = 8001;
