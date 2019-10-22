@@ -1,12 +1,14 @@
 use super::V;
+use super::Syndicate;
 
 use bytes::BytesMut;
 use preserves::value;
 use std::io;
+use std::sync::Arc;
 
 pub type EndpointName = V;
 pub type Assertion = V;
-pub type Captures = Vec<Assertion>;
+pub type Captures = Arc<Vec<Assertion>>;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Action {
@@ -44,7 +46,7 @@ pub enum Out {
 #[derive(Debug)]
 pub enum DecodeError {
     Read(value::decoder::Error),
-    Parse(value::error::Error, V),
+    Parse(value::error::Error<Syndicate>, V),
 }
 
 impl From<io::Error> for DecodeError {
@@ -58,7 +60,7 @@ impl From<io::Error> for DecodeError {
 #[derive(Debug)]
 pub enum EncodeError {
     Write(value::encoder::Error),
-    Unparse(value::error::Error),
+    Unparse(value::error::Error<Syndicate>),
 }
 
 impl From<io::Error> for EncodeError {
@@ -67,8 +69,8 @@ impl From<io::Error> for EncodeError {
     }
 }
 
-impl From<value::error::Error> for EncodeError {
-    fn from(v: value::error::Error) -> Self {
+impl From<value::error::Error<Syndicate>> for EncodeError {
+    fn from(v: value::error::Error<Syndicate>) -> Self {
         EncodeError::Unparse(v)
     }
 }
@@ -86,11 +88,11 @@ impl From<EncodeError> for io::Error {
 //---------------------------------------------------------------------------
 
 pub struct Codec {
-    codec: value::Codec<V>,
+    codec: value::Codec<V, Syndicate>,
 }
 
 impl Codec {
-    pub fn new(codec: value::Codec<V>) -> Self {
+    pub fn new(codec: value::Codec<V, Syndicate>) -> Self {
         Codec { codec }
     }
 }

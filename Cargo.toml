@@ -5,9 +5,9 @@ authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
 [dependencies]
-preserves = "0.2.3"
+preserves = "0.3.0"
 
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = "0.11"
 
 tokio = "0.2.0-alpha"

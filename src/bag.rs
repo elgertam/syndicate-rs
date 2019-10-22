@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::{Iter, Keys, Entry};
 use std::iter::{FromIterator, IntoIterator};
 
-type Count = i32;
+pub type Count = i32;
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum Net {
     PresentToAbsent,
     AbsentToAbsent,
