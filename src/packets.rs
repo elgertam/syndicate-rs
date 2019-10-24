@@ -35,7 +35,7 @@ pub enum In {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Out {
-    Err(String),
+    Err(String, V),
     Turn(Vec<Event>),
     Ping(),
     Pong(),

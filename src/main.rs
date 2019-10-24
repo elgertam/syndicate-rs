@@ -45,8 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         id += 1;
         tokio::spawn(async move {
             match peer::Peer::new(connid, stream).await.run(spaces).await {
-                Ok(_) => (),
-                Err(e) => println!("Connection {:?} died with {:?}", addr, e),
+                Ok(_) => println!("Connection {} ({:?}) terminated", connid, addr),
+                Err(e) => println!("Connection {} ({:?}) died with {:?}", connid, addr, e),
             }
         });
     }

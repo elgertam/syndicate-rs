@@ -1,3 +1,4 @@
+use super::V;
 use super::ConnId;
 use super::dataspace;
 use super::packets;
@@ -21,8 +22,8 @@ pub struct Peer {
     space: Option<dataspace::DataspaceRef>,
 }
 
-fn err(s: &str) -> packets::Out {
-    packets::Out::Err(s.into())
+fn err(s: &str, ctx: V) -> packets::Out {
+    packets::Out::Err(s.into(), ctx)
 }
 
 impl Peer {
@@ -47,7 +48,7 @@ impl Peer {
         } else {
             let e: String = format!("Expected initial Connect, got {:?}", firstpacket);
             println!("{:?}: {}", self.id, e);
-            self.frames.send(err(&e)).await?;
+            self.frames.send(err(&e, value::Value::from(false).wrap())).await?;
             return Ok(())
         };
 
@@ -66,14 +67,23 @@ impl Peer {
                         Ok(p) => {
                             println!("{:?}: input {:?}", self.id, &p);
                             match p {
-                                packets::In::Turn(actions) =>
-                                    self.space.as_ref().unwrap().write().unwrap().turn(actions)?,
+                                packets::In::Turn(actions) => {
+                                    match self.space.as_ref().unwrap().write().unwrap()
+                                        .turn(self.id, actions)
+                                    {
+                                        Ok(()) => (),
+                                        Err((msg, ctx)) => {
+                                            to_send.push(err(&msg, ctx));
+                                            running = false;
+                                        }
+                                    }
+                                }
                                 packets::In::Ping() =>
                                     to_send.push(packets::Out::Pong()),
                                 packets::In::Pong() =>
                                     (),
-                                packets::In::Connect(dsname) => {
-                                    to_send.push(err("Unexpected Connect"));
+                                packets::In::Connect(_) => {
+                                    to_send.push(err("Unexpected Connect", value::to_value(p).unwrap()));
                                     running = false;
                                 }
                             }
@@ -81,12 +91,11 @@ impl Peer {
                         Err(packets::DecodeError::Read(value::decoder::Error::Eof)) => running = false,
                         Err(packets::DecodeError::Read(value::decoder::Error::Io(e))) => return Err(e),
                         Err(packets::DecodeError::Read(value::decoder::Error::Syntax(s))) => {
-                            to_send.push(err(s));
+                            to_send.push(err(s, value::Value::from(false).wrap()));
                             running = false;
                         }
                         Err(packets::DecodeError::Parse(e, v)) => {
-                            to_send.push(err(&format!(
-                                "Packet deserialization error ({}) decoding {:?}", e, v)));
+                            to_send.push(err(&format!("Packet deserialization error: {}", e), v));
                             running = false;
                         }
                     }
@@ -97,15 +106,16 @@ impl Peer {
                         Some(msg) => to_send.push(msg),
                         None => {
                             /* weird. */
-                            to_send.push(err("Outbound channel closed unexpectedly"));
+                            to_send.push(err("Outbound channel closed unexpectedly",
+                                             value::Value::from(false).wrap()));
                             running = false;
                         }
                     }
                 },
             }
             for v in to_send {
-                if let packets::Out::Err(ref msg) = v {
-                    println!("{:?}: connection crashed: {}", self.id, msg);
+                if let packets::Out::Err(ref msg, ref ctx) = v {
+                    println!("{:?}: connection crashed: {}; context {:?}", self.id, msg, ctx);
                 } else {
                     println!("{:?}: output {:?}", self.id, &v);
                 }

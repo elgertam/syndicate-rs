@@ -14,21 +14,23 @@ use std::sync::Arc;
 
 type Bag<A> = bag::BTreeBag<A>;
 
-type Path = Vec<usize>;
-type Paths = Vec<Path>;
-type Events = Vec<(Vec<Endpoint>, Captures)>;
+pub type Path = Vec<usize>;
+pub type Paths = Vec<Path>;
+pub type Events = Vec<(Vec<Endpoint>, Captures)>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Endpoint {
-    connection: ConnId,
-    name: EndpointName,
+    pub connection: ConnId,
+    pub name: EndpointName,
 }
 
+#[derive(Debug)]
 pub enum Skeleton {
     Blank,
     Guarded(Guard, Vec<Skeleton>)
 }
 
+#[derive(Debug)]
 pub struct AnalysisResults {
     pub skeleton: Skeleton,
     pub const_paths: Paths,
@@ -48,7 +50,7 @@ impl Index {
         Index{ all_assertions: Bag::new(), root: Node::new(Continuation::new(Set::new())) }
     }
 
-    pub fn add_endpoint(&mut self, analysis_results: AnalysisResults, endpoint: Endpoint)
+    pub fn add_endpoint(&mut self, analysis_results: &AnalysisResults, endpoint: Endpoint)
                         -> Vec<Event>
     {
         let continuation = self.root.extend(&analysis_results.skeleton);
@@ -62,8 +64,8 @@ impl Index {
                 }
                 cvm
             });
-        let capture_paths = analysis_results.capture_paths;
-        let leaf = const_val_map.entry(analysis_results.const_vals).or_insert_with(Leaf::new);
+        let capture_paths = &analysis_results.capture_paths;
+        let leaf = const_val_map.entry(analysis_results.const_vals.clone()).or_insert_with(Leaf::new);
         let leaf_cached_assertions = &leaf.cached_assertions;
         let endpoints = leaf.endpoints_map.entry(capture_paths.clone()).or_insert_with(|| {
             let mut b = Bag::new();
@@ -83,18 +85,18 @@ impl Index {
             .collect()
     }
 
-    pub fn remove_endpoint(&mut self, analysis_results: AnalysisResults, endpoint: Endpoint) {
+    pub fn remove_endpoint(&mut self, analysis_results: &AnalysisResults, endpoint: Endpoint) {
         let continuation = self.root.extend(&analysis_results.skeleton);
         if let Entry::Occupied(mut const_val_map_entry)
-            = continuation.leaf_map.entry(analysis_results.const_paths)
+            = continuation.leaf_map.entry(analysis_results.const_paths.clone())
         {
             let const_val_map = const_val_map_entry.get_mut();
             if let Entry::Occupied(mut leaf_entry)
-                = const_val_map.entry(analysis_results.const_vals)
+                = const_val_map.entry(analysis_results.const_vals.clone())
             {
                 let leaf = leaf_entry.get_mut();
                 if let Entry::Occupied(mut endpoints_entry)
-                    = leaf.endpoints_map.entry(analysis_results.capture_paths)
+                    = leaf.endpoints_map.entry(analysis_results.capture_paths.clone())
                 {
                     let endpoints = endpoints_entry.get_mut();
                     endpoints.endpoints.remove(&endpoint);
@@ -112,15 +114,15 @@ impl Index {
         }
     }
 
-    fn insert(&mut self, v: CachedAssertion) -> Events {
+    pub fn insert(&mut self, v: CachedAssertion) -> Events {
         self.adjust(v, 1)
     }
 
-    fn remove(&mut self, v: CachedAssertion) -> Events {
+    pub fn remove(&mut self, v: CachedAssertion) -> Events {
         self.adjust(v, -1)
     }
 
-    fn adjust(&mut self, outer_value: CachedAssertion, delta: bag::Count) -> Events {
+    pub fn adjust(&mut self, outer_value: CachedAssertion, delta: bag::Count) -> Events {
         let mut outputs = Vec::new();
         let net = self.all_assertions.change(outer_value.clone(), delta);
         match net {
@@ -155,7 +157,7 @@ impl Index {
         outputs
     }
 
-    fn send(&mut self, outer_value: CachedAssertion) -> Events {
+    pub fn send(&mut self, outer_value: CachedAssertion) -> Events {
         let mut outputs = Vec::new();
         Modification::new(
             false,
@@ -273,7 +275,7 @@ where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
     }
 
     fn perform(&mut self, n: &mut Node) {
-        self.node(n, &Stack::Item(self.outer_value_term, &Stack::Empty))
+        self.node(n, &Stack::Item(&Value::from(vec![self.outer_value_term.clone()]).wrap(), &Stack::Empty))
     }
 
     fn node(&mut self, n: &mut Node, term_stack: &Stack<&Assertion>) {
@@ -415,6 +417,12 @@ impl Endpoints {
 pub enum CachedAssertion {
     VisibilityRestricted(Paths, Assertion),
     Unrestricted(Assertion),
+}
+
+impl From<&Assertion> for CachedAssertion {
+    fn from(a: &Assertion) -> Self {
+        CachedAssertion::Unrestricted(a.clone())
+    }
 }
 
 impl CachedAssertion {
