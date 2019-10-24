@@ -7,6 +7,7 @@ use super::packets::EndpointName;
 use super::packets::Event;
 
 use preserves::value::{Map, Set, Value, NestedValue};
+use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
 use std::iter::FromIterator;
 use std::sync::Arc;
@@ -433,11 +434,52 @@ impl CachedAssertion {
 }
 
 fn is_unrestricted(capture_paths: &Paths, restriction_paths: Option<&Paths>) -> bool {
-    if restriction_paths.is_none() {
-        return false;
+    // We are "unrestricted" if Set(capture_paths) ⊆ Set(restriction_paths). Since both
+    // variables really hold lists, we operate with awareness of the order the lists are
+    // built here. We know that the lists are built in fringe order; that is, they are
+    // sorted wrt `pathCmp`.
+    match restriction_paths {
+        None => true, // not visibility-restricted in the first place
+        Some(rpaths) => {
+            let mut rpi = rpaths.iter();
+            'outer: for c in capture_paths {
+                'inner: loop {
+                    match rpi.next() {
+                        None => {
+                            // there's at least one capture_paths entry (`c`) that does
+                            // not appear in restriction_paths, so we are restricted
+                            return false;
+                        }
+                        Some(r) => match c.cmp(r) {
+                            Ordering::Less => {
+                                // `c` is less than `r`, but restriction_paths is sorted,
+                                // so `c` does not appear in restriction_paths, and we are
+                                // thus restricted.
+                                return false;
+                            }
+                            Ordering::Equal => {
+                                // `c` is equal to `r`, so we may yet be unrestricted.
+                                // Discard both `c` and `r` and continue.
+                                continue 'outer;
+                            }
+                            Ordering::Greater => {
+                                // `c` is greater than `r`, but capture_paths and
+                                // restriction_paths are sorted, so while we might yet
+                                // come to an `r` that is equal to `c`, we will never find
+                                // another `c` that is less than this `c`. Discard this
+                                // `r` then, keeping the `c`, and compare against the next
+                                // `r`.
+                                continue 'inner;
+                            }
+                        }
+                    }
+                }
+            }
+            // We went all the way through capture_paths without finding any `c` not in
+            // restriction_paths.
+            true
+        }
     }
-
-    panic!("Not yet implemented");
 }
 
 pub struct Analyzer {
