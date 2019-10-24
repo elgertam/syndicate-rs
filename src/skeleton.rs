@@ -132,7 +132,7 @@ impl Index {
                     |l, v| { l.cached_assertions.insert(v.clone()); },
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), 1) == bag::Net::AbsentToPresent {
-                            outputs.push((es.endpoints.iter().cloned().collect(), cs.clone()))
+                            outputs.push((es.endpoints.iter().cloned().collect(), cs))
                         }
                     })
                     .perform(&mut self.root);
@@ -145,7 +145,7 @@ impl Index {
                     |l, v| { l.cached_assertions.remove(v); },
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), -1) == bag::Net::PresentToAbsent {
-                            outputs.push((es.endpoints.iter().cloned().collect(), cs.clone()))
+                            outputs.push((es.endpoints.iter().cloned().collect(), cs))
                         }
                     })
                     .perform(&mut self.root);
@@ -162,7 +162,7 @@ impl Index {
             &outer_value,
             |_c, _v| (),
             |_l, _v| (),
-            |es, cs| outputs.push((es.endpoints.iter().cloned().collect(), cs.clone())))
+            |es, cs| outputs.push((es.endpoints.iter().cloned().collect(), cs)))
             .perform(&mut self.root);
         outputs
     }
@@ -514,7 +514,7 @@ impl Analyzer {
         }
 
         if a.value().is_simple_record("Discard", Some(0)) {
-            return Skeleton::Blank;
+            Skeleton::Blank
         } else {
             match class_of(a) {
                 Some(cls) => {
@@ -554,11 +554,9 @@ fn instantiate_assertion_walk(capture_paths: &mut Paths,
         capture_paths.push(path.clone());
         let v = vs.pop().unwrap();
         instantiate_assertion_walk(capture_paths, path, vs, &fields[0]);
-        return v;
-    }
-
-    if a.value().is_simple_record("Discard", Some(0)) {
-        return Value::Domain(Syndicate::new_placeholder()).wrap();
+        v
+    } else if a.value().is_simple_record("Discard", Some(0)) {
+        Value::Domain(Syndicate::new_placeholder()).wrap()
     } else {
         let f = |(i, aa)| {
             path.push(i);
