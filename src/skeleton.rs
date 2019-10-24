@@ -490,23 +490,6 @@ pub struct Analyzer {
 }
 
 impl Analyzer {
-    pub fn analyze(a: &Assertion) -> AnalysisResults {
-        let mut z = Analyzer {
-            const_paths: Vec::new(),
-            const_vals: Vec::new(),
-            capture_paths: Vec::new(),
-            path: Vec::new(),
-        };
-        let skeleton = z.walk(a);
-        AnalysisResults {
-            skeleton,
-            const_paths: z.const_paths,
-            const_vals: Arc::new(z.const_vals),
-            capture_paths: z.capture_paths,
-            assertion: a.clone(),
-        }
-    }
-
     fn walk(&mut self, mut a: &Assertion) -> Skeleton {
         while let Some(fields) = a.value().as_simple_record("Capture", Some(1)) {
             self.capture_paths.push(self.path.clone());
@@ -534,6 +517,23 @@ impl Analyzer {
                 }
             }
         }
+    }
+}
+
+pub fn analyze(a: &Assertion) -> AnalysisResults {
+    let mut z = Analyzer {
+        const_paths: Vec::new(),
+        const_vals: Vec::new(),
+        capture_paths: Vec::new(),
+        path: Vec::new(),
+    };
+    let skeleton = z.walk(a);
+    AnalysisResults {
+        skeleton,
+        const_paths: z.const_paths,
+        const_vals: Arc::new(z.const_vals),
+        capture_paths: z.capture_paths,
+        assertion: a.clone(),
     }
 }
 
