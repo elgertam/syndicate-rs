@@ -3,7 +3,7 @@ watch:
 	cargo watch -c -x check -x 'test -- --nocapture'
 
 run-watch:
-	cargo watch -c -x run
+	RUST_BACKTRACE=1 cargo watch -c -x run
 
 clippy-watch:
 	cargo watch -c -x clippy
