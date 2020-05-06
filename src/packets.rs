@@ -1,7 +1,7 @@
 use super::V;
 use super::Syndicate;
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use preserves::value;
 use std::io;
 use std::sync::Arc;
@@ -97,7 +97,7 @@ impl Codec {
     }
 }
 
-impl tokio::codec::Decoder for Codec {
+impl tokio_util::codec::Decoder for Codec {
     type Item = In;
     type Error = DecodeError;
     fn decode(&mut self, bs: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -119,10 +119,10 @@ impl tokio::codec::Decoder for Codec {
     }
 }
 
-impl tokio::codec::Encoder for Codec {
-    type Item = Out;
+impl tokio_util::codec::Encoder<Out> for Codec
+{
     type Error = EncodeError;
-    fn encode(&mut self, item: Self::Item, bs: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Out, bs: &mut BytesMut) -> Result<(), Self::Error> {
         let v: V = value::to_value(&item)?;
         bs.extend(self.codec.encode_bytes(&v)?);
         Ok(())

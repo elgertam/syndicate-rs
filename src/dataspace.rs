@@ -137,7 +137,7 @@ impl Dataspace {
 
     fn deliver_outbound_turns(&mut self, outbound_turns: Map<ConnId, Vec<packets::Event>>) {
         for (target, events) in outbound_turns {
-            let _ = self.peers.get_mut(&target).unwrap().tx.try_send(packets::Out::Turn(events));
+            let _ = self.peers.get_mut(&target).unwrap().tx.send(packets::Out::Turn(events));
         }
     }
 }

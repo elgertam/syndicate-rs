@@ -5,14 +5,16 @@ use super::packets;
 use super::spaces;
 
 use core::time::Duration;
+use futures::FutureExt;
+use futures::SinkExt;
 use futures::select;
 use preserves::value::{self, Map};
 use std::sync::{Mutex, Arc};
-use tokio::codec::Framed;
 use tokio::net::TcpStream;
-use tokio::prelude::*;
+use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
-use tokio::timer::Interval;
+use tokio::time::interval;
+use tokio_util::codec::Framed;
 
 pub struct Peer {
     id: ConnId,
@@ -55,7 +57,7 @@ impl Peer {
         self.space = Some(spaces.lock().unwrap().lookup(&dsname));
         self.space.as_ref().unwrap().write().unwrap().register(self.id, self.tx.clone());
 
-        let mut ping_timer = Interval::new_interval(Duration::from_secs(60));
+        let mut ping_timer = interval(Duration::from_secs(60));
 
         let mut running = true;
         while running {
