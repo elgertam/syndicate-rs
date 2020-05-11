@@ -61,7 +61,7 @@ impl Peer {
                 frame = self.frames.next().boxed().fuse() => match frame {
                     Some(res) => match res {
                         Ok(p) => {
-                            println!("{:?}: input {:?}", self.id, &p);
+                            // println!("{:?}: input {:?}", self.id, &p);
                             match p {
                                 packets::C2S::Turn(actions) => {
                                     match self.space.as_ref().unwrap().write().unwrap()
@@ -113,10 +113,12 @@ impl Peer {
                 if let packets::S2C::Err(ref msg, ref ctx) = v {
                     println!("{:?}: connection crashed: {}; context {:?}", self.id, msg, ctx);
                 } else {
-                    println!("{:?}: output {:?}", self.id, &v);
+                    // println!("{:?}: output {:?}", self.id, &v);
+                    ()
                 }
                 self.frames.send(v).await?;
             }
+            tokio::task::yield_now().await;
         }
         Ok(())
     }

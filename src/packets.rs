@@ -56,6 +56,15 @@ impl From<io::Error> for DecodeError {
     }
 }
 
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for DecodeError {
+}
+
 //---------------------------------------------------------------------------
 
 #[derive(Debug)]
@@ -94,7 +103,6 @@ impl std::fmt::Display for EncodeError {
 
 impl std::error::Error for EncodeError {
 }
-
 //---------------------------------------------------------------------------
 
 pub struct Codec<InT, OutT> {
