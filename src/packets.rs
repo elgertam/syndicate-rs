@@ -103,6 +103,9 @@ pub struct Codec<InT, OutT> {
     ph_out: PhantomData<OutT>,
 }
 
+pub type ServerCodec = Codec<C2S, S2C>;
+pub type ClientCodec = Codec<S2C, C2S>;
+
 impl<InT, OutT> Codec<InT, OutT> {
     pub fn new(codec: value::Codec<V, Syndicate>) -> Self {
         Codec { codec, ph_in: PhantomData, ph_out: PhantomData }

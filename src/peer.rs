@@ -20,7 +20,7 @@ pub struct Peer {
     id: ConnId,
     tx: UnboundedSender<packets::S2C>,
     rx: UnboundedReceiver<packets::S2C>,
-    frames: Framed<TcpStream, packets::Codec<packets::C2S, packets::S2C>>,
+    frames: Framed<TcpStream, packets::ServerCodec>,
     space: Option<dataspace::DataspaceRef>,
 }
 
