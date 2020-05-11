@@ -18,14 +18,14 @@ use tokio_util::codec::Framed;
 
 pub struct Peer {
     id: ConnId,
-    tx: UnboundedSender<packets::Out>,
-    rx: UnboundedReceiver<packets::Out>,
-    frames: Framed<TcpStream, packets::Codec<packets::In, packets::Out>>,
+    tx: UnboundedSender<packets::S2C>,
+    rx: UnboundedReceiver<packets::S2C>,
+    frames: Framed<TcpStream, packets::Codec<packets::C2S, packets::S2C>>,
     space: Option<dataspace::DataspaceRef>,
 }
 
-fn err(s: &str, ctx: V) -> packets::Out {
-    packets::Out::Err(s.into(), ctx)
+fn err(s: &str, ctx: V) -> packets::S2C {
+    packets::S2C::Err(s.into(), ctx)
 }
 
 impl Peer {
@@ -39,7 +39,7 @@ impl Peer {
         println!("{:?}: {:?}", self.id, &self.frames.get_ref());
 
         let firstpacket = self.frames.next().await;
-        let dsname = if let Some(Ok(packets::In::Connect(dsname))) = firstpacket {
+        let dsname = if let Some(Ok(packets::C2S::Connect(dsname))) = firstpacket {
             dsname
         } else {
             let e: String = format!("Expected initial Connect, got {:?}", firstpacket);
@@ -57,13 +57,13 @@ impl Peer {
         while running {
             let mut to_send = Vec::new();
             select! {
-                _instant = ping_timer.next().boxed().fuse() => to_send.push(packets::Out::Ping()),
+                _instant = ping_timer.next().boxed().fuse() => to_send.push(packets::S2C::Ping()),
                 frame = self.frames.next().boxed().fuse() => match frame {
                     Some(res) => match res {
                         Ok(p) => {
                             println!("{:?}: input {:?}", self.id, &p);
                             match p {
-                                packets::In::Turn(actions) => {
+                                packets::C2S::Turn(actions) => {
                                     match self.space.as_ref().unwrap().write().unwrap()
                                         .turn(self.id, actions)
                                     {
@@ -74,11 +74,11 @@ impl Peer {
                                         }
                                     }
                                 }
-                                packets::In::Ping() =>
-                                    to_send.push(packets::Out::Pong()),
-                                packets::In::Pong() =>
+                                packets::C2S::Ping() =>
+                                    to_send.push(packets::S2C::Pong()),
+                                packets::C2S::Pong() =>
                                     (),
-                                packets::In::Connect(_) => {
+                                packets::C2S::Connect(_) => {
                                     to_send.push(err("Unexpected Connect", value::to_value(p).unwrap()));
                                     running = false;
                                 }
@@ -110,7 +110,7 @@ impl Peer {
                 },
             }
             for v in to_send {
-                if let packets::Out::Err(ref msg, ref ctx) = v {
+                if let packets::S2C::Err(ref msg, ref ctx) = v {
                     println!("{:?}: connection crashed: {}; context {:?}", self.id, msg, ctx);
                 } else {
                     println!("{:?}: output {:?}", self.id, &v);

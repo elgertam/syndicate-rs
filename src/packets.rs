@@ -27,7 +27,7 @@ pub enum Event {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum In {
+pub enum C2S {
     Connect(V),
     Turn(Vec<Action>),
     Ping(),
@@ -35,7 +35,7 @@ pub enum In {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum Out {
+pub enum S2C {
     Err(String, V),
     Turn(Vec<Event>),
     Ping(),

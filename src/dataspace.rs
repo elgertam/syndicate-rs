@@ -12,7 +12,7 @@ pub type DataspaceError = (String, V);
 
 #[derive(Debug)]
 struct Actor {
-    tx: UnboundedSender<packets::Out>,
+    tx: UnboundedSender<packets::S2C>,
     endpoints: Map<EndpointName, ActorEndpoint>,
 }
 
@@ -38,7 +38,7 @@ impl Dataspace {
         Arc::new(RwLock::new(Self::new(name)))
     }
 
-    pub fn register(&mut self, id: ConnId, tx: UnboundedSender<packets::Out>) {
+    pub fn register(&mut self, id: ConnId, tx: UnboundedSender<packets::S2C>) {
         assert!(!self.peers.contains_key(&id));
         self.peers.insert(id, Actor {
             tx,
@@ -137,7 +137,7 @@ impl Dataspace {
 
     fn deliver_outbound_turns(&mut self, outbound_turns: Map<ConnId, Vec<packets::Event>>) {
         for (target, events) in outbound_turns {
-            let _ = self.peers.get_mut(&target).unwrap().tx.send(packets::Out::Turn(events));
+            let _ = self.peers.get_mut(&target).unwrap().tx.send(packets::S2C::Turn(events));
         }
     }
 }
