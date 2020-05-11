@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use syndicate::{V, value::Value};
 use syndicate::packets::{ClientCodec, C2S, S2C, Action};
 use tokio::net::TcpStream;
@@ -26,12 +28,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stats_timer = interval(Duration::from_secs(1));
     let mut turn_counter = 0;
+    let mut event_counter = 0;
 
     loop {
         select! {
             _instant = stats_timer.next().boxed().fuse() => {
-                print!("{:?} turns in the last second\n", turn_counter);
+                print!("{:?} turns, {:?} events in the last second\n", turn_counter, event_counter);
                 turn_counter = 0;
+                event_counter = 0;
             },
             frame = frames.next().boxed().fuse() => match frame {
                 None => return Ok(()),
@@ -40,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     S2C::Turn(es) => {
                         // print!("{:?}\n", es);
                         turn_counter = turn_counter + 1;
+                        event_counter = event_counter + es.len();
                     },
                     S2C::Ping() => frames.send(C2S::Pong()).await?,
                     S2C::Pong() => (),
