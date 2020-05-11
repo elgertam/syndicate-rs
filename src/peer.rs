@@ -8,7 +8,7 @@ use core::time::Duration;
 use futures::FutureExt;
 use futures::SinkExt;
 use futures::select;
-use preserves::value::{self, Map};
+use preserves::value;
 use std::sync::{Mutex, Arc};
 use tokio::net::TcpStream;
 use tokio::stream::StreamExt;
@@ -20,7 +20,7 @@ pub struct Peer {
     id: ConnId,
     tx: UnboundedSender<packets::Out>,
     rx: UnboundedReceiver<packets::Out>,
-    frames: Framed<TcpStream, packets::Codec>,
+    frames: Framed<TcpStream, packets::Codec<packets::In, packets::Out>>,
     space: Option<dataspace::DataspaceRef>,
 }
 
@@ -31,13 +31,7 @@ fn err(s: &str, ctx: V) -> packets::Out {
 impl Peer {
     pub async fn new(id: ConnId, stream: TcpStream) -> Self {
         let (tx, rx) = unbounded_channel();
-        let frames = Framed::new(stream, packets::Codec::new(value::Codec::new({
-            let mut m = Map::new();
-            m.insert(0, value::Value::symbol("Discard"));
-            m.insert(1, value::Value::symbol("Capture"));
-            m.insert(2, value::Value::symbol("Observe"));
-            m
-        })));
+        let frames = Framed::new(stream, packets::Codec::standard());
         Peer{ id, tx, rx, frames, space: None }
     }
 
