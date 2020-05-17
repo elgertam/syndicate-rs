@@ -16,8 +16,13 @@ preserves = "0.4.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = "0.11"
 
-tokio = { version = "0.2.20", features = ["macros", "rt-threaded", "sync", "dns", "tcp", "time", "stream"] }
+tokio = { version = "0.2.21", features = ["macros", "rt-threaded", "sync", "dns", "tcp", "time", "stream"] }
 tokio-util = { version = "0.3.1", features = ["codec"] }
 bytes = "0.5.4"
 
-futures = "0.3.4"
+futures = "0.3.5"
+
+structopt = "0.3.14"
+
+tungstenite = "0.10.1"
+tokio-tungstenite = "0.10.1"

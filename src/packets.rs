@@ -50,6 +50,12 @@ pub enum DecodeError {
     Parse(value::error::Error<Syndicate>, V),
 }
 
+impl From<value::decoder::Error> for DecodeError {
+    fn from(v: value::decoder::Error) -> Self {
+        DecodeError::Read(v)
+    }
+}
+
 impl From<io::Error> for DecodeError {
     fn from(v: io::Error) -> Self {
         DecodeError::Read(v.into())
@@ -114,19 +120,23 @@ pub struct Codec<InT, OutT> {
 pub type ServerCodec = Codec<C2S, S2C>;
 pub type ClientCodec = Codec<S2C, C2S>;
 
+pub fn standard_preserves_codec() -> value::Codec<V, Syndicate> {
+    value::Codec::new({
+        let mut m = value::Map::new();
+        m.insert(0, value::Value::symbol("Discard"));
+        m.insert(1, value::Value::symbol("Capture"));
+        m.insert(2, value::Value::symbol("Observe"));
+        m
+    })
+}
+
 impl<InT, OutT> Codec<InT, OutT> {
     pub fn new(codec: value::Codec<V, Syndicate>) -> Self {
         Codec { codec, ph_in: PhantomData, ph_out: PhantomData }
     }
 
     pub fn standard() -> Self {
-        Self::new(value::Codec::new({
-            let mut m = value::Map::new();
-            m.insert(0, value::Value::symbol("Discard"));
-            m.insert(1, value::Value::symbol("Capture"));
-            m.insert(2, value::Value::symbol("Observe"));
-            m
-        }))
+        Self::new(standard_preserves_codec())
     }
 }
 
