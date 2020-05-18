@@ -125,11 +125,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::from_args();
 
     let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
-    let mut listeners = Vec::new();
+    let mut daemons = Vec::new();
 
     for port in args.ports {
         let spaces = Arc::clone(&spaces);
-        listeners.push(tokio::spawn(async move {
+        daemons.push(tokio::spawn(async move {
             match run_listener(spaces, port).await {
                 Ok(()) => (),
                 Err(e) => {
@@ -140,6 +140,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }));
     }
 
-    futures::future::join_all(listeners).await;
+    futures::future::join_all(daemons).await;
     Ok(())
 }
