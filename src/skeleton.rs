@@ -157,15 +157,17 @@ impl Index {
         outputs
     }
 
-    pub fn send(&mut self, outer_value: CachedAssertion) -> Events {
+    pub fn send(&mut self, outer_value: CachedAssertion, delivery_count: &mut usize) -> Events {
         let mut outputs = Vec::new();
         Modification::new(
             false,
             &outer_value,
             |_c, _v| (),
             |_l, _v| (),
-            |es, cs| outputs.push((es.endpoints.iter().cloned().collect(), cs)))
-            .perform(&mut self.root);
+            |es, cs| {
+                *delivery_count += es.endpoints.len();
+                outputs.push((es.endpoints.iter().cloned().collect(), cs))
+            }).perform(&mut self.root);
         outputs
     }
 

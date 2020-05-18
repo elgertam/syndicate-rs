@@ -30,7 +30,8 @@ pub struct Churn {
     pub assertions_removed: usize,
     pub endpoints_added: usize,
     pub endpoints_removed: usize,
-    pub messages_sent: usize,
+    pub messages_injected: usize,
+    pub messages_delivered: usize,
 }
 
 impl Churn {
@@ -42,7 +43,8 @@ impl Churn {
             assertions_removed: 0,
             endpoints_added: 0,
             endpoints_removed: 0,
-            messages_sent: 0,
+            messages_injected: 0,
+            messages_delivered: 0,
         }
     }
 
@@ -53,7 +55,8 @@ impl Churn {
         self.assertions_removed = 0;
         self.endpoints_added = 0;
         self.endpoints_removed = 0;
-        self.messages_sent = 0;
+        self.messages_injected = 0;
+        self.messages_delivered = 0;
     }
 }
 
@@ -175,9 +178,10 @@ impl Dataspace {
                 }
                 packets::Action::Message(ref assertion) => {
                     schedule_events(&mut outbound_turns,
-                                    self.index.send(assertion.into()),
+                                    self.index.send(assertion.into(),
+                                                    &mut self.churn.messages_delivered),
                                     |epname, cs| packets::Event::Msg(epname, cs));
-                    self.churn.messages_sent += 1;
+                    self.churn.messages_injected += 1;
                 }
             }
         }

@@ -43,7 +43,7 @@ impl Spaces {
         v.push(format!("{} dataspace(s)", self.index.len()));
         for (dsname, dsref) in &self.index {
             let mut ds = dsref.write().unwrap();
-            v.push(format!("  {:?}: {} connection(s) {}, {} assertion(s) {}, {} endpoint(s) {}, {} messages/sec",
+            v.push(format!("  {:?}: {} connection(s) {}, {} assertion(s) {}, {} endpoint(s) {}, msgs in {}/sec, out {}/sec",
                            dsname,
                            ds.peer_count(),
                            format!("(+{}/-{})", ds.churn.peers_added, ds.churn.peers_removed),
@@ -51,7 +51,8 @@ impl Spaces {
                            format!("(+{}/-{})", ds.churn.assertions_added, ds.churn.assertions_removed),
                            ds.endpoint_count(),
                            format!("(+{}/-{})", ds.churn.endpoints_added, ds.churn.endpoints_removed),
-                           ds.churn.messages_sent as f32 / delta.as_secs() as f32));
+                           ds.churn.messages_injected as f32 / delta.as_secs() as f32,
+                           ds.churn.messages_delivered as f32 / delta.as_secs() as f32));
             ds.churn.reset();
         }
         v.join("\n")
