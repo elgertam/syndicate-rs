@@ -1,4 +1,4 @@
-use syndicate::{spaces, packets, ConnId, V, Syndicate};
+use syndicate::{config, spaces, packets, ConnId, V, Syndicate};
 use syndicate::peer::{Peer, ResultC2S};
 use preserves::value;
 
@@ -11,18 +11,7 @@ use tokio_util::codec::Framed;
 
 use tungstenite::Message;
 
-use structopt::StructOpt;
-
-#[derive(Clone, StructOpt)]
-struct Cli {
-    #[structopt(short = "p", long = "port", default_value = "8001")]
-    ports: Vec<u16>,
-
-    #[structopt(long)]
-    recv_buffer_size: Option<usize>,
-    #[structopt(long)]
-    send_buffer_size: Option<usize>,
-}
+use structopt::StructOpt; // for from_args in main
 
 type UnitAsyncResult = Result<(), std::io::Error>;
 
@@ -73,7 +62,8 @@ fn message_decoder(codec: &value::Codec<V, Syndicate>)
 
 async fn run_connection(connid: ConnId,
                         mut stream: TcpStream,
-                        spaces: Arc<Mutex<spaces::Spaces>>) ->
+                        spaces: Arc<Mutex<spaces::Spaces>>,
+                        config: config::ServerConfigRef) ->
     UnitAsyncResult
 {
     let mut buf = [0; 1]; // peek at the first byte to see what kind of connection to expect
@@ -87,13 +77,13 @@ async fn run_connection(connid: ConnId,
                 let i = i.map(message_decoder(&codec));
                 let o = o.sink_map_err(translate_sink_err).with(message_encoder(&codec));
                 let mut p = Peer::new(connid, i, o);
-                p.run(spaces).await?
+                p.run(spaces, &config).await?
             },
             _ => {
                 println!("First byte: {:?}", buf);
                 let (o, i) = Framed::new(stream, packets::Codec::standard()).split();
                 let mut p = Peer::new(connid, i, o);
-                p.run(spaces).await?
+                p.run(spaces, &config).await?
             }
         }
         0 => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof,
@@ -103,7 +93,9 @@ async fn run_connection(connid: ConnId,
     Ok(())
 }
 
-async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16, args: Cli) -> UnitAsyncResult {
+async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16, config: config::ServerConfigRef) ->
+    UnitAsyncResult
+{
     let mut listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     println!("Listening on port {}", port);
     let mut id = port as u64 + 100000000000000;
@@ -111,12 +103,13 @@ async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16, args: Cli) 
         let (stream, addr) = listener.accept().await?;
         let connid = id;
         let spaces = Arc::clone(&spaces);
+        let config = Arc::clone(&config);
         id += 100000;
-        if let Some(n) = args.recv_buffer_size { stream.set_recv_buffer_size(n)?; }
-        if let Some(n) = args.send_buffer_size { stream.set_send_buffer_size(n)?; }
+        if let Some(n) = config.recv_buffer_size { stream.set_recv_buffer_size(n)?; }
+        if let Some(n) = config.send_buffer_size { stream.set_send_buffer_size(n)?; }
         tokio::spawn(async move {
             println!("Connection {} ({:?}) accepted from port {}", connid, addr, port);
-            match run_connection(connid, stream, spaces).await {
+            match run_connection(connid, stream, spaces, config).await {
                 Ok(()) => println!("Connection {} ({:?}) terminated normally", connid, addr),
                 Err(e) => println!("Connection {} ({:?}) terminated: {}", connid, addr, e),
             }
@@ -139,7 +132,7 @@ async fn periodic_tasks(spaces: Arc<Mutex<spaces::Spaces>>) -> UnitAsyncResult {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Cli::from_args();
+    let config = Arc::new(config::ServerConfig::from_args());
 
     let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
     let mut daemons = Vec::new();
@@ -151,11 +144,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    for port in args.ports.clone() {
+    for port in config.ports.clone() {
         let spaces = Arc::clone(&spaces);
-        let args = args.clone();
+        let config = Arc::clone(&config);
         daemons.push(tokio::spawn(async move {
-            match run_listener(spaces, port, args).await {
+            match run_listener(spaces, port, config).await {
                 Ok(()) => (),
                 Err(e) => {
                     eprintln!("Error from listener for port {}: {}", port, e);

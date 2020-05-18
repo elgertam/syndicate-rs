@@ -4,7 +4,7 @@ use super::packets::{self, Assertion, EndpointName, Captures};
 use super::skeleton;
 
 use preserves::value::{self, Map, NestedValue};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic::{AtomicUsize, Ordering}};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub type DataspaceRef = Arc<RwLock<Dataspace>>;
@@ -13,6 +13,7 @@ pub type DataspaceError = (String, V);
 #[derive(Debug)]
 struct Actor {
     tx: UnboundedSender<packets::S2C>,
+    queue_depth: Arc<AtomicUsize>,
     endpoints: Map<EndpointName, ActorEndpoint>,
 }
 
@@ -82,10 +83,14 @@ impl Dataspace {
         Arc::new(RwLock::new(Self::new(name)))
     }
 
-    pub fn register(&mut self, id: ConnId, tx: UnboundedSender<packets::S2C>) {
+    pub fn register(&mut self, id: ConnId,
+                    tx: UnboundedSender<packets::S2C>,
+                    queue_depth: Arc<AtomicUsize>)
+    {
         assert!(!self.peers.contains_key(&id));
         self.peers.insert(id, Actor {
             tx,
+            queue_depth,
             endpoints: Map::new(),
         });
         self.churn.peers_added += 1;
@@ -191,7 +196,9 @@ impl Dataspace {
 
     fn deliver_outbound_turns(&mut self, outbound_turns: Map<ConnId, Vec<packets::Event>>) {
         for (target, events) in outbound_turns {
-            let _ = self.peers.get_mut(&target).unwrap().tx.send(packets::S2C::Turn(events));
+            let actor = self.peers.get_mut(&target).unwrap();
+            let _ = actor.tx.send(packets::S2C::Turn(events));
+            actor.queue_depth.fetch_add(1, Ordering::Relaxed);
         }
     }
 

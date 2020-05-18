@@ -3,6 +3,7 @@ use super::ConnId;
 use super::dataspace;
 use super::packets;
 use super::spaces;
+use super::config;
 
 use core::time::Duration;
 use futures::{Sink, SinkExt, Stream};
@@ -10,9 +11,9 @@ use futures::FutureExt;
 use futures::select;
 use preserves::value;
 use std::pin::Pin;
-use std::sync::{Mutex, Arc};
+use std::sync::{Mutex, Arc, atomic::{AtomicUsize, Ordering}};
 use tokio::stream::StreamExt;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver, error::TryRecvError};
 use tokio::time::interval;
 
 pub type ResultC2S = Result<packets::C2S, packets::DecodeError>;
@@ -42,7 +43,9 @@ where I: Stream<Item = ResultC2S> + Send,
         Peer{ id, tx, rx, i: Box::pin(i), o: Box::pin(o), space: None }
     }
 
-    pub async fn run(&mut self, spaces: Arc<Mutex<spaces::Spaces>>) -> Result<(), std::io::Error> {
+    pub async fn run(&mut self, spaces: Arc<Mutex<spaces::Spaces>>, config: &config::ServerConfig) ->
+        Result<(), std::io::Error>
+    {
         let firstpacket = self.i.next().await;
         let dsname = if let Some(Ok(packets::C2S::Connect(dsname))) = firstpacket {
             dsname
@@ -53,13 +56,43 @@ where I: Stream<Item = ResultC2S> + Send,
         };
 
         self.space = Some(spaces.lock().unwrap().lookup(&dsname));
-        self.space.as_ref().unwrap().write().unwrap().register(self.id, self.tx.clone());
+        let queue_depth = Arc::new(AtomicUsize::new(0));
+        self.space.as_ref().unwrap().write().unwrap().register(
+            self.id,
+            self.tx.clone(),
+            Arc::clone(&queue_depth));
 
         let mut ping_timer = interval(Duration::from_secs(60));
 
         let mut running = true;
+        let mut overloaded = None;
+        let mut previous_sample = None;
         while running {
             let mut to_send = Vec::new();
+
+            let queue_depth_sample = queue_depth.load(Ordering::Relaxed);
+            if queue_depth_sample > config.overload_threshold {
+                let n = overloaded.unwrap_or(0);
+                println!("{:?} overloaded({}): {:?}", self.id, n, queue_depth_sample);
+                if n == config.overload_turn_limit {
+                    to_send.push(err("Overloaded",
+                                     value::Value::from(queue_depth_sample as u64).wrap()));
+                    running = false;
+                } else {
+                    if queue_depth_sample > previous_sample.unwrap_or(0) {
+                        overloaded = Some(n + 1)
+                    } else {
+                        overloaded = Some(0)
+                    }
+                }
+            } else {
+                if let Some(_) = overloaded {
+                    println!("{:?} recovered: {:?}", self.id, queue_depth_sample);
+                }
+                overloaded = None;
+            }
+            previous_sample = Some(queue_depth_sample);
+
             select! {
                 _instant = ping_timer.next().boxed().fuse() => to_send.push(packets::S2C::Ping()),
                 frame = self.i.next().fuse() => match frame {
@@ -102,14 +135,31 @@ where I: Stream<Item = ResultC2S> + Send,
                     None => running = false,
                 },
                 msgopt = self.rx.recv().boxed().fuse() => {
+                    let mut ok = true;
                     match msgopt {
-                        Some(msg) => to_send.push(msg),
-                        None => {
-                            /* weird. */
-                            to_send.push(err("Outbound channel closed unexpectedly",
-                                             value::Value::from(false).wrap()));
-                            running = false;
+                        Some(msg) => {
+                            to_send.push(msg);
+                            loop {
+                                match self.rx.try_recv() {
+                                    Ok(m) => to_send.push(m),
+                                    Err(TryRecvError::Empty) => {
+                                        queue_depth.store(0, Ordering::Relaxed);
+                                        break;
+                                    }
+                                    Err(TryRecvError::Closed) => {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                            }
                         }
+                        None => ok = false,
+                    }
+                    if !ok {
+                        /* weird. */
+                        to_send.push(err("Outbound channel closed unexpectedly",
+                                         value::Value::from(false).wrap()));
+                        running = false;
                     }
                 },
             }

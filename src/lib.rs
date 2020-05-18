@@ -1,6 +1,7 @@
 #![recursion_limit="512"]
 
 pub mod bag;
+pub mod config;
 pub mod dataspace;
 pub mod packets;
 pub mod peer;
