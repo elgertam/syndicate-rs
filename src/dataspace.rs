@@ -56,6 +56,18 @@ impl Dataspace {
         self.deliver_outbound_turns(outbound_turns);
     }
 
+    pub fn peer_count(&self) -> usize {
+        self.peers.len()
+    }
+
+    pub fn assertion_count(&self) -> usize {
+        self.index.assertion_count()
+    }
+
+    pub fn endpoint_count(&self) -> isize {
+        self.index.endpoint_count()
+    }
+
     fn remove_endpoint(&mut self,
                        mut outbound_turns: &mut Map<ConnId, Vec<packets::Event>>,
                        id: ConnId,

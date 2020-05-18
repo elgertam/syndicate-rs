@@ -120,12 +120,31 @@ async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16) -> UnitAsyn
     }
 }
 
+async fn periodic_tasks(spaces: Arc<Mutex<spaces::Spaces>>) -> UnitAsyncResult {
+    let mut delay = tokio::time::interval(core::time::Duration::from_secs(5));
+    loop {
+        delay.next().await.unwrap();
+        {
+            let mut spaces = spaces.lock().unwrap();
+            spaces.cleanup();
+            println!("{}", spaces.summary_string());
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::from_args();
 
     let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
     let mut daemons = Vec::new();
+
+    {
+        let spaces = Arc::clone(&spaces);
+        tokio::spawn(async move {
+            periodic_tasks(spaces).await
+        });
+    }
 
     for port in args.ports {
         let spaces = Arc::clone(&spaces);

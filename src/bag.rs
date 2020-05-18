@@ -16,6 +16,7 @@ pub enum Net {
 // Allows negative counts - a "delta"
 pub struct BTreeBag<V: std::cmp::Ord> {
     counts: BTreeMap<V, Count>,
+    total: isize,
 }
 
 impl<V: std::cmp::Ord> std::default::Default for BTreeBag<V> {
@@ -26,7 +27,7 @@ impl<V: std::cmp::Ord> std::default::Default for BTreeBag<V> {
 
 impl<V: std::cmp::Ord> BTreeBag<V> {
     pub fn new() -> BTreeBag<V> {
-        BTreeBag { counts: BTreeMap::new() }
+        BTreeBag { counts: BTreeMap::new(), total: 0 }
     }
 
     pub fn change(&mut self, key: V, delta: Count) -> Net { self._change(key, delta, false) }
@@ -36,6 +37,7 @@ impl<V: std::cmp::Ord> BTreeBag<V> {
         let old_count = self[&key];
         let mut new_count = old_count + delta;
         if clamp { new_count = new_count.max(0) }
+        self.total = self.total + (new_count - old_count) as isize;
         if new_count == 0 {
             self.counts.remove(&key);
             if old_count == 0 { Net::AbsentToAbsent } else { Net::PresentToAbsent }
@@ -47,6 +49,7 @@ impl<V: std::cmp::Ord> BTreeBag<V> {
 
     pub fn clear(&mut self) {
         self.counts.clear();
+        self.total = 0;
     }
 
     pub fn contains_key(&self, key: &V) -> bool {
@@ -59,6 +62,10 @@ impl<V: std::cmp::Ord> BTreeBag<V> {
 
     pub fn len(&self) -> usize {
         self.counts.len()
+    }
+
+    pub fn total(&self) -> isize {
+        self.total
     }
 
     pub fn keys(&self) -> Keys<V, Count> {

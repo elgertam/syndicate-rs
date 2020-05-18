@@ -168,6 +168,14 @@ impl Index {
             .perform(&mut self.root);
         outputs
     }
+
+    pub fn assertion_count(&self) -> usize {
+        return self.all_assertions.len()
+    }
+
+    pub fn endpoint_count(&self) -> isize {
+        return self.all_assertions.total()
+    }
 }
 
 #[derive(Debug)]
