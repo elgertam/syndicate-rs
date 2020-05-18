@@ -43,7 +43,9 @@ fn message_encoder(codec: &value::Codec<V, Syndicate>)
     return move |p| futures::future::ready(encode_message(codec, p));
 }
 
-fn message_decoder(codec: &value::Codec<V, Syndicate>) -> impl Fn(Result<Message, tungstenite::Error>) -> ResultC2S + '_ {
+fn message_decoder(codec: &value::Codec<V, Syndicate>)
+    -> impl Fn(Result<Message, tungstenite::Error>) -> ResultC2S + '_
+{
     return move |r| {
         loop {
             return match r {
