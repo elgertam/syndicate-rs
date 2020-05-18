@@ -11,7 +11,7 @@ debug = true
 name = "syndicate"
 
 [dependencies]
-preserves = "0.4.0"
+preserves = "0.5.0"
 
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = "0.11"

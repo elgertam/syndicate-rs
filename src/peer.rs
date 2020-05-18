@@ -121,7 +121,10 @@ where I: Stream<Item = ResultC2S> + Send,
                                 }
                             }
                         }
-                        Err(packets::DecodeError::Read(value::decoder::Error::Eof)) => running = false,
+                        Err(packets::DecodeError::Read(value::decoder::Error::Eof)) => {
+                            tracing::trace!("eof");
+                            running = false;
+                        }
                         Err(packets::DecodeError::Read(value::decoder::Error::Io(e))) => return Err(e),
                         Err(packets::DecodeError::Read(value::decoder::Error::Syntax(s))) => {
                             to_send.push(err(s, value::Value::from(false).wrap()));

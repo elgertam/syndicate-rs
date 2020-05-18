@@ -49,8 +49,24 @@ fn message_decoder(codec: &value::Codec<V, Syndicate>)
                     Message::Text(_) => Err(packets::DecodeError::Read(
                         value::decoder::Error::Syntax("Text websocket frames are not accepted"))),
                     Message::Binary(ref bs) => {
-                        let v = codec.decode(&mut &bs[..])?;
-                        value::from_value(&v).map_err(|e| packets::DecodeError::Parse(e, v))
+                        let mut buf = &bs[..];
+                        match codec.decode(&mut buf) {
+                            Ok(v) => if buf.len() > 0 {
+                                Err(packets::DecodeError::Read(
+                                    value::decoder::Error::Io(
+                                        std::io::Error::new(std::io::ErrorKind::Other,
+                                                            format!("{} trailing bytes",
+                                                                    buf.len())))))
+                            } else {
+                                value::from_value(&v).map_err(|e| packets::DecodeError::Parse(e, v))
+                            }
+                            Err(value::decoder::Error::Eof) =>
+                                Err(packets::DecodeError::Read(
+                                    value::decoder::Error::Io(
+                                        std::io::Error::new(std::io::ErrorKind::UnexpectedEof,
+                                                            "short packet")))),
+                            Err(e) => Err(e.into()),
+                        }
                     }
                     Message::Ping(_) => continue, // pings are handled by tungstenite before we see them
                     Message::Pong(_) => continue, // unsolicited pongs are to be ignored
@@ -66,6 +82,7 @@ fn message_decoder(codec: &value::Codec<V, Syndicate>)
 async fn run_connection(connid: ConnId,
                         mut stream: TcpStream,
                         spaces: Arc<Mutex<spaces::Spaces>>,
+                        addr: std::net::SocketAddr,
                         config: config::ServerConfigRef) ->
     UnitAsyncResult
 {
@@ -73,6 +90,7 @@ async fn run_connection(connid: ConnId,
     match stream.peek(&mut buf).await? {
         1 => match buf[0] {
             71 /* ASCII 'G' for "GET" */ => {
+                info!(protocol = display("websocket"), peer = debug(addr));
                 let s = tokio_tungstenite::accept_async(stream).await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 let (o, i) = s.split();
@@ -83,6 +101,7 @@ async fn run_connection(connid: ConnId,
                 p.run(spaces, &config).await?
             },
             _ => {
+                info!(protocol = display("raw"), peer = debug(addr));
                 let (o, i) = Framed::new(stream, packets::Codec::standard()).split();
                 let mut p = Peer::new(connid, i, o);
                 p.run(spaces, &config).await?
@@ -109,8 +128,7 @@ async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16, config: con
         if let Some(n) = config.recv_buffer_size { stream.set_recv_buffer_size(n)?; }
         if let Some(n) = config.send_buffer_size { stream.set_send_buffer_size(n)?; }
         tokio::spawn(async move {
-            info!(addr = display(addr), "accepted");
-            match run_connection(id, stream, spaces, config).await {
+            match run_connection(id, stream, spaces, addr, config).await {
                 Ok(()) => info!("closed"),
                 Err(e) => info!(error = display(e), "closed"),
             }

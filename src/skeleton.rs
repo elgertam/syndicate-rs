@@ -590,8 +590,8 @@ fn instantiate_assertion_walk(capture_paths: &mut Paths,
                 Value::from(Vec::from_iter(a.value().as_sequence().unwrap()
                                            .iter().enumerate().map(f)))
                 .wrap(),
-            Some(Guard::Rec(l, _)) =>
-                Value::record(l, a.value().as_record().unwrap().1
+            Some(Guard::Rec(l, fieldcount)) =>
+                Value::record(l, a.value().as_record(Some(fieldcount)).unwrap().1
                               .iter().enumerate().map(f).collect())
                 .wrap(),
             None =>
