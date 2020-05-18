@@ -38,16 +38,21 @@ impl Spaces {
             .collect();
     }
 
-    pub fn summary_string(&self) -> String {
+    pub fn stats_string(&self, delta: core::time::Duration) -> String {
         let mut v = vec![];
         v.push(format!("{} dataspace(s)", self.index.len()));
         for (dsname, dsref) in &self.index {
-            let ds = dsref.read().unwrap();
-            v.push(format!("  {:?}: {} connection(s), {} assertion(s), {} endpoint(s)",
+            let mut ds = dsref.write().unwrap();
+            v.push(format!("  {:?}: {} connection(s) {}, {} assertion(s) {}, {} endpoint(s) {}, {} messages/sec",
                            dsname,
                            ds.peer_count(),
+                           format!("(+{}/-{})", ds.churn.peers_added, ds.churn.peers_removed),
                            ds.assertion_count(),
-                           ds.endpoint_count()));
+                           format!("(+{}/-{})", ds.churn.assertions_added, ds.churn.assertions_removed),
+                           ds.endpoint_count(),
+                           format!("(+{}/-{})", ds.churn.endpoints_added, ds.churn.endpoints_removed),
+                           ds.churn.messages_sent as f32 / delta.as_secs() as f32));
+            ds.churn.reset();
         }
         v.join("\n")
     }

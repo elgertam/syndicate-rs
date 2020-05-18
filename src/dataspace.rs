@@ -23,15 +23,56 @@ struct ActorEndpoint {
 }
 
 #[derive(Debug)]
+pub struct Churn {
+    pub peers_added: usize,
+    pub peers_removed: usize,
+    pub assertions_added: usize,
+    pub assertions_removed: usize,
+    pub endpoints_added: usize,
+    pub endpoints_removed: usize,
+    pub messages_sent: usize,
+}
+
+impl Churn {
+    pub fn new() -> Self {
+        Self {
+            peers_added: 0,
+            peers_removed: 0,
+            assertions_added: 0,
+            assertions_removed: 0,
+            endpoints_added: 0,
+            endpoints_removed: 0,
+            messages_sent: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.peers_added = 0;
+        self.peers_removed = 0;
+        self.assertions_added = 0;
+        self.assertions_removed = 0;
+        self.endpoints_added = 0;
+        self.endpoints_removed = 0;
+        self.messages_sent = 0;
+    }
+}
+
+#[derive(Debug)]
 pub struct Dataspace {
     name: V,
     peers: Map<ConnId, Actor>,
     index: skeleton::Index,
+    pub churn: Churn,
 }
 
 impl Dataspace {
     pub fn new(name: &V) -> Self {
-        Self { name: name.clone(), peers: Map::new(), index: skeleton::Index::new() }
+        Self {
+            name: name.clone(),
+            peers: Map::new(),
+            index: skeleton::Index::new(),
+            churn: Churn::new(),
+        }
     }
 
     pub fn new_ref(name: &V) -> DataspaceRef {
@@ -44,28 +85,18 @@ impl Dataspace {
             tx,
             endpoints: Map::new(),
         });
+        self.churn.peers_added += 1;
     }
 
     pub fn deregister(&mut self, id: ConnId) {
         let ac = self.peers.remove(&id).unwrap();
+        self.churn.peers_removed += 1;
         let mut outbound_turns: Map<ConnId, Vec<packets::Event>> = Map::new();
         for (epname, ep) in ac.endpoints {
             self.remove_endpoint(&mut outbound_turns, id, &epname, ep);
         }
         outbound_turns.remove(&id);
         self.deliver_outbound_turns(outbound_turns);
-    }
-
-    pub fn peer_count(&self) -> usize {
-        self.peers.len()
-    }
-
-    pub fn assertion_count(&self) -> usize {
-        self.index.assertion_count()
-    }
-
-    pub fn endpoint_count(&self) -> isize {
-        self.index.endpoint_count()
     }
 
     fn remove_endpoint(&mut self,
@@ -81,9 +112,12 @@ impl Dataspace {
                 name: epname.clone(),
             });
         }
+        let old_assertions = self.index.assertion_count();
         schedule_events(&mut outbound_turns,
                         self.index.remove((&assertion).into()),
                         |epname, cs| packets::Event::Del(epname, cs));
+        self.churn.assertions_removed += old_assertions - self.index.assertion_count();
+        self.churn.endpoints_removed += 1;
     }
 
     pub fn turn(&mut self, id: ConnId, actions: Vec<packets::Action>) ->
@@ -113,9 +147,12 @@ impl Dataspace {
                             None
                         };
 
+                    let old_assertions = self.index.assertion_count();
                     schedule_events(&mut outbound_turns,
                                     self.index.insert(assertion.into()),
                                     |epname, cs| packets::Event::Add(epname, cs));
+                    self.churn.assertions_added += self.index.assertion_count() - old_assertions;
+                    self.churn.endpoints_added += 1;
 
                     ac.endpoints.insert(epname.clone(), ActorEndpoint {
                         analysis_results: ar,
@@ -140,6 +177,7 @@ impl Dataspace {
                     schedule_events(&mut outbound_turns,
                                     self.index.send(assertion.into()),
                                     |epname, cs| packets::Event::Msg(epname, cs));
+                    self.churn.messages_sent += 1;
                 }
             }
         }
@@ -151,6 +189,18 @@ impl Dataspace {
         for (target, events) in outbound_turns {
             let _ = self.peers.get_mut(&target).unwrap().tx.send(packets::S2C::Turn(events));
         }
+    }
+
+    pub fn peer_count(&self) -> usize {
+        self.peers.len()
+    }
+
+    pub fn assertion_count(&self) -> usize {
+        self.index.assertion_count()
+    }
+
+    pub fn endpoint_count(&self) -> isize {
+        self.index.endpoint_count()
     }
 }
 

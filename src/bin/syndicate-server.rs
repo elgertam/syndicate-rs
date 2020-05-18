@@ -121,13 +121,14 @@ async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16) -> UnitAsyn
 }
 
 async fn periodic_tasks(spaces: Arc<Mutex<spaces::Spaces>>) -> UnitAsyncResult {
-    let mut delay = tokio::time::interval(core::time::Duration::from_secs(5));
+    let interval = core::time::Duration::from_secs(5);
+    let mut delay = tokio::time::interval(interval);
     loop {
         delay.next().await.unwrap();
         {
             let mut spaces = spaces.lock().unwrap();
             spaces.cleanup();
-            println!("{}", spaces.summary_string());
+            println!("{}", spaces.stats_string(interval));
         }
     }
 }
