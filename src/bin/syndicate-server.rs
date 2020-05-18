@@ -5,6 +5,9 @@ use preserves::value;
 use std::sync::{Mutex, Arc};
 use futures::{SinkExt, StreamExt};
 
+use tracing::{Level, error, info, trace};
+use tracing_futures::Instrument;
+
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
@@ -80,7 +83,6 @@ async fn run_connection(connid: ConnId,
                 p.run(spaces, &config).await?
             },
             _ => {
-                println!("First byte: {:?}", buf);
                 let (o, i) = Framed::new(stream, packets::Codec::standard()).split();
                 let mut p = Peer::new(connid, i, o);
                 p.run(spaces, &config).await?
@@ -93,45 +95,54 @@ async fn run_connection(connid: ConnId,
     Ok(())
 }
 
+static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16, config: config::ServerConfigRef) ->
     UnitAsyncResult
 {
     let mut listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    println!("Listening on port {}", port);
-    let mut id = port as u64 + 100000000000000;
     loop {
         let (stream, addr) = listener.accept().await?;
-        let connid = id;
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let spaces = Arc::clone(&spaces);
         let config = Arc::clone(&config);
-        id += 100000;
         if let Some(n) = config.recv_buffer_size { stream.set_recv_buffer_size(n)?; }
         if let Some(n) = config.send_buffer_size { stream.set_send_buffer_size(n)?; }
         tokio::spawn(async move {
-            println!("Connection {} ({:?}) accepted from port {}", connid, addr, port);
-            match run_connection(connid, stream, spaces, config).await {
-                Ok(()) => println!("Connection {} ({:?}) terminated normally", connid, addr),
-                Err(e) => println!("Connection {} ({:?}) terminated: {}", connid, addr, e),
+            info!(addr = display(addr), "accepted");
+            match run_connection(id, stream, spaces, config).await {
+                Ok(()) => info!("closed"),
+                Err(e) => info!(error = display(e), "closed"),
             }
-        });
+        }.instrument(tracing::info_span!("connection", id)));
     }
 }
 
 async fn periodic_tasks(spaces: Arc<Mutex<spaces::Spaces>>) -> UnitAsyncResult {
-    let interval = core::time::Duration::from_secs(5);
+    let interval = core::time::Duration::from_secs(10);
     let mut delay = tokio::time::interval(interval);
     loop {
         delay.next().await.unwrap();
         {
             let mut spaces = spaces.lock().unwrap();
             spaces.cleanup();
-            println!("{}", spaces.stats_string(interval));
+            spaces.dump_stats(interval);
         }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
+        .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into());
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_ansi(true)
+        .with_max_level(Level::TRACE)
+        .with_env_filter(filter)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Could not set tracing global subscriber");
+
     let config = Arc::new(config::ServerConfig::from_args());
 
     let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
@@ -144,18 +155,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    trace!("startup");
+
     for port in config.ports.clone() {
         let spaces = Arc::clone(&spaces);
         let config = Arc::clone(&config);
         daemons.push(tokio::spawn(async move {
+            info!(port, "listening");
             match run_listener(spaces, port, config).await {
                 Ok(()) => (),
                 Err(e) => {
-                    eprintln!("Error from listener for port {}: {}", port, e);
+                    error!("{}", e);
                     std::process::exit(2)
                 }
             }
-        }));
+        }.instrument(tracing::info_span!("listener", port))));
     }
 
     futures::future::join_all(daemons).await;

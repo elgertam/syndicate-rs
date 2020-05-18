@@ -3,6 +3,8 @@ use super::dataspace;
 
 use std::sync::Arc;
 
+use tracing::{info, debug};
+
 use preserves::value::Map;
 
 pub struct Spaces {
@@ -24,9 +26,8 @@ impl Spaces {
             }
         };
 
-        println!("Dataspace {:?} {}",
-                 name,
-                 if is_new { "created" } else { "accessed" });
+        debug!(name = debug(name),
+               action = display(if is_new { "created" } else { "accessed" }));
 
         space
     }
@@ -38,23 +39,17 @@ impl Spaces {
             .collect();
     }
 
-    pub fn stats_string(&self, delta: core::time::Duration) -> String {
-        let mut v = vec![];
-        v.push(format!("{} dataspace(s)", self.index.len()));
+    pub fn dump_stats(&self, delta: core::time::Duration)  {
+        info!("{} dataspace(s)", self.index.len());
         for (dsname, dsref) in &self.index {
             let mut ds = dsref.write().unwrap();
-            v.push(format!("  {:?}: {} connection(s) {}, {} assertion(s) {}, {} endpoint(s) {}, msgs in {}/sec, out {}/sec",
-                           dsname,
-                           ds.peer_count(),
-                           format!("(+{}/-{})", ds.churn.peers_added, ds.churn.peers_removed),
-                           ds.assertion_count(),
-                           format!("(+{}/-{})", ds.churn.assertions_added, ds.churn.assertions_removed),
-                           ds.endpoint_count(),
-                           format!("(+{}/-{})", ds.churn.endpoints_added, ds.churn.endpoints_removed),
-                           ds.churn.messages_injected as f32 / delta.as_secs() as f32,
-                           ds.churn.messages_delivered as f32 / delta.as_secs() as f32));
+            info!(name = debug(dsname),
+                  connections = display(format!("{} (+{}/-{})", ds.peer_count(), ds.churn.peers_added, ds.churn.peers_removed)),
+                  assertions = display(format!("{} (+{}/-{})", ds.assertion_count(), ds.churn.assertions_added, ds.churn.assertions_removed)),
+                  endpoints = display(format!("{} (+{}/-{})", ds.endpoint_count(), ds.churn.endpoints_added, ds.churn.endpoints_removed)),
+                  msg_in_rate = display(ds.churn.messages_injected as f32 / delta.as_secs() as f32),
+                  msg_out_rate = display(ds.churn.messages_delivered as f32 / delta.as_secs() as f32));
             ds.churn.reset();
         }
-        v.join("\n")
     }
 }

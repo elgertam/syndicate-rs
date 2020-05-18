@@ -73,7 +73,7 @@ where I: Stream<Item = ResultC2S> + Send,
             let queue_depth_sample = queue_depth.load(Ordering::Relaxed);
             if queue_depth_sample > config.overload_threshold {
                 let n = overloaded.unwrap_or(0);
-                println!("{:?} overloaded({}): {:?}", self.id, n, queue_depth_sample);
+                tracing::warn!(turns=n, queue_depth=queue_depth_sample, "overloaded");
                 if n == config.overload_turn_limit {
                     to_send.push(err("Overloaded",
                                      value::Value::from(queue_depth_sample as u64).wrap()));
@@ -87,7 +87,7 @@ where I: Stream<Item = ResultC2S> + Send,
                 }
             } else {
                 if let Some(_) = overloaded {
-                    println!("{:?} recovered: {:?}", self.id, queue_depth_sample);
+                    tracing::info!(queue_depth=queue_depth_sample, "recovered");
                 }
                 overloaded = None;
             }
@@ -98,7 +98,7 @@ where I: Stream<Item = ResultC2S> + Send,
                 frame = self.i.next().fuse() => match frame {
                     Some(res) => match res {
                         Ok(p) => {
-                            // println!("{:?}: input {:?}", self.id, &p);
+                            tracing::trace!(packet = debug(&p), "input");
                             match p {
                                 packets::C2S::Turn(actions) => {
                                     match self.space.as_ref().unwrap().write().unwrap()
@@ -165,10 +165,9 @@ where I: Stream<Item = ResultC2S> + Send,
             }
             for v in to_send {
                 if let packets::S2C::Err(ref msg, ref ctx) = v {
-                    println!("{:?}: connection crashed: {}; context {:?}", self.id, msg, ctx);
+                    tracing::error!(context = debug(ctx), msg = display(msg), "error");
                 } else {
-                    // println!("{:?}: output {:?}", self.id, &v);
-                    ()
+                    tracing::trace!(packet = debug(&v), "output");
                 }
                 self.o.send(v).await?;
             }

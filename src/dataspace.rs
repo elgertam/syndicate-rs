@@ -133,7 +133,7 @@ impl Dataspace {
     {
         let mut outbound_turns: Map<ConnId, Vec<packets::Event>> = Map::new();
         for a in actions {
-            // println!("Turn action: {:?}", &a);
+            tracing::trace!(action = debug(&a), "turn");
             match a {
                 packets::Action::Assert(ref epname, ref assertion) => {
                     let ac = self.peers.get_mut(&id).unwrap();
