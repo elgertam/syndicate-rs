@@ -100,7 +100,6 @@ async fn run_connection(connid: ConnId,
                                             "closed before starting")),
         _ => unreachable!()
     }
-    println!("Connection {} ({:?}) terminated normally", connid, addr);
     Ok(())
 }
 
