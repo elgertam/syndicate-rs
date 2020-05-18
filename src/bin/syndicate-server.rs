@@ -13,10 +13,15 @@ use tungstenite::Message;
 
 use structopt::StructOpt;
 
-#[derive(StructOpt)]
+#[derive(Clone, StructOpt)]
 struct Cli {
     #[structopt(short = "p", long = "port", default_value = "8001")]
     ports: Vec<u16>,
+
+    #[structopt(long)]
+    recv_buffer_size: Option<usize>,
+    #[structopt(long)]
+    send_buffer_size: Option<usize>,
 }
 
 type UnitAsyncResult = Result<(), std::io::Error>;
@@ -99,7 +104,7 @@ async fn run_connection(connid: ConnId,
     Ok(())
 }
 
-async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16) -> UnitAsyncResult {
+async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16, args: Cli) -> UnitAsyncResult {
     let mut listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     println!("Listening on port {}", port);
     let mut id = port as u64 + 100000000000000;
@@ -108,6 +113,8 @@ async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16) -> UnitAsyn
         let connid = id;
         let spaces = Arc::clone(&spaces);
         id += 100000;
+        if let Some(n) = args.recv_buffer_size { stream.set_recv_buffer_size(n)?; }
+        if let Some(n) = args.send_buffer_size { stream.set_send_buffer_size(n)?; }
         tokio::spawn(async move {
             println!("Connection {} ({:?}) accepted from port {}", connid, addr, port);
             match run_connection(connid, stream, spaces).await {
@@ -145,10 +152,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    for port in args.ports {
+    for port in args.ports.clone() {
         let spaces = Arc::clone(&spaces);
+        let args = args.clone();
         daemons.push(tokio::spawn(async move {
-            match run_listener(spaces, port).await {
+            match run_listener(spaces, port, args).await {
                 Ok(()) => (),
                 Err(e) => {
                     eprintln!("Error from listener for port {}: {}", port, e);
