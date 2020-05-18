@@ -3,7 +3,6 @@ use syndicate::peer::{Peer, ResultC2S};
 use preserves::value;
 
 use std::sync::{Mutex, Arc};
-use std::net::SocketAddr;
 use futures::{SinkExt, StreamExt};
 
 use tokio::net::TcpListener;
@@ -68,7 +67,6 @@ fn message_decoder(codec: &value::Codec<V, Syndicate>)
 }
 
 async fn run_connection(connid: ConnId,
-                        addr: SocketAddr,
                         mut stream: TcpStream,
                         spaces: Arc<Mutex<spaces::Spaces>>) ->
     UnitAsyncResult
@@ -112,7 +110,7 @@ async fn run_listener(spaces: Arc<Mutex<spaces::Spaces>>, port: u16) -> UnitAsyn
         id += 100000;
         tokio::spawn(async move {
             println!("Connection {} ({:?}) accepted from port {}", connid, addr, port);
-            match run_connection(connid, addr, stream, spaces).await {
+            match run_connection(connid, stream, spaces).await {
                 Ok(()) => println!("Connection {} ({:?}) terminated normally", connid, addr),
                 Err(e) => println!("Connection {} ({:?}) terminated: {}", connid, addr, e),
             }
