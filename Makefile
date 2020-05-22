@@ -11,6 +11,14 @@ clippy-watch:
 inotifytest:
 	inotifytest sh -c 'reset; cargo build && RUST_BACKTRACE=1 cargo test -- --nocapture'
 
+binary: binary-release
+
+binary-release:
+	cargo build --release --all-targets
+
+binary-debug:
+	cargo build --all-targets
+
 arm-binary: arm-binary-release
 
 arm-binary-setup:
@@ -18,6 +26,6 @@ arm-binary-setup:
 
 # sudo apt install binutils-arm-linux-gnueabihf
 arm-binary-release: arm-binary-setup
-	CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-gnueabihf-ld cargo build --target=armv7-unknown-linux-musleabihf --release
+	CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-gnueabihf-ld cargo build --target=armv7-unknown-linux-musleabihf --release --all-targets
 arm-binary-debug: arm-binary-setup
-	CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-gnueabihf-ld cargo build --target=armv7-unknown-linux-musleabihf
+	CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-gnueabihf-ld cargo build --target=armv7-unknown-linux-musleabihf --all-targets
