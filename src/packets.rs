@@ -1,8 +1,8 @@
 use super::V;
 use super::Syndicate;
 
-use bytes::{Buf, BytesMut};
-use preserves::value;
+use bytes::{Buf, buf::BufMutExt, BytesMut};
+use preserves::{value, ser::Serializer};
 use std::io;
 use std::sync::Arc;
 use std::marker::PhantomData;
@@ -120,14 +120,16 @@ pub struct Codec<InT, OutT> {
 pub type ServerCodec = Codec<C2S, S2C>;
 pub type ClientCodec = Codec<S2C, C2S>;
 
+pub fn standard_preserves_placeholders() -> value::DecodePlaceholderMap<V, Syndicate> {
+    let mut m = value::Map::new();
+    m.insert(0, value::Value::symbol("Discard"));
+    m.insert(1, value::Value::symbol("Capture"));
+    m.insert(2, value::Value::symbol("Observe"));
+    m
+}
+
 pub fn standard_preserves_codec() -> value::Codec<V, Syndicate> {
-    value::Codec::new({
-        let mut m = value::Map::new();
-        m.insert(0, value::Value::symbol("Discard"));
-        m.insert(1, value::Value::symbol("Capture"));
-        m.insert(2, value::Value::symbol("Observe"));
-        m
-    })
+    value::Codec::new(standard_preserves_placeholders())
 }
 
 impl<InT, OutT> Codec<InT, OutT> {
@@ -166,8 +168,9 @@ impl<InT, OutT: serde::Serialize> tokio_util::codec::Encoder<OutT> for Codec<InT
 {
     type Error = EncodeError;
     fn encode(&mut self, item: OutT, bs: &mut BytesMut) -> Result<(), Self::Error> {
-        let v: V = value::to_value(&item)?;
-        bs.extend(self.codec.encode_bytes(&v)?);
+        let mut w = bs.writer();
+        let mut ser: Serializer<_, V, Syndicate> = Serializer::new(&mut w, self.codec.encode_placeholders.as_ref());
+        item.serialize(&mut ser).map_err(|e| std::io::Error::from(e))?;
         Ok(())
     }
 }

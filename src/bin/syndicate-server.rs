@@ -29,8 +29,13 @@ fn translate_sink_err(e: tungstenite::Error) -> packets::EncodeError {
 fn encode_message(codec: &value::Codec<V, Syndicate>, p: packets::S2C) ->
     Result<Message, packets::EncodeError>
 {
-    let v: V = value::to_value(p)?;
-    Ok(Message::Binary(codec.encode_bytes(&v)?))
+    use serde::ser::Serialize;
+    use preserves::ser::Serializer;
+    let mut bs = Vec::with_capacity(128);
+    let mut ser: Serializer<_, V, Syndicate> =
+        Serializer::new(&mut bs, codec.encode_placeholders.as_ref());
+    p.serialize(&mut ser).map_err(|e| std::io::Error::from(e))?;
+    Ok(Message::Binary(bs))
 }
 
 fn message_encoder(codec: &value::Codec<V, Syndicate>)
