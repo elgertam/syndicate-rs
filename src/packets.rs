@@ -2,7 +2,7 @@ use super::V;
 use super::Syndicate;
 
 use bytes::{Buf, buf::BufMutExt, BytesMut};
-use preserves::{value, ser::Serializer, value::Reader};
+use preserves::{value, ser::Serializer};
 use std::io;
 use std::sync::Arc;
 use std::marker::PhantomData;
@@ -46,7 +46,7 @@ pub enum S2C {
 
 #[derive(Debug)]
 pub enum DecodeError {
-    Read(value::decoder::Error),
+    Read(io::Error),
     Parse(value::error::Error<Syndicate>, V),
 }
 
@@ -69,7 +69,7 @@ impl std::error::Error for DecodeError {
 
 #[derive(Debug)]
 pub enum EncodeError {
-    Write(value::encoder::Error),
+    Write(io::Error),
     Unparse(value::error::Error<Syndicate>),
 }
 
@@ -148,9 +148,8 @@ impl<InT: serde::de::DeserializeOwned, OutT> tokio_util::codec::Decoder for Code
             None => Ok(None),
             Some(res) => {
                 let v = res?;
-                let buffered_len = d.read.buffered_len()?;
                 let final_len = buf.len();
-                bs.advance(orig_len - final_len - buffered_len);
+                bs.advance(orig_len - final_len);
                 match value::from_value(&v) {
                     Ok(p) => Ok(Some(p)),
                     Err(e) => Err(DecodeError::Parse(e, v))
