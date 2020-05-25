@@ -2,7 +2,7 @@ use super::V;
 use super::Syndicate;
 
 use bytes::{Buf, buf::BufMutExt, BytesMut};
-use preserves::{value, ser::Serializer};
+use preserves::{value, ser::Serializer, value::Reader};
 use std::io;
 use std::sync::Arc;
 use std::marker::PhantomData;
@@ -48,12 +48,6 @@ pub enum S2C {
 pub enum DecodeError {
     Read(value::decoder::Error),
     Parse(value::error::Error<Syndicate>, V),
-}
-
-impl From<value::decoder::Error> for DecodeError {
-    fn from(v: value::decoder::Error) -> Self {
-        DecodeError::Read(v)
-    }
 }
 
 impl From<io::Error> for DecodeError {
@@ -109,6 +103,7 @@ impl std::fmt::Display for EncodeError {
 
 impl std::error::Error for EncodeError {
 }
+
 //---------------------------------------------------------------------------
 
 pub struct Codec<InT, OutT> {
@@ -148,18 +143,19 @@ impl<InT: serde::de::DeserializeOwned, OutT> tokio_util::codec::Decoder for Code
     fn decode(&mut self, bs: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let mut buf = &bs[..];
         let orig_len = buf.len();
-        let res = self.codec.decode(&mut buf);
-        let final_len = buf.len();
-        match res {
-            Ok(v) => {
-                bs.advance(orig_len - final_len);
+        let mut d = self.codec.decoder(&mut buf);
+        match d.next() {
+            None => Ok(None),
+            Some(res) => {
+                let v = res?;
+                let buffered_len = d.read.buffered_len()?;
+                let final_len = buf.len();
+                bs.advance(orig_len - final_len - buffered_len);
                 match value::from_value(&v) {
                     Ok(p) => Ok(Some(p)),
                     Err(e) => Err(DecodeError::Parse(e, v))
                 }
             }
-            Err(value::decoder::Error::Eof) => Ok(None),
-            Err(e) => Err(DecodeError::Read(e)),
         }
     }
 }

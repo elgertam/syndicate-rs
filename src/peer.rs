@@ -121,14 +121,16 @@ where I: Stream<Item = ResultC2S> + Send,
                                 }
                             }
                         }
-                        Err(packets::DecodeError::Read(value::decoder::Error::Eof)) => {
-                            tracing::trace!("eof");
-                            running = false;
-                        }
-                        Err(packets::DecodeError::Read(value::decoder::Error::Io(e))) => return Err(e),
-                        Err(packets::DecodeError::Read(value::decoder::Error::Syntax(s))) => {
-                            to_send.push(err(s, value::Value::from(false).wrap()));
-                            running = false;
+                        Err(packets::DecodeError::Read(e)) => {
+                            if value::is_eof_error(&e) {
+                                tracing::trace!("eof");
+                                running = false;
+                            } else if value::is_syntax_error(&e) {
+                                to_send.push(err(&e.to_string(), value::Value::from(false).wrap()));
+                                running = false;
+                            } else {
+                                return Err(e)
+                            }
                         }
                         Err(packets::DecodeError::Parse(e, v)) => {
                             to_send.push(err(&format!("Packet deserialization error: {}", e), v));

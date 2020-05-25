@@ -52,33 +52,29 @@ fn message_decoder(codec: &value::Codec<V, Syndicate>)
             return match r {
                 Ok(ref m) => match m {
                     Message::Text(_) => Err(packets::DecodeError::Read(
-                        value::decoder::Error::Syntax("Text websocket frames are not accepted"))),
+                        value::reader::err("Text websocket frames are not accepted"))),
                     Message::Binary(ref bs) => {
                         let mut buf = &bs[..];
-                        match codec.decode(&mut buf) {
-                            Ok(v) => if buf.len() > 0 {
-                                Err(packets::DecodeError::Read(
-                                    value::decoder::Error::Io(
-                                        std::io::Error::new(std::io::ErrorKind::Other,
-                                                            format!("{} trailing bytes",
-                                                                    buf.len())))))
-                            } else {
-                                value::from_value(&v).map_err(|e| packets::DecodeError::Parse(e, v))
-                            }
-                            Err(value::decoder::Error::Eof) =>
-                                Err(packets::DecodeError::Read(
-                                    value::decoder::Error::Io(
-                                        std::io::Error::new(std::io::ErrorKind::UnexpectedEof,
-                                                            "short packet")))),
-                            Err(e) => Err(e.into()),
+                        let mut vs = codec.decode_all(&mut buf)?;
+                        if vs.len() > 1 {
+                            Err(packets::DecodeError::Read(
+                                std::io::Error::new(std::io::ErrorKind::Other,
+                                                    "Multiple packets in a single message")))
+                        } else if vs.len() == 0 {
+                            Err(packets::DecodeError::Read(
+                                std::io::Error::new(std::io::ErrorKind::Other,
+                                                    "Empty message")))
+                        } else {
+                            value::from_value(&vs[0])
+                                .map_err(|e| packets::DecodeError::Parse(e, vs.swap_remove(0)))
                         }
                     }
                     Message::Ping(_) => continue, // pings are handled by tungstenite before we see them
                     Message::Pong(_) => continue, // unsolicited pongs are to be ignored
-                    Message::Close(_) => Err(packets::DecodeError::Read(value::decoder::Error::Eof)),
+                    Message::Close(_) => Err(packets::DecodeError::Read(value::reader::eof())),
                 }
                 Err(tungstenite::Error::Io(e)) => Err(e.into()),
-                Err(e) => Err(packets::DecodeError::Read(value::decoder::Error::Io(other_eio(e)))),
+                Err(e) => Err(packets::DecodeError::Read(other_eio(e))),
             }
         }
     };
