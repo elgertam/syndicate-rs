@@ -138,8 +138,7 @@ impl Dataspace {
                 packets::Action::Assert(ref epname, ref assertion) => {
                     let ac = self.peers.get_mut(&id).unwrap();
                     if ac.endpoints.contains_key(&epname) {
-                        return Err(("Duplicate endpoint name".to_string(),
-                                    value::to_value(a).unwrap()));
+                        return Err(("Duplicate endpoint name".to_string(), value::to_value(a)));
                     }
 
                     let ar =
@@ -171,8 +170,7 @@ impl Dataspace {
                     let ac = self.peers.get_mut(&id).unwrap();
                     match ac.endpoints.remove(epname) {
                         None => {
-                            return Err(("Nonexistent endpoint name".to_string(),
-                                        value::to_value(a).unwrap()));
+                            return Err(("Nonexistent endpoint name".to_string(), value::to_value(a)));
                         }
                         Some(ep) => {
                             self.remove_endpoint(&mut outbound_turns, id, epname, ep);

@@ -22,24 +22,20 @@ fn other_eio<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
 }
 
-fn translate_sink_err(e: tungstenite::Error) -> packets::EncodeError {
-    packets::EncodeError::Write(other_eio(e))
-}
-
 fn encode_message(codec: &value::Codec<V, Syndicate>, p: packets::S2C) ->
-    Result<Message, packets::EncodeError>
+    Result<Message, std::io::Error>
 {
     use serde::ser::Serialize;
     use preserves::ser::Serializer;
     let mut bs = Vec::with_capacity(128);
     let mut ser: Serializer<_, V, Syndicate> =
         Serializer::new(&mut bs, codec.encode_placeholders.as_ref());
-    p.serialize(&mut ser).map_err(|e| std::io::Error::from(e))?;
+    p.serialize(&mut ser)?;
     Ok(Message::Binary(bs))
 }
 
 fn message_encoder(codec: &value::Codec<V, Syndicate>)
-    -> impl Fn(packets::S2C) -> futures::future::Ready<Result<Message, packets::EncodeError>> + '_
+    -> impl Fn(packets::S2C) -> futures::future::Ready<Result<Message, std::io::Error>> + '_
 {
     return move |p| futures::future::ready(encode_message(codec, p));
 }
@@ -97,7 +93,7 @@ async fn run_connection(connid: ConnId,
                 let (o, i) = s.split();
                 let codec = packets::standard_preserves_codec();
                 let i = i.map(message_decoder(&codec));
-                let o = o.sink_map_err(translate_sink_err).with(message_encoder(&codec));
+                let o = o.sink_map_err(other_eio).with(message_encoder(&codec));
                 let mut p = Peer::new(connid, i, o);
                 p.run(spaces, &config).await?
             },

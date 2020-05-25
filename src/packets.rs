@@ -47,7 +47,7 @@ pub enum S2C {
 #[derive(Debug)]
 pub enum DecodeError {
     Read(io::Error),
-    Parse(value::error::Error<Syndicate>, V),
+    Parse(value::de::error::Error<Syndicate>, V),
 }
 
 impl From<io::Error> for DecodeError {
@@ -63,45 +63,6 @@ impl std::fmt::Display for DecodeError {
 }
 
 impl std::error::Error for DecodeError {
-}
-
-//---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub enum EncodeError {
-    Write(io::Error),
-    Unparse(value::error::Error<Syndicate>),
-}
-
-impl From<io::Error> for EncodeError {
-    fn from(v: io::Error) -> Self {
-        EncodeError::Write(v)
-    }
-}
-
-impl From<value::error::Error<Syndicate>> for EncodeError {
-    fn from(v: value::error::Error<Syndicate>) -> Self {
-        EncodeError::Unparse(v)
-    }
-}
-
-impl From<EncodeError> for io::Error {
-    fn from(v: EncodeError) -> Self {
-        match v {
-            EncodeError::Write(e) => e,
-            EncodeError::Unparse(e) =>
-                Self::new(io::ErrorKind::InvalidData, format!("{:?}", e)),
-        }
-    }
-}
-
-impl std::fmt::Display for EncodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for EncodeError {
 }
 
 //---------------------------------------------------------------------------
@@ -161,7 +122,7 @@ impl<InT: serde::de::DeserializeOwned, OutT> tokio_util::codec::Decoder for Code
 
 impl<InT, OutT: serde::Serialize> tokio_util::codec::Encoder<OutT> for Codec<InT, OutT>
 {
-    type Error = EncodeError;
+    type Error = io::Error;
     fn encode(&mut self, item: OutT, bs: &mut BytesMut) -> Result<(), Self::Error> {
         let mut w = bs.writer();
         let mut ser: Serializer<_, V, Syndicate> = Serializer::new(&mut w, self.codec.encode_placeholders.as_ref());

@@ -20,7 +20,7 @@ pub type ResultC2S = Result<packets::C2S, packets::DecodeError>;
 
 pub struct Peer<I, O>
 where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = packets::EncodeError>,
+      O: Sink<packets::S2C, Error = std::io::Error>,
 {
     id: ConnId,
     tx: UnboundedSender<packets::S2C>,
@@ -36,7 +36,7 @@ fn err(s: &str, ctx: V) -> packets::S2C {
 
 impl<I, O> Peer<I, O>
 where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = packets::EncodeError>,
+      O: Sink<packets::S2C, Error = std::io::Error>,
 {
     pub fn new(id: ConnId, i: I, o: O) -> Self {
         let (tx, rx) = unbounded_channel();
@@ -116,7 +116,7 @@ where I: Stream<Item = ResultC2S> + Send,
                                 packets::C2S::Pong() =>
                                     (),
                                 packets::C2S::Connect(_) => {
-                                    to_send.push(err("Unexpected Connect", value::to_value(p).unwrap()));
+                                    to_send.push(err("Unexpected Connect", value::to_value(p)));
                                     running = false;
                                 }
                             }
@@ -184,7 +184,7 @@ where I: Stream<Item = ResultC2S> + Send,
 
 impl<I, O> Drop for Peer<I, O>
 where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = packets::EncodeError>,
+      O: Sink<packets::S2C, Error = std::io::Error>,
 {
     fn drop(&mut self) {
         if let Some(ref s) = self.space {
