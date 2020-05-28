@@ -7,8 +7,7 @@ use std::task::Poll;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?,
-                                 ClientCodec::standard());
+    let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
     frames.send(C2S::Connect(Value::from("chat").wrap())).await?;
 
     let mut counter: u64 = 0;

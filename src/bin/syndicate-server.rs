@@ -1,6 +1,5 @@
-use syndicate::{config, spaces, packets, ConnId, V, Syndicate};
+use syndicate::{config, spaces, packets, ConnId};
 use syndicate::peer::{Peer, ResultC2S};
-use preserves::value;
 
 use std::sync::{Mutex, Arc};
 use futures::{SinkExt, StreamExt};
@@ -18,62 +17,45 @@ use structopt::StructOpt; // for from_args in main
 
 type UnitAsyncResult = Result<(), std::io::Error>;
 
-fn other_eio<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+fn message_error<E: std::fmt::Display>(e: E) -> packets::Error {
+    packets::Error::Message(e.to_string())
 }
 
-fn encode_message(codec: &value::Codec<V, Syndicate>, p: packets::S2C) ->
-    Result<Message, std::io::Error>
+fn encode_message(p: packets::S2C) ->
+    Result<Message, packets::Error>
 {
-    use serde::ser::Serialize;
-    use preserves::ser::Serializer;
     let mut bs = Vec::with_capacity(128);
-    let mut ser: Serializer<_, V, Syndicate> =
-        Serializer::new(&mut bs, codec.encode_placeholders.as_ref());
-    p.serialize(&mut ser)?;
+    preserves::ser::to_writer(&mut bs, &p)?;
     Ok(Message::Binary(bs))
 }
 
-fn message_encoder(codec: &value::Codec<V, Syndicate>)
-    -> impl Fn(packets::S2C) -> futures::future::Ready<Result<Message, std::io::Error>> + '_
+fn message_encoder(p: packets::S2C) -> futures::future::Ready<Result<Message, packets::Error>>
 {
-    return move |p| futures::future::ready(encode_message(codec, p));
+    futures::future::ready(encode_message(p))
 }
 
-fn message_decoder(codec: &value::Codec<V, Syndicate>)
-    -> impl Fn(Result<Message, tungstenite::Error>) -> ResultC2S + '_
+fn message_decoder(r: Result<Message, tungstenite::Error>) -> ResultC2S
 {
-    return move |r| {
-        loop {
-            return match r {
-                Ok(ref m) => match m {
-                    Message::Text(_) => Err(packets::DecodeError::Read(
-                        value::reader::err("Text websocket frames are not accepted"))),
-                    Message::Binary(ref bs) => {
-                        let mut buf = &bs[..];
-                        let mut vs = codec.decode_all(&mut buf)?;
-                        if vs.len() > 1 {
-                            Err(packets::DecodeError::Read(
-                                std::io::Error::new(std::io::ErrorKind::Other,
-                                                    "Multiple packets in a single message")))
-                        } else if vs.len() == 0 {
-                            Err(packets::DecodeError::Read(
-                                std::io::Error::new(std::io::ErrorKind::Other,
-                                                    "Empty message")))
-                        } else {
-                            value::from_value(&vs[0])
-                                .map_err(|e| packets::DecodeError::Parse(e, vs.swap_remove(0)))
-                        }
-                    }
-                    Message::Ping(_) => continue, // pings are handled by tungstenite before we see them
-                    Message::Pong(_) => continue, // unsolicited pongs are to be ignored
-                    Message::Close(_) => Err(packets::DecodeError::Read(value::reader::eof())),
-                }
-                Err(tungstenite::Error::Io(e)) => Err(e.into()),
-                Err(e) => Err(packets::DecodeError::Read(other_eio(e))),
+    loop {
+        return match r {
+            Ok(ref m) => match m {
+                Message::Text(_) =>
+                    Err(preserves::error::syntax_error("Text websocket frames are not accepted")),
+                Message::Binary(ref bs) =>
+                    Ok(preserves::de::from_bytes(bs)?),
+                Message::Ping(_) =>
+                    continue, // pings are handled by tungstenite before we see them
+                Message::Pong(_) =>
+                    continue, // unsolicited pongs are to be ignored
+                Message::Close(_) =>
+                    Err(preserves::error::eof()),
             }
+            Err(tungstenite::Error::Io(e)) =>
+                Err(e.into()),
+            Err(e) =>
+                Err(message_error(e)),
         }
-    };
+    }
 }
 
 async fn run_connection(connid: ConnId,
@@ -91,15 +73,14 @@ async fn run_connection(connid: ConnId,
                 let s = tokio_tungstenite::accept_async(stream).await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 let (o, i) = s.split();
-                let codec = packets::standard_preserves_codec();
-                let i = i.map(message_decoder(&codec));
-                let o = o.sink_map_err(other_eio).with(message_encoder(&codec));
+                let i = i.map(message_decoder);
+                let o = o.sink_map_err(message_error).with(message_encoder);
                 let mut p = Peer::new(connid, i, o);
                 p.run(spaces, &config).await?
             },
             _ => {
                 info!(protocol = display("raw"), peer = debug(addr));
-                let (o, i) = Framed::new(stream, packets::Codec::standard()).split();
+                let (o, i) = Framed::new(stream, packets::Codec::new()).split();
                 let mut p = Peer::new(connid, i, o);
                 p.run(spaces, &config).await?
             }

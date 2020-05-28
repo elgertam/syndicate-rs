@@ -16,8 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let discard: V = Value::simple_record("Discard", vec![]).wrap();
     let capture: V = Value::simple_record("Capture", vec![discard]).wrap();
 
-    let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?,
-                                 ClientCodec::standard());
+    let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
     frames.send(C2S::Connect(Value::from("chat").wrap())).await?;
     frames.send(
         C2S::Turn(vec![Action::Assert(

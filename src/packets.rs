@@ -1,11 +1,15 @@
 use super::V;
-use super::Syndicate;
 
 use bytes::{Buf, buf::BufMutExt, BytesMut};
-use preserves::{value, ser::Serializer};
-use std::io;
 use std::sync::Arc;
 use std::marker::PhantomData;
+
+use preserves::{
+    de::Deserializer,
+    error,
+    ser::to_writer,
+    value::reader::from_bytes,
+};
 
 pub type EndpointName = V;
 pub type Assertion = V;
@@ -44,31 +48,9 @@ pub enum S2C {
 
 //---------------------------------------------------------------------------
 
-#[derive(Debug)]
-pub enum DecodeError {
-    Read(io::Error),
-    Parse(value::de::error::Error<Syndicate>, V),
-}
-
-impl From<io::Error> for DecodeError {
-    fn from(v: io::Error) -> Self {
-        DecodeError::Read(v.into())
-    }
-}
-
-impl std::fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for DecodeError {
-}
-
-//---------------------------------------------------------------------------
+pub type Error = error::Error;
 
 pub struct Codec<InT, OutT> {
-    codec: value::Codec<V, Syndicate>,
     ph_in: PhantomData<InT>,
     ph_out: PhantomData<OutT>,
 }
@@ -76,45 +58,25 @@ pub struct Codec<InT, OutT> {
 pub type ServerCodec = Codec<C2S, S2C>;
 pub type ClientCodec = Codec<S2C, C2S>;
 
-pub fn standard_preserves_placeholders() -> value::DecodePlaceholderMap<V, Syndicate> {
-    let mut m = value::Map::new();
-    m.insert(0, value::Value::symbol("Discard"));
-    m.insert(1, value::Value::symbol("Capture"));
-    m.insert(2, value::Value::symbol("Observe"));
-    m
-}
-
-pub fn standard_preserves_codec() -> value::Codec<V, Syndicate> {
-    value::Codec::new(standard_preserves_placeholders())
-}
-
 impl<InT, OutT> Codec<InT, OutT> {
-    pub fn new(codec: value::Codec<V, Syndicate>) -> Self {
-        Codec { codec, ph_in: PhantomData, ph_out: PhantomData }
-    }
-
-    pub fn standard() -> Self {
-        Self::new(standard_preserves_codec())
+    pub fn new() -> Self {
+        Codec { ph_in: PhantomData, ph_out: PhantomData }
     }
 }
 
 impl<InT: serde::de::DeserializeOwned, OutT> tokio_util::codec::Decoder for Codec<InT, OutT> {
     type Item = InT;
-    type Error = DecodeError;
+    type Error = Error;
     fn decode(&mut self, bs: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let mut buf = &bs[..];
-        let orig_len = buf.len();
-        let mut d = self.codec.decoder(&mut buf);
-        match d.next() {
-            None => Ok(None),
-            Some(res) => {
-                let v = res?;
-                let final_len = buf.len();
-                bs.advance(orig_len - final_len);
-                match value::from_value(&v) {
-                    Ok(p) => Ok(Some(p)),
-                    Err(e) => Err(DecodeError::Parse(e, v))
-                }
+        let mut r = from_bytes(bs);
+        let mut d = Deserializer::from_reader(&mut r);
+        match Self::Item::deserialize(&mut d) {
+            Err(e) if error::is_eof_error(&e) => Ok(None),
+            Err(e) => Err(e),
+            Ok(item) => {
+                let count = d.read.source.index;
+                bs.advance(count);
+                Ok(Some(item))
             }
         }
     }
@@ -122,11 +84,8 @@ impl<InT: serde::de::DeserializeOwned, OutT> tokio_util::codec::Decoder for Code
 
 impl<InT, OutT: serde::Serialize> tokio_util::codec::Encoder<OutT> for Codec<InT, OutT>
 {
-    type Error = io::Error;
+    type Error = Error;
     fn encode(&mut self, item: OutT, bs: &mut BytesMut) -> Result<(), Self::Error> {
-        let mut w = bs.writer();
-        let mut ser: Serializer<_, V, Syndicate> = Serializer::new(&mut w, self.codec.encode_placeholders.as_ref());
-        item.serialize(&mut ser).map_err(|e| std::io::Error::from(e))?;
-        Ok(())
+        to_writer(&mut bs.writer(), &item)
     }
 }

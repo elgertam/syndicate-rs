@@ -1,5 +1,4 @@
 use super::ConnId;
-use super::Syndicate;
 use super::bag;
 use super::packets::Assertion;
 use super::packets::Captures;
@@ -9,7 +8,6 @@ use super::packets::Event;
 use preserves::value::{Map, Set, Value, NestedValue};
 use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
-use std::iter::FromIterator;
 use std::sync::Arc;
 
 type Bag<A> = bag::BTreeBag<A>;
@@ -555,47 +553,47 @@ pub fn analyze(a: &Assertion) -> AnalysisResults {
     }
 }
 
-pub fn instantiate_assertion(a: &Assertion, cs: Captures) -> CachedAssertion {
-    let mut capture_paths = Vec::new();
-    let mut path = Vec::new();
-    let mut vs: Vec<Assertion> = (*cs).clone();
-    vs.reverse();
-    let instantiated = instantiate_assertion_walk(&mut capture_paths, &mut path, &mut vs, a);
-    CachedAssertion::VisibilityRestricted(capture_paths, instantiated)
-}
+// pub fn instantiate_assertion(a: &Assertion, cs: Captures) -> CachedAssertion {
+//     let mut capture_paths = Vec::new();
+//     let mut path = Vec::new();
+//     let mut vs: Vec<Assertion> = (*cs).clone();
+//     vs.reverse();
+//     let instantiated = instantiate_assertion_walk(&mut capture_paths, &mut path, &mut vs, a);
+//     CachedAssertion::VisibilityRestricted(capture_paths, instantiated)
+// }
 
-fn instantiate_assertion_walk(capture_paths: &mut Paths,
-                              path: &mut Path,
-                              vs: &mut Vec<Assertion>,
-                              a: &Assertion) -> Assertion {
-    if let Some(fields) = a.value().as_simple_record("Capture", Some(1)) {
-        capture_paths.push(path.clone());
-        let v = vs.pop().unwrap();
-        instantiate_assertion_walk(capture_paths, path, vs, &fields[0]);
-        v
-    } else if a.value().is_simple_record("Discard", Some(0)) {
-        Value::Domain(Syndicate::new_placeholder()).wrap()
-    } else {
-        let f = |(i, aa)| {
-            path.push(i);
-            let vv = instantiate_assertion_walk(capture_paths,
-                                                path,
-                                                vs,
-                                                aa);
-            path.pop();
-            vv
-        };
-        match class_of(a) {
-            Some(Guard::Seq(_)) =>
-                Value::from(Vec::from_iter(a.value().as_sequence().unwrap()
-                                           .iter().enumerate().map(f)))
-                .wrap(),
-            Some(Guard::Rec(l, fieldcount)) =>
-                Value::record(l, a.value().as_record(Some(fieldcount)).unwrap().1
-                              .iter().enumerate().map(f).collect())
-                .wrap(),
-            None =>
-                a.clone(),
-        }
-    }
-}
+// fn instantiate_assertion_walk(capture_paths: &mut Paths,
+//                               path: &mut Path,
+//                               vs: &mut Vec<Assertion>,
+//                               a: &Assertion) -> Assertion {
+//     if let Some(fields) = a.value().as_simple_record("Capture", Some(1)) {
+//         capture_paths.push(path.clone());
+//         let v = vs.pop().unwrap();
+//         instantiate_assertion_walk(capture_paths, path, vs, &fields[0]);
+//         v
+//     } else if a.value().is_simple_record("Discard", Some(0)) {
+//         Value::Domain(Syndicate::new_placeholder()).wrap()
+//     } else {
+//         let f = |(i, aa)| {
+//             path.push(i);
+//             let vv = instantiate_assertion_walk(capture_paths,
+//                                                 path,
+//                                                 vs,
+//                                                 aa);
+//             path.pop();
+//             vv
+//         };
+//         match class_of(a) {
+//             Some(Guard::Seq(_)) =>
+//                 Value::from(Vec::from_iter(a.value().as_sequence().unwrap()
+//                                            .iter().enumerate().map(f)))
+//                 .wrap(),
+//             Some(Guard::Rec(l, fieldcount)) =>
+//                 Value::record(l, a.value().as_record(Some(fieldcount)).unwrap().1
+//                               .iter().enumerate().map(f).collect())
+//                 .wrap(),
+//             None =>
+//                 a.clone(),
+//         }
+//     }
+// }

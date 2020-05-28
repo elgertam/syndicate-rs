@@ -16,11 +16,11 @@ use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver, error::TryRecvError};
 use tokio::time::interval;
 
-pub type ResultC2S = Result<packets::C2S, packets::DecodeError>;
+pub type ResultC2S = Result<packets::C2S, packets::Error>;
 
 pub struct Peer<I, O>
 where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = std::io::Error>,
+      O: Sink<packets::S2C, Error = packets::Error>,
 {
     id: ConnId,
     tx: UnboundedSender<packets::S2C>,
@@ -36,7 +36,7 @@ fn err(s: &str, ctx: V) -> packets::S2C {
 
 impl<I, O> Peer<I, O>
 where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = std::io::Error>,
+      O: Sink<packets::S2C, Error = packets::Error>,
 {
     pub fn new(id: ConnId, i: I, o: O) -> Self {
         let (tx, rx) = unbounded_channel();
@@ -44,15 +44,15 @@ where I: Stream<Item = ResultC2S> + Send,
     }
 
     pub async fn run(&mut self, spaces: Arc<Mutex<spaces::Spaces>>, config: &config::ServerConfig) ->
-        Result<(), std::io::Error>
+        Result<(), packets::Error>
     {
         let firstpacket = self.i.next().await;
         let dsname = if let Some(Ok(packets::C2S::Connect(dsname))) = firstpacket {
             dsname
         } else {
             let e = format!("Expected initial Connect, got {:?}", firstpacket);
-            self.o.send(err(&e, value::Value::from(false).wrap())).await?;
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            self.o.send(err(&e, value::FALSE.clone())).await?;
+            return Err(preserves::error::syntax_error(&e))
         };
 
         self.space = Some(spaces.lock().unwrap().lookup(&dsname));
@@ -121,20 +121,22 @@ where I: Stream<Item = ResultC2S> + Send,
                                 }
                             }
                         }
-                        Err(packets::DecodeError::Read(e)) => {
-                            if value::is_eof_error(&e) {
-                                tracing::trace!("eof");
-                                running = false;
-                            } else if value::is_syntax_error(&e) {
-                                to_send.push(err(&e.to_string(), value::Value::from(false).wrap()));
-                                running = false;
-                            } else {
-                                return Err(e)
-                            }
-                        }
-                        Err(packets::DecodeError::Parse(e, v)) => {
-                            to_send.push(err(&format!("Packet deserialization error: {}", e), v));
+                        Err(e) if preserves::error::is_eof_error(&e) => {
+                            tracing::trace!("eof");
                             running = false;
+                        }
+                        Err(e) if preserves::error::is_syntax_error(&e) => {
+                            to_send.push(err(&e.to_string(), value::FALSE.clone()));
+                            running = false;
+                        }
+                        Err(e) => {
+                            if preserves::error::is_io_error(&e) {
+                                return Err(e);
+                            } else {
+                                to_send.push(err(&format!("Packet deserialization error: {}", e),
+                                                 value::FALSE.clone()));
+                                running = false;
+                            }
                         }
                     }
                     None => running = false,
@@ -162,8 +164,7 @@ where I: Stream<Item = ResultC2S> + Send,
                     }
                     if !ok {
                         /* weird. */
-                        to_send.push(err("Outbound channel closed unexpectedly",
-                                         value::Value::from(false).wrap()));
+                        to_send.push(err("Outbound channel closed unexpectedly", value::FALSE.clone()));
                         running = false;
                     }
                 },
@@ -184,7 +185,7 @@ where I: Stream<Item = ResultC2S> + Send,
 
 impl<I, O> Drop for Peer<I, O>
 where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = std::io::Error>,
+      O: Sink<packets::S2C, Error = packets::Error>,
 {
     fn drop(&mut self) {
         if let Some(ref s) = self.space {
