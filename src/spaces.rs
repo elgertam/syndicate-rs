@@ -40,7 +40,6 @@ impl Spaces {
     }
 
     pub fn dump_stats(&self, delta: core::time::Duration)  {
-        info!("{} dataspace(s)", self.index.len());
         for (dsname, dsref) in &self.index {
             let mut ds = dsref.write().unwrap();
             info!(name = debug(dsname),
