@@ -148,8 +148,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         info!(r"  {}    ______   {}", GREEN, NORMAL);
         info!(r"  {}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"  {}  /  {},{}__/{}  \ {}                         __             __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"  {} /{}\__/  \{},{}  \{}   _______  ______  ____/ /__________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
+        info!(r"  {}  /  {},{}__/{}  \ {}                         ____           __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"  {} /{}\__/  \{},{}  \{}   _______  ______  ____/ /_/________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
         info!(r"  {} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
         info!(r"  {}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
         info!(r"  {}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
