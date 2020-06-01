@@ -139,6 +139,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::subscriber::set_global_default(subscriber)
         .expect("Could not set tracing global subscriber");
 
+    {
+        const BRIGHT_GREEN: &str = "\x1b[92m";
+        const RED: &str = "\x1b[31m";
+        const GREEN: &str = "\x1b[32m";
+        const NORMAL: &str = "\x1b[0m";
+        const BRIGHT_YELLOW: &str = "\x1b[93m";
+
+        info!(r"  {}    ______   {}", GREEN, NORMAL);
+        info!(r"  {}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"  {}  /  {},{}__/{}  \ {}                         __             __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"  {} /{}\__/  \{},{}  \{}   _______  ______  ____/ /__________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
+        info!(r"  {} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"  {}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"  {}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"                    /____/");
+
+        // info!(r"   {}   __{}__{}__   {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // info!(r"   {}  /{}_/  \_{}\  {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // info!(r"   {} /  \__/  \ {}                         __             __", BRIGHT_GREEN, NORMAL);
+        // info!(r"   {}/{}\__/  \__/{}\{}   _______  ______  ____/ /__________  / /____", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // info!(r"   {}\{}/  \__/  \{}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // info!(r"   {} \__/  \__/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", BRIGHT_GREEN, NORMAL);
+        // info!(r"   {}  \_{}\__/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // info!(r"                    /____/");
+
+        info!(r"");
+        info!(r"   {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
+        info!(r"");
+        info!(r"   documentation & reference material: https://syndicate-lang.org/");
+        info!(r"   source code & bug tracker: https://git.leastfixedpoint.com/");
+        info!(r"");
+    }
+
     let config = Arc::new(config::ServerConfig::from_args());
 
     let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
@@ -152,27 +185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     trace!("startup");
-
-    {
-        const BRIGHT_GREEN: &str = "\x1b[92m";
-        const GREEN: &str = "\x1b[32m";
-        const NORMAL: &str = "\x1b[0m";
-        const BRIGHT_YELLOW: &str = "\x1b[93m";
-        info!(r"   {}   __{}__{}__   {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"   {}  /{}_/  \_{}\  {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"   {} /  \__/  \ {}                         __             __", BRIGHT_GREEN, NORMAL);
-        info!(r"   {}/{}\__/  \__/{}\{}   _______  ______  ____/ /__________  / /____", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"   {}\{}/  \__/  \{}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"   {} \__/  \__/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", BRIGHT_GREEN, NORMAL);
-        info!(r"   {}  \_{}\__/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"                    /____/");
-        info!(r"");
-        info!(r"   {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
-        info!(r"");
-        info!(r"   documentation & reference material: https://syndicate-lang.org/");
-        info!(r"   source code & bug tracker: https://git.leastfixedpoint.com/");
-        info!(r"");
-    }
 
     for port in config.ports.clone() {
         let spaces = Arc::clone(&spaces);
