@@ -193,10 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!(port, "listening");
             match run_listener(spaces, port, config).await {
                 Ok(()) => (),
-                Err(e) => {
-                    error!("{}", e);
-                    std::process::exit(2)
-                }
+                Err(e) => error!("{}", e),
             }
         }.instrument(tracing::info_span!("listener", port))));
     }
