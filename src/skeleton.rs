@@ -507,12 +507,12 @@ pub struct Analyzer {
 
 impl Analyzer {
     fn walk(&mut self, mut a: &Assertion) -> Skeleton {
-        while let Some(fields) = a.value().as_simple_record("Capture", Some(1)) {
+        while let Some(fields) = a.value().as_simple_record("capture", Some(1)) {
             self.capture_paths.push(self.path.clone());
             a = &fields[0];
         }
 
-        if a.value().is_simple_record("Discard", Some(0)) {
+        if a.value().is_simple_record("discard", Some(0)) {
             Skeleton::Blank
         } else {
             match class_of(a) {
@@ -566,12 +566,12 @@ pub fn analyze(a: &Assertion) -> AnalysisResults {
 //                               path: &mut Path,
 //                               vs: &mut Vec<Assertion>,
 //                               a: &Assertion) -> Assertion {
-//     if let Some(fields) = a.value().as_simple_record("Capture", Some(1)) {
+//     if let Some(fields) = a.value().as_simple_record("capture", Some(1)) {
 //         capture_paths.push(path.clone());
 //         let v = vs.pop().unwrap();
 //         instantiate_assertion_walk(capture_paths, path, vs, &fields[0]);
 //         v
-//     } else if a.value().is_simple_record("Discard", Some(0)) {
+//     } else if a.value().is_simple_record("discard", Some(0)) {
 //         Value::Domain(Syndicate::new_placeholder()).wrap()
 //     } else {
 //         let f = |(i, aa)| {

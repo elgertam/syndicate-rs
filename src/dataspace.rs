@@ -142,7 +142,7 @@ impl Dataspace {
                     }
 
                     let ar =
-                        if let Some(fs) = assertion.value().as_simple_record("Observe", Some(1)) {
+                        if let Some(fs) = assertion.value().as_simple_record("observe", Some(1)) {
                             let ar = skeleton::analyze(&fs[0]);
                             let events = self.index.add_endpoint(&ar, skeleton::Endpoint {
                                 connection: id,

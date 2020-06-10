@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     frames.send(
         C2S::Turn(vec![Action::Assert(
             Value::from(0).wrap(),
-            Value::simple_record("Observe", vec![
+            Value::simple_record("observe", vec![
                 Value::simple_record(recv_label, vec![]).wrap()]).wrap())]))
         .await?;
 
