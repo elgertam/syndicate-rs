@@ -146,14 +146,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         const NORMAL: &str = "\x1b[0m";
         const BRIGHT_YELLOW: &str = "\x1b[93m";
 
-        info!(r"  {}    ______   {}", GREEN, NORMAL);
-        info!(r"  {}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"  {}  /  {},{}__/{}  \ {}                         ____           __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"  {} /{}\__/  \{},{}  \{}   _______  ______  ____/ /_/________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
-        info!(r"  {} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"  {}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"  {}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"                    /____/");
+        info!(r"{}    ______   {}", GREEN, NORMAL);
+        info!(r"{}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"{}  /  {},{}__/{}  \ {}                         ____           __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"{} /{}\__/  \{},{}  \{}   _______  ______  ____/ /_/________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
+        info!(r"{} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"{}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"{}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        info!(r"                  /____/");
 
         // info!(r"   {}   __{}__{}__   {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
         // info!(r"   {}  /{}_/  \_{}\  {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
@@ -165,10 +165,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // info!(r"                    /____/");
 
         info!(r"");
-        info!(r"   {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
+        info!(r" {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
         info!(r"");
-        info!(r"   documentation & reference material: https://syndicate-lang.org/");
-        info!(r"   source code & bug tracker: https://git.leastfixedpoint.com/");
+        info!(r" documentation & reference material: https://syndicate-lang.org/");
+        info!(r" source code & bug tracker: https://git.leastfixedpoint.com/");
         info!(r"");
     }
 
