@@ -123,7 +123,7 @@ impl Dataspace {
         let old_assertions = self.index.assertion_count();
         schedule_events(&mut outbound_turns,
                         self.index.remove((&assertion).into()),
-                        |epname, cs| packets::Event::Del(epname, cs));
+                        packets::Event::Del);
         self.churn.assertions_removed += old_assertions - self.index.assertion_count();
         self.churn.endpoints_removed += 1;
     }
@@ -157,7 +157,7 @@ impl Dataspace {
                     let old_assertions = self.index.assertion_count();
                     schedule_events(&mut outbound_turns,
                                     self.index.insert(assertion.into()),
-                                    |epname, cs| packets::Event::Add(epname, cs));
+                                    packets::Event::Add);
                     self.churn.assertions_added += self.index.assertion_count() - old_assertions;
                     self.churn.endpoints_added += 1;
 
@@ -183,7 +183,7 @@ impl Dataspace {
                     schedule_events(&mut outbound_turns,
                                     self.index.send(assertion.into(),
                                                     &mut self.churn.messages_delivered),
-                                    |epname, cs| packets::Event::Msg(epname, cs));
+                                    packets::Event::Msg);
                     self.churn.messages_injected += 1;
                 }
             }
