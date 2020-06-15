@@ -335,7 +335,7 @@ where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
 fn class_of(v: &Assertion) -> Option<Guard> {
     match v.value() {
         Value::Sequence(ref vs) => Some(Guard::Seq(vs.len())),
-        Value::Record((ref l, ref fs)) => Some(Guard::Rec(l.clone(), fs.len())),
+        Value::Record(ref r) => Some(Guard::Rec(r.label().clone(), r.arity())),
         _ => None,
     }
 }
@@ -355,7 +355,7 @@ fn project_paths<'a>(v: &'a Assertion, ps: &Paths) -> Captures {
 fn step(v: &Assertion, i: usize) -> &Assertion {
     match v.value() {
         Value::Sequence(ref vs) => &vs[i],
-        Value::Record((_, ref fs)) => &fs[i],
+        Value::Record(ref r) => &r.fields()[i],
         _ => panic!("step: non-sequence, non-record {:?}", v)
     }
 }

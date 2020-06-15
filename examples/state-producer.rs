@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let present_action = Action::Assert(
         Value::from(0).wrap(),
-        Value::simple_record("Present", vec![Value::from(std::process::id()).wrap()]).wrap());
+        Value::simple_record1("Present", Value::from(std::process::id()).wrap()).wrap());
     let absent_action = Action::Clear(
         Value::from(0).wrap());
 

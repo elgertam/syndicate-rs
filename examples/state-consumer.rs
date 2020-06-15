@@ -13,16 +13,16 @@ use tokio::time::interval;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let discard: V = Value::simple_record("discard", vec![]).wrap();
-    let capture: V = Value::simple_record("capture", vec![discard]).wrap();
+    let discard: V = Value::simple_record0("discard").wrap();
+    let capture: V = Value::simple_record1("capture", discard).wrap();
 
     let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
     frames.send(C2S::Connect(Value::from("chat").wrap())).await?;
     frames.send(
         C2S::Turn(vec![Action::Assert(
             Value::from(0).wrap(),
-            Value::simple_record("observe", vec![
-                Value::simple_record("Present", vec![capture]).wrap()]).wrap())]))
+            Value::simple_record1("observe",
+                                  Value::simple_record1("Present", capture).wrap()).wrap())]))
         .await?;
 
     let mut stats_timer = interval(Duration::from_secs(1));

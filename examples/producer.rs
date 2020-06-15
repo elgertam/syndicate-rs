@@ -5,12 +5,20 @@ use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 
 use syndicate::packets::{ClientCodec, C2S, S2C, Action};
-use syndicate::value::Value;
+use syndicate::value::{Value, IOValue};
 
 #[derive(Clone, Debug, StructOpt)]
 pub struct Config {
     #[structopt(short = "a", default_value = "1")]
     action_count: u32,
+}
+
+#[inline]
+fn says(who: IOValue, what: IOValue) -> IOValue {
+    let mut r = Value::simple_record("Says", 2);
+    r.fields_vec_mut().push(who);
+    r.fields_vec_mut().push(what);
+    r.finish().wrap()
 }
 
 #[tokio::main]
@@ -26,11 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut actions = vec![];
         for _ in 0..config.action_count {
-            actions.push(Action::Message(
-                Value::simple_record("Says", vec![
-                    Value::from("producer").wrap(),
-                    Value::from(counter).wrap(),
-                ]).wrap()));
+            actions.push(Action::Message(says(Value::from("producer").wrap(),
+                                              Value::from(counter).wrap())));
         }
         frames.send(C2S::Turn(actions)).await?;
 

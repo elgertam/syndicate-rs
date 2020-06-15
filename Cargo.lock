@@ -727,9 +727,9 @@ checksum = "237a5ed80e274dbc66f86bd59c1e25edc039660be53194b5fe0a482e0f2612ea"
 
 [[package]]
 name = "preserves"
-version = "0.6.1"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fab2d8978c0916b67126c6fcd927a37ecbaa6469dd18ec25dac346d61eca7bd"
+checksum = "925929f873a9dff97fbe4e369e7ecfd3c950e315cbd4630a7856507134d0d810"
 dependencies = [
  "lazy_static",
  "num",

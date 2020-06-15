@@ -11,18 +11,25 @@ use futures::select;
 use core::time::Duration;
 use tokio::time::interval;
 
+#[inline]
+fn says(who: V, what: V) -> V {
+    let mut r = Value::simple_record("Says", 2);
+    r.fields_vec_mut().push(who);
+    r.fields_vec_mut().push(what);
+    r.finish().wrap()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let discard: V = Value::simple_record("discard", vec![]).wrap();
-    let capture: V = Value::simple_record("capture", vec![discard]).wrap();
+    let discard: V = Value::simple_record0("discard").wrap();
+    let capture: V = Value::simple_record1("capture", discard).wrap();
 
     let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
     frames.send(C2S::Connect(Value::from("chat").wrap())).await?;
     frames.send(
         C2S::Turn(vec![Action::Assert(
             Value::from(0).wrap(),
-            Value::simple_record("observe", vec![
-                Value::simple_record("Says", vec![capture.clone(), capture]).wrap()]).wrap())]))
+            Value::simple_record1("observe", says(capture.clone(), capture)).wrap())]))
         .await?;
 
     let mut stats_timer = interval(Duration::from_secs(1));

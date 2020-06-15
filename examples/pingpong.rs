@@ -87,13 +87,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
     frames.send(C2S::Connect(Value::from(config.dataspace).wrap())).await?;
 
-    let discard = Value::simple_record("discard", vec![]).wrap();
-    let capture = Value::simple_record("capture", vec![discard]).wrap();
+    let discard = Value::simple_record0("discard").wrap();
+    let capture = Value::simple_record1("capture", discard).wrap();
     frames.send(
         C2S::Turn(vec![Action::Assert(
             Value::from(0).wrap(),
-            Value::simple_record("observe", vec![
-                Value::simple_record(recv_label, vec![capture]).wrap()]).wrap())]))
+            Value::simple_record1("observe",
+                                  Value::simple_record1(recv_label, capture).wrap()).wrap())]))
         .await?;
 
     let mut stats_timer = interval(Duration::from_secs(1));
@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             current_stamp = Value::from(now()?).wrap();
             for _ in 0..c.action_count {
                 actions.push(Action::Message(
-                    Value::simple_record(send_label, vec![current_stamp.clone()]).wrap()));
+                    Value::simple_record1(send_label, current_stamp.clone()).wrap()));
             }
             frames.send(C2S::Turn(actions)).await?;
         }
@@ -137,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 Event::Msg(_, captures) => {
                                     if should_echo || (report_latency_every == 0) {
                                         actions.push(Action::Message(
-                                            Value::simple_record(send_label, vec![captures[0].clone()]).wrap()));
+                                            Value::simple_record1(send_label, captures[0].clone()).wrap()));
                                     } else {
                                         if !have_sample {
                                             let rtt_ns = now()? - captures[0].value().to_u64()?;
@@ -154,7 +154,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             current_stamp = Value::from(now()?).wrap();
                                         }
                                         actions.push(Action::Message(
-                                            Value::simple_record(send_label, vec![current_stamp.clone()]).wrap()));
+                                            Value::simple_record1(send_label, current_stamp.clone()).wrap()));
                                     }
                                 }
                                 _ =>
