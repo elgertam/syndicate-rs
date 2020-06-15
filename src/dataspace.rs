@@ -1,6 +1,6 @@
 use super::V;
 use super::ConnId;
-use super::packets::{self, Assertion, EndpointName, Captures};
+use super::packets::{self, Assertion, EndpointName};
 use super::skeleton;
 
 use preserves::value::{self, Map, NestedValue};
@@ -121,9 +121,7 @@ impl Dataspace {
             });
         }
         let old_assertions = self.index.assertion_count();
-        schedule_events(&mut outbound_turns,
-                        self.index.remove((&assertion).into()),
-                        packets::Event::Del);
+        self.index.remove((&assertion).into(), &mut outbound_turns);
         self.churn.assertions_removed += old_assertions - self.index.assertion_count();
         self.churn.endpoints_removed += 1;
     }
@@ -155,9 +153,7 @@ impl Dataspace {
                         };
 
                     let old_assertions = self.index.assertion_count();
-                    schedule_events(&mut outbound_turns,
-                                    self.index.insert(assertion.into()),
-                                    packets::Event::Add);
+                    self.index.insert(assertion.into(), &mut outbound_turns);
                     self.churn.assertions_added += self.index.assertion_count() - old_assertions;
                     self.churn.endpoints_added += 1;
 
@@ -180,10 +176,9 @@ impl Dataspace {
                     }
                 }
                 packets::Action::Message(ref assertion) => {
-                    schedule_events(&mut outbound_turns,
-                                    self.index.send(assertion.into(),
-                                                    &mut self.churn.messages_delivered),
-                                    packets::Event::Msg);
+                    self.index.send(assertion.into(),
+                                    &mut outbound_turns,
+                                    &mut self.churn.messages_delivered);
                     self.churn.messages_injected += 1;
                 }
             }
@@ -210,18 +205,5 @@ impl Dataspace {
 
     pub fn endpoint_count(&self) -> isize {
         self.index.endpoint_count()
-    }
-}
-
-fn schedule_events<C>(outbound_turns: &mut Map<ConnId, Vec<packets::Event>>,
-                      events: skeleton::Events,
-                      ctor: C)
-where C: Fn(EndpointName, Captures) -> packets::Event
-{
-    for (eps, cs) in events {
-        for ep in eps {
-            outbound_turns.entry(ep.connection).or_insert_with(Vec::new)
-                .push(ctor(ep.name, cs.clone()));
-        }
     }
 }

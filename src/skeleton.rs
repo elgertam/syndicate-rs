@@ -14,7 +14,8 @@ type Bag<A> = bag::BTreeBag<A>;
 
 pub type Path = Vec<usize>;
 pub type Paths = Vec<Path>;
-pub type Events = Vec<(Vec<Endpoint>, Captures)>;
+pub type Events = Vec<Event>;
+pub type TurnMap = Map<ConnId, Events>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Endpoint {
@@ -48,8 +49,7 @@ impl Index {
         Index{ all_assertions: Bag::new(), root: Node::new(Continuation::new(Set::new())) }
     }
 
-    pub fn add_endpoint(&mut self, analysis_results: &AnalysisResults, endpoint: Endpoint)
-                        -> Vec<Event>
+    pub fn add_endpoint(&mut self, analysis_results: &AnalysisResults, endpoint: Endpoint) -> Events
     {
         let continuation = self.root.extend(&analysis_results.skeleton);
         let continuation_cached_assertions = &continuation.cached_assertions;
@@ -112,8 +112,7 @@ impl Index {
         }
     }
 
-    pub fn insert(&mut self, outer_value: CachedAssertion) -> Events {
-        let mut outputs = Vec::new();
+    pub fn insert(&mut self, outer_value: CachedAssertion, outputs: &mut TurnMap) {
         let net = self.all_assertions.change(outer_value.clone(), 1);
         match net {
             bag::Net::AbsentToPresent => {
@@ -124,7 +123,10 @@ impl Index {
                     |l, v| { l.cached_assertions.insert(v.clone()); },
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), 1) == bag::Net::AbsentToPresent {
-                            outputs.push((es.endpoints.iter().cloned().collect(), cs))
+                            for ep in &es.endpoints {
+                                outputs.entry(ep.connection).or_insert_with(Vec::new)
+                                    .push(Event::Add(ep.name.clone(), cs.clone()))
+                            }
                         }
                     })
                     .perform(&mut self.root);
@@ -132,11 +134,9 @@ impl Index {
             bag::Net::PresentToPresent => (),
             _ => unreachable!(),
         }
-        outputs
     }
 
-    pub fn remove(&mut self, outer_value: CachedAssertion) -> Events {
-        let mut outputs = Vec::new();
+    pub fn remove(&mut self, outer_value: CachedAssertion, outputs: &mut TurnMap) {
         let net = self.all_assertions.change(outer_value.clone(), -1);
         match net {
             bag::Net::PresentToAbsent => {
@@ -147,7 +147,10 @@ impl Index {
                     |l, v| { l.cached_assertions.remove(v); },
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), -1) == bag::Net::PresentToAbsent {
-                            outputs.push((es.endpoints.iter().cloned().collect(), cs))
+                            for ep in &es.endpoints {
+                                outputs.entry(ep.connection).or_insert_with(Vec::new)
+                                    .push(Event::Del(ep.name.clone(), cs.clone()))
+                            }
                         }
                     })
                     .perform(&mut self.root);
@@ -155,11 +158,13 @@ impl Index {
             bag::Net::PresentToPresent => (),
             _ => unreachable!(),
         }
-        outputs
     }
 
-    pub fn send(&mut self, outer_value: CachedAssertion, delivery_count: &mut usize) -> Events {
-        let mut outputs = Vec::new();
+    pub fn send(&mut self,
+                outer_value: CachedAssertion,
+                outputs: &mut TurnMap,
+                delivery_count: &mut usize)
+    {
         Modification::new(
             false,
             &outer_value,
@@ -167,9 +172,11 @@ impl Index {
             |_l, _v| (),
             |es, cs| {
                 *delivery_count += es.endpoints.len();
-                outputs.push((es.endpoints.iter().cloned().collect(), cs))
+                for ep in &es.endpoints {
+                    outputs.entry(ep.connection).or_insert_with(Vec::new)
+                        .push(Event::Msg(ep.name.clone(), cs.clone()))
+                }
             }).perform(&mut self.root);
-        outputs
     }
 
     pub fn assertion_count(&self) -> usize {
