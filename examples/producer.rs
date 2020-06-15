@@ -11,6 +11,9 @@ use syndicate::value::{Value, IOValue};
 pub struct Config {
     #[structopt(short = "a", default_value = "1")]
     action_count: u32,
+
+    #[structopt(short = "b", default_value = "0")]
+    bytes_padding: usize,
 }
 
 #[inline]
@@ -28,14 +31,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
     frames.send(C2S::Connect(Value::from("chat").wrap())).await?;
 
-    let mut counter: u64 = 0;
-    loop {
-        counter = counter + 1;
+    let padding: IOValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
 
+    loop {
         let mut actions = vec![];
         for _ in 0..config.action_count {
             actions.push(Action::Message(says(Value::from("producer").wrap(),
-                                              Value::from(counter).wrap())));
+                                              padding.clone())));
         }
         frames.send(C2S::Turn(actions)).await?;
 

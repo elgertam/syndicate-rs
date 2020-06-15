@@ -24,6 +24,9 @@ pub struct PingConfig {
 
     #[structopt(short = "l", default_value = "0")]
     report_latency_every: usize,
+
+    #[structopt(short = "b", default_value = "0")]
+    bytes_padding: usize,
 }
 
 #[derive(Clone, Debug, StructOpt)]
@@ -43,6 +46,13 @@ pub struct Config {
 
 fn now() -> Result<u64, SystemTimeError> {
     Ok(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() as u64)
+}
+
+fn simple_record2(label: &str, v1: IOValue, v2: IOValue) -> IOValue {
+    let mut r = Value::simple_record(label, 2);
+    r.fields_vec_mut().push(v1);
+    r.fields_vec_mut().push(v2);
+    r.finish().wrap()
 }
 
 fn report_latencies(rtt_ns_samples: &Vec<u64>) {
@@ -79,35 +89,43 @@ fn report_latencies(rtt_ns_samples: &Vec<u64>) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_args();
 
-    let (send_label, recv_label, report_latency_every, should_echo) = match config.mode {
-        PingPongMode::Ping(ref c) => ("Ping", "Pong", c.report_latency_every, false),
-        PingPongMode::Pong => ("Pong", "Ping", 0, true),
-    };
+    let (send_label, recv_label, report_latency_every, should_echo, bytes_padding) =
+        match config.mode {
+            PingPongMode::Ping(ref c) =>
+                ("Ping", "Pong", c.report_latency_every, false, c.bytes_padding),
+            PingPongMode::Pong =>
+                ("Pong", "Ping", 0, true, 0),
+        };
 
     let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
     frames.send(C2S::Connect(Value::from(config.dataspace).wrap())).await?;
 
-    let discard = Value::simple_record0("discard").wrap();
-    let capture = Value::simple_record1("capture", discard).wrap();
+    let discard: IOValue = Value::simple_record0("discard").wrap();
+    let capture: IOValue = Value::simple_record1("capture", discard).wrap();
+    let pat: IOValue = simple_record2(recv_label, capture.clone(), capture);
     frames.send(
         C2S::Turn(vec![Action::Assert(
             Value::from(0).wrap(),
-            Value::simple_record1("observe",
-                                  Value::simple_record1(recv_label, capture).wrap()).wrap())]))
+            Value::simple_record1("observe", pat).wrap())]))
         .await?;
+
+    let padding: IOValue = Value::ByteString(vec![0; bytes_padding]).wrap();
 
     let mut stats_timer = interval(Duration::from_secs(1));
     let mut turn_counter = 0;
     let mut event_counter = 0;
-    let mut current_stamp: IOValue = Value::from(0).wrap();
+    let mut current_rec: IOValue = simple_record2(send_label,
+                                                  Value::from(0).wrap(),
+                                                  padding.clone());
 
     if let PingPongMode::Ping(ref c) = config.mode {
         for _ in 0..c.turn_count {
             let mut actions = vec![];
-            current_stamp = Value::from(now()?).wrap();
+            current_rec = simple_record2(send_label,
+                                         Value::from(now()?).wrap(),
+                                         padding.clone());
             for _ in 0..c.action_count {
-                actions.push(Action::Message(
-                    Value::simple_record1(send_label, current_stamp.clone()).wrap()));
+                actions.push(Action::Message(current_rec.clone()));
             }
             frames.send(C2S::Turn(actions)).await?;
         }
@@ -137,7 +155,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 Event::Msg(_, captures) => {
                                     if should_echo || (report_latency_every == 0) {
                                         actions.push(Action::Message(
-                                            Value::simple_record1(send_label, captures[0].clone()).wrap()));
+                                            simple_record2(send_label,
+                                                           captures[0].clone(),
+                                                           captures[1].clone())));
                                     } else {
                                         if !have_sample {
                                             let rtt_ns = now()? - captures[0].value().to_u64()?;
@@ -151,10 +171,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
 
                                             have_sample = true;
-                                            current_stamp = Value::from(now()?).wrap();
+                                            current_rec = simple_record2(send_label,
+                                                                         Value::from(now()?).wrap(),
+                                                                         padding.clone());
                                         }
-                                        actions.push(Action::Message(
-                                            Value::simple_record1(send_label, current_stamp.clone()).wrap()));
+                                        actions.push(Action::Message(current_rec.clone()));
                                     }
                                 }
                                 _ =>
