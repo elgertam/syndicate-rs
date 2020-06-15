@@ -112,17 +112,9 @@ impl Index {
         }
     }
 
-    pub fn insert(&mut self, v: CachedAssertion) -> Events {
-        self.adjust(v, 1)
-    }
-
-    pub fn remove(&mut self, v: CachedAssertion) -> Events {
-        self.adjust(v, -1)
-    }
-
-    pub fn adjust(&mut self, outer_value: CachedAssertion, delta: bag::Count) -> Events {
+    pub fn insert(&mut self, outer_value: CachedAssertion) -> Events {
         let mut outputs = Vec::new();
-        let net = self.all_assertions.change(outer_value.clone(), delta);
+        let net = self.all_assertions.change(outer_value.clone(), 1);
         match net {
             bag::Net::AbsentToPresent => {
                 Modification::new(
@@ -137,6 +129,16 @@ impl Index {
                     })
                     .perform(&mut self.root);
             }
+            bag::Net::PresentToPresent => (),
+            _ => unreachable!(),
+        }
+        outputs
+    }
+
+    pub fn remove(&mut self, outer_value: CachedAssertion) -> Events {
+        let mut outputs = Vec::new();
+        let net = self.all_assertions.change(outer_value.clone(), -1);
+        match net {
             bag::Net::PresentToAbsent => {
                 Modification::new(
                     false,
@@ -150,7 +152,8 @@ impl Index {
                     })
                     .perform(&mut self.root);
             }
-            _ => ()
+            bag::Net::PresentToPresent => (),
+            _ => unreachable!(),
         }
         outputs
     }
