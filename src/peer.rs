@@ -139,7 +139,10 @@ where I: Stream<Item = ResultC2S> + Send,
                             }
                         }
                     }
-                    None => running = false,
+                    None => {
+                        tracing::trace!("remote has closed");
+                        running = false;
+                    }
                 },
                 msgopt = self.rx.recv().boxed().fuse() => {
                     let mut ok = true;
