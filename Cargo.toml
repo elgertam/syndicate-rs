@@ -40,3 +40,10 @@ tracing-futures = "0.2.4"
 
 # Only used for vendored-openssl, which in turn is being used for cross-builds
 openssl = { version = "0.10", optional = true }
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "bench_dataspace"
+harness = false
