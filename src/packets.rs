@@ -8,7 +8,7 @@ use preserves::{
     de::Deserializer,
     error,
     ser::to_writer,
-    value::reader::from_bytes,
+    value::{PackedReader, PackedWriter},
 };
 
 pub type EndpointName = V;
@@ -68,7 +68,7 @@ impl<InT: serde::de::DeserializeOwned, OutT> tokio_util::codec::Decoder for Code
     type Item = InT;
     type Error = Error;
     fn decode(&mut self, bs: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let mut r = from_bytes(bs);
+        let mut r = PackedReader::decode_bytes(bs);
         let mut d = Deserializer::from_reader(&mut r);
         match Self::Item::deserialize(&mut d) {
             Err(e) if error::is_eof_error(&e) => Ok(None),
@@ -86,6 +86,6 @@ impl<InT, OutT: serde::Serialize> tokio_util::codec::Encoder<OutT> for Codec<InT
 {
     type Error = Error;
     fn encode(&mut self, item: OutT, bs: &mut BytesMut) -> Result<(), Self::Error> {
-        to_writer(&mut bs.writer(), &item)
+        to_writer(&mut PackedWriter(&mut bs.writer()), &item)
     }
 }

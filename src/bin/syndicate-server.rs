@@ -25,7 +25,7 @@ fn encode_message(p: packets::S2C) ->
     Result<Message, packets::Error>
 {
     let mut bs = Vec::with_capacity(128);
-    preserves::ser::to_writer(&mut bs, &p)?;
+    preserves::ser::to_writer(&mut preserves::value::PackedWriter(&mut bs), &p)?;
     Ok(Message::Binary(bs))
 }
 
