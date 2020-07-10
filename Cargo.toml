@@ -7,9 +7,6 @@ edition = "2018"
 [features]
 vendored-openssl = ["openssl/vendored"]
 
-[profile.dev.package."*"]
-opt-level = 3
-
 [profile.release]
 debug = true
 lto = true
