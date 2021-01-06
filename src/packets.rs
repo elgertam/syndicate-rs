@@ -86,6 +86,6 @@ impl<InT, OutT: serde::Serialize> tokio_util::codec::Encoder<OutT> for Codec<InT
 {
     type Error = Error;
     fn encode(&mut self, item: OutT, bs: &mut BytesMut) -> Result<(), Self::Error> {
-        to_writer(&mut PackedWriter(&mut bs.writer()), &item)
+        to_writer(&mut PackedWriter::new(&mut bs.writer()), &item)
     }
 }
