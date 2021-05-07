@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!(r" {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
         info!(r"");
         info!(r" documentation & reference material: https://syndicate-lang.org/");
-        info!(r" source code & bug tracker: https://git.leastfixedpoint.com/");
+        info!(r" source code & bugs: https://git.syndicate-lang.org/syndicate-lang/syndicate-rs");
         info!(r"");
     }
 
