@@ -1,91 +1,35 @@
-use super::V;
+pub use crate::schemas::internal_protocol::*;
 
-use bytes::{Buf, buf::BufMutExt, BytesMut};
-use std::sync::Arc;
-use std::marker::PhantomData;
+use bytes::{Buf, BufMut, BytesMut};
 
-use preserves::{
-    de::Deserializer,
-    error,
-    ser::to_writer,
-    value::{PackedReader, PackedWriter},
-};
+use std::convert::TryFrom;
 
-pub type EndpointName = V;
-pub type Assertion = V;
-pub type Captures = Arc<Vec<Assertion>>;
+use preserves::value::PackedReader;
+use preserves::value::PackedWriter;
+use preserves::value::Reader;
+use preserves::value::Writer;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum Action {
-    Assert(EndpointName, Assertion),
-    Clear(EndpointName),
-    Message(Assertion),
-}
+pub struct Codec;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum Event {
-    Add(EndpointName, Captures),
-    Del(EndpointName, Captures),
-    Msg(EndpointName, Captures),
-    End(EndpointName),
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum C2S {
-    Connect(V),
-    Turn(Vec<Action>),
-    Ping(),
-    Pong(),
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum S2C {
-    Err(String, V),
-    Turn(Vec<Event>),
-    Ping(),
-    Pong(),
-}
-
-//---------------------------------------------------------------------------
-
-pub type Error = error::Error;
-
-pub struct Codec<InT, OutT> {
-    ph_in: PhantomData<InT>,
-    ph_out: PhantomData<OutT>,
-}
-
-pub type ServerCodec = Codec<C2S, S2C>;
-pub type ClientCodec = Codec<S2C, C2S>;
-
-impl<InT, OutT> Codec<InT, OutT> {
-    pub fn new() -> Self {
-        Codec { ph_in: PhantomData, ph_out: PhantomData }
-    }
-}
-
-impl<InT: serde::de::DeserializeOwned, OutT> tokio_util::codec::Decoder for Codec<InT, OutT> {
-    type Item = InT;
+impl tokio_util::codec::Decoder for Codec {
+    type Item = Packet;
     type Error = Error;
     fn decode(&mut self, bs: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let mut r = PackedReader::decode_bytes(bs);
-        let mut d = Deserializer::from_reader(&mut r);
-        match Self::Item::deserialize(&mut d) {
-            Err(e) if error::is_eof_error(&e) => Ok(None),
-            Err(e) => Err(e),
-            Ok(item) => {
-                let count = d.read.source.index;
+        match r.next(false)? {
+            None => Ok(None),
+            Some(item) => {
+                let count = r.source.index;
                 bs.advance(count);
-                Ok(Some(item))
+                Ok(Some(Packet::try_from(&item)?))
             }
         }
     }
 }
 
-impl<InT, OutT: serde::Serialize> tokio_util::codec::Encoder<OutT> for Codec<InT, OutT>
-{
+impl tokio_util::codec::Encoder<&Packet> for Codec {
     type Error = Error;
-    fn encode(&mut self, item: OutT, bs: &mut BytesMut) -> Result<(), Self::Error> {
-        to_writer(&mut PackedWriter::new(&mut bs.writer()), &item)
+    fn encode(&mut self, item: &Packet, bs: &mut BytesMut) -> Result<(), Self::Error> {
+        Ok(PackedWriter::new(&mut bs.writer()).write(&item.into())?)
     }
 }

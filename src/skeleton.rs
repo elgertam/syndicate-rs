@@ -1,118 +1,99 @@
-use super::ConnId;
+use super::Assertion;
 use super::bag;
-use super::packets::Assertion;
-use super::packets::Captures;
-use super::packets::EndpointName;
-use super::packets::Event;
 
 use preserves::value::{Map, Set, Value, NestedValue};
-use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
+use std::convert::TryFrom;
+use std::convert::TryInto;
 use std::sync::Arc;
+
+use crate::actor::Activation;
+use crate::actor::Ref;
+use crate::schemas::internal_protocol::Handle;
+use crate::schemas::dataspace_patterns as ds;
+use crate::pattern::{self, PathStep, Path, Paths};
 
 type Bag<A> = bag::BTreeBag<A>;
 
-pub type Path = Vec<usize>;
-pub type Paths = Vec<Path>;
-pub type Events = Vec<Event>;
-pub type TurnMap = Map<ConnId, Events>;
+type Captures = Assertion;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Endpoint {
-    pub connection: ConnId,
-    pub name: EndpointName,
-}
-
-#[derive(Debug)]
-pub enum Skeleton {
-    Blank,
-    Guarded(Guard, Vec<Skeleton>)
-}
-
-#[derive(Debug)]
-pub struct AnalysisResults {
-    pub skeleton: Skeleton,
-    pub const_paths: Paths,
-    pub const_vals: Captures,
-    pub capture_paths: Paths,
-    pub assertion: Assertion,
+pub enum Guard {
+    Rec(Assertion, usize),
+    Seq(usize),
+    Map,
 }
 
 #[derive(Debug)]
 pub struct Index {
-    all_assertions: Bag<CachedAssertion>,
+    all_assertions: Bag<Assertion>,
+    observer_count: usize,
     root: Node,
 }
 
+#[derive(Debug)]
+struct Node {
+    continuation: Continuation,
+    edges: Map<Selector, Map<Guard, Node>>,
+}
+
+#[derive(Debug)]
+struct Continuation {
+    cached_assertions: Set<Assertion>,
+    leaf_map: Map<Paths, Map<Captures, Leaf>>,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Selector {
+    pop_count: usize,
+    step: PathStep,
+}
+
+#[derive(Debug)]
+struct Leaf { // aka Topic
+    cached_assertions: Set<Assertion>,
+    endpoints_map: Map<Paths, Endpoints>,
+}
+
+#[derive(Debug)]
+struct Endpoints {
+    cached_captures: Bag<Captures>,
+    endpoints: Map<Arc<Ref>, Map<Captures, Handle>>,
+}
+
+//---------------------------------------------------------------------------
+
 impl Index {
     pub fn new() -> Self {
-        Index{ all_assertions: Bag::new(), root: Node::new(Continuation::new(Set::new())) }
-    }
-
-    pub fn add_endpoint(&mut self, analysis_results: &AnalysisResults, endpoint: Endpoint) -> Events
-    {
-        let continuation = self.root.extend(&analysis_results.skeleton);
-        let continuation_cached_assertions = &continuation.cached_assertions;
-        let const_val_map =
-            continuation.leaf_map.entry(analysis_results.const_paths.clone()).or_insert_with(|| {
-                let mut cvm = Map::new();
-                for a in continuation_cached_assertions {
-                    let key = project_paths(a.unscope(), &analysis_results.const_paths);
-                    cvm.entry(key).or_insert_with(Leaf::new).cached_assertions.insert(a.clone());
-                }
-                cvm
-            });
-        let capture_paths = &analysis_results.capture_paths;
-        let leaf = const_val_map.entry(analysis_results.const_vals.clone()).or_insert_with(Leaf::new);
-        let leaf_cached_assertions = &leaf.cached_assertions;
-        let endpoints = leaf.endpoints_map.entry(capture_paths.clone()).or_insert_with(|| {
-            let mut b = Bag::new();
-            for a in leaf_cached_assertions {
-                let (restriction_paths, term) = a.unpack();
-                if is_unrestricted(&capture_paths, restriction_paths) {
-                    let captures = project_paths(term, &capture_paths);
-                    *b.entry(captures).or_insert(0) += 1;
-                }
-            }
-            Endpoints::new(b)
-        });
-        let endpoint_name = endpoint.name.clone();
-        endpoints.endpoints.insert(endpoint);
-        endpoints.cached_captures.into_iter()
-            .map(|(cs,_)| Event::Add(endpoint_name.clone(), cs.clone()))
-            .collect()
-    }
-
-    pub fn remove_endpoint(&mut self, analysis_results: &AnalysisResults, endpoint: Endpoint) {
-        let continuation = self.root.extend(&analysis_results.skeleton);
-        if let Entry::Occupied(mut const_val_map_entry)
-            = continuation.leaf_map.entry(analysis_results.const_paths.clone())
-        {
-            let const_val_map = const_val_map_entry.get_mut();
-            if let Entry::Occupied(mut leaf_entry)
-                = const_val_map.entry(analysis_results.const_vals.clone())
-            {
-                let leaf = leaf_entry.get_mut();
-                if let Entry::Occupied(mut endpoints_entry)
-                    = leaf.endpoints_map.entry(analysis_results.capture_paths.clone())
-                {
-                    let endpoints = endpoints_entry.get_mut();
-                    endpoints.endpoints.remove(&endpoint);
-                    if endpoints.endpoints.is_empty() {
-                        endpoints_entry.remove_entry();
-                    }
-                }
-                if leaf.is_empty() {
-                    leaf_entry.remove_entry();
-                }
-            }
-            if const_val_map.is_empty() {
-                const_val_map_entry.remove_entry();
-            }
+        Index {
+            all_assertions: Bag::new(),
+            observer_count: 0,
+            root: Node::new(Continuation::new(Set::new())),
         }
     }
 
-    pub fn insert(&mut self, outer_value: CachedAssertion, outputs: &mut TurnMap) {
+    pub fn add_observer(
+        &mut self,
+        t: &mut Activation,
+        pat: &ds::Pattern,
+        observer: &Arc<Ref>,
+    ) {
+        let analysis = pattern::PatternAnalysis::new(pat);
+        self.root.extend(pat).add_observer(t, &analysis, observer);
+        self.observer_count += 1;
+    }
+
+    pub fn remove_observer(
+        &mut self,
+        pat: ds::Pattern,
+        observer: &Arc<Ref>,
+    ) {
+        let analysis = pattern::PatternAnalysis::new(&pat);
+        self.root.extend(&pat).remove_observer(analysis, observer);
+        self.observer_count -= 1;
+    }
+
+    pub fn insert(&mut self, t: &mut Activation, outer_value: &Assertion) {
         let net = self.all_assertions.change(outer_value.clone(), 1);
         match net {
             bag::Net::AbsentToPresent => {
@@ -123,9 +104,8 @@ impl Index {
                     |l, v| { l.cached_assertions.insert(v.clone()); },
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), 1) == bag::Net::AbsentToPresent {
-                            for ep in &es.endpoints {
-                                outputs.entry(ep.connection).or_insert_with(Vec::new)
-                                    .push(Event::Add(ep.name.clone(), cs.clone()))
+                            for (observer, capture_map) in &mut es.endpoints {
+                                capture_map.insert(cs.clone(), t.assert(observer.clone(), cs.clone()));
                             }
                         }
                     })
@@ -136,7 +116,7 @@ impl Index {
         }
     }
 
-    pub fn remove(&mut self, outer_value: CachedAssertion, outputs: &mut TurnMap) {
+    pub fn remove(&mut self, t: &mut Activation, outer_value: &Assertion) {
         let net = self.all_assertions.change(outer_value.clone(), -1);
         match net {
             bag::Net::PresentToAbsent => {
@@ -147,9 +127,10 @@ impl Index {
                     |l, v| { l.cached_assertions.remove(v); },
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), -1) == bag::Net::PresentToAbsent {
-                            for ep in &es.endpoints {
-                                outputs.entry(ep.connection).or_insert_with(Vec::new)
-                                    .push(Event::Del(ep.name.clone(), cs.clone()))
+                            for capture_map in es.endpoints.values_mut() {
+                                if let Some(h) = capture_map.remove(&cs) {
+                                    t.retract(h);
+                                }
                             }
                         }
                     })
@@ -160,11 +141,7 @@ impl Index {
         }
     }
 
-    pub fn send(&mut self,
-                outer_value: CachedAssertion,
-                outputs: &mut TurnMap,
-                delivery_count: &mut usize)
-    {
+    pub fn send(&mut self, t: &mut Activation, outer_value: &Assertion, delivery_count: &mut usize) {
         Modification::new(
             false,
             &outer_value,
@@ -172,9 +149,8 @@ impl Index {
             |_l, _v| (),
             |es, cs| {
                 *delivery_count += es.endpoints.len();
-                for ep in &es.endpoints {
-                    outputs.entry(ep.connection).or_insert_with(Vec::new)
-                        .push(Event::Msg(ep.name.clone(), cs.clone()))
+                for observer in es.endpoints.keys() {
+                    t.message(observer.clone(), cs.clone());
                 }
             }).perform(&mut self.root);
     }
@@ -186,12 +162,10 @@ impl Index {
     pub fn endpoint_count(&self) -> isize {
         return self.all_assertions.total()
     }
-}
 
-#[derive(Debug)]
-struct Node {
-    continuation: Continuation,
-    edges: Map<Selector, Map<Guard, Node>>,
+    pub fn observer_count(&self) -> usize {
+        return self.observer_count
+    }
 }
 
 impl Node {
@@ -199,38 +173,60 @@ impl Node {
         Node { continuation, edges: Map::new() }
     }
 
-    fn extend(&mut self, skeleton: &Skeleton) -> &mut Continuation {
-        let (_pop_count, final_node) = self.extend_walk(&mut Vec::new(), 0, 0, skeleton);
+    fn extend(&mut self, pat: &ds::Pattern) -> &mut Continuation {
+        let (_pop_count, final_node) = self.extend_walk(&mut Vec::new(), 0, PathStep::Index(0), pat);
         &mut final_node.continuation
     }
 
-    fn extend_walk(&mut self, path: &mut Path, pop_count: usize, index: usize, skeleton: &Skeleton)
-                   -> (usize, &mut Node) {
-        match skeleton {
-            Skeleton::Blank => (pop_count, self),
-            Skeleton::Guarded(cls, kids) => {
-                let selector = Selector { pop_count, index };
-                let continuation = &self.continuation;
-                let table = self.edges.entry(selector).or_insert_with(Map::new);
-                let mut next_node = table.entry(cls.clone()).or_insert_with(|| {
-                    Self::new(Continuation::new(
-                        continuation.cached_assertions.iter()
-                            .filter(|a| {
-                                Some(cls) == class_of(project_path(a.unscope(), path)).as_ref() })
-                            .cloned()
-                            .collect()))
-                });
-                let mut pop_count = 0;
-                for (index, kid) in kids.iter().enumerate() {
-                    path.push(index);
-                    let (pc, nn) = next_node.extend_walk(path, pop_count, index, kid);
-                    pop_count = pc;
-                    next_node = nn;
-                    path.pop();
-                }
-                (pop_count + 1, next_node)
+    fn extend_walk(
+        &mut self,
+        path: &mut Path,
+        pop_count: usize,
+        step: PathStep,
+        pat: &ds::Pattern,
+    ) -> (usize, &mut Node) {
+        let (guard, members): (Guard, Vec<(PathStep, &ds::Pattern)>) = match pat {
+            ds::Pattern::DCompound(b) => match &**b {
+                ds::DCompound::Arr { ctor, members } =>
+                    (Guard::Seq(usize::try_from(&ctor.arity).unwrap_or(0)),
+                     members.iter().map(|(i, p)| (PathStep::Index(i.try_into().unwrap_or(0)), p)).collect()),
+                ds::DCompound::Rec { ctor, members } =>
+                    (Guard::Rec(ctor.label.clone(), usize::try_from(&ctor.arity).unwrap_or(0)),
+                     members.iter().map(|(i, p)| (PathStep::Index(i.try_into().unwrap_or(0)), p)).collect()),
+                ds::DCompound::Dict { members, .. } =>
+                    (Guard::Map,
+                     members.iter().map(|(k, p)| (PathStep::Key(k.clone()), p)).collect()),
             }
+            ds::Pattern::DBind(b) => {
+                let ds::DBind { pattern, .. } = &**b;
+                return self.extend_walk(path, pop_count, step, pattern);
+            }
+            ds::Pattern::DDiscard(_) | ds::Pattern::DLit(_) =>
+                return (pop_count, self),
+        };
+
+        let selector = Selector { pop_count, step };
+        let continuation = &self.continuation;
+        let table = self.edges.entry(selector).or_insert_with(Map::new);
+        let mut next_node = table.entry(guard.clone()).or_insert_with(|| {
+            Self::new(Continuation::new(
+                continuation.cached_assertions.iter()
+                    .filter(|a| match project_path(a, path) {
+                        Some(v) => Some(&guard) == class_of(v).as_ref(),
+                        None => false,
+                    })
+                    .cloned()
+                    .collect()))
+        });
+        let mut pop_count = 0;
+        for (step, kid) in members.into_iter() {
+            path.push(step.clone());
+            let (pc, nn) = next_node.extend_walk(path, pop_count, step, kid);
+            pop_count = pc;
+            next_node = nn;
+            path.pop();
         }
+        (pop_count + 1, next_node)
     }
 }
 
@@ -257,35 +253,31 @@ impl<'a, T> Stack<'a, T> {
 }
 
 struct Modification<'op, FCont, FLeaf, FEndpoints>
-where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
-      FLeaf: FnMut(&mut Leaf, &CachedAssertion) -> (),
+where FCont: FnMut(&mut Continuation, &Assertion) -> (),
+      FLeaf: FnMut(&mut Leaf, &Assertion) -> (),
       FEndpoints: FnMut(&mut Endpoints, Captures) -> ()
 {
     create_leaf_if_absent: bool,
-    outer_value: &'op CachedAssertion,
-    restriction_paths: Option<&'op Paths>,
-    outer_value_term: &'op Assertion,
+    outer_value: &'op Assertion,
     m_cont: FCont,
     m_leaf: FLeaf,
     m_endpoints: FEndpoints,
 }
 
 impl<'op, FCont, FLeaf, FEndpoints> Modification<'op, FCont, FLeaf, FEndpoints>
-where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
-      FLeaf: FnMut(&mut Leaf, &CachedAssertion) -> (),
+where FCont: FnMut(&mut Continuation, &Assertion) -> (),
+      FLeaf: FnMut(&mut Leaf, &Assertion) -> (),
       FEndpoints: FnMut(&mut Endpoints, Captures) -> ()
 {
     fn new(create_leaf_if_absent: bool,
-           outer_value: &'op CachedAssertion,
+           outer_value: &'op Assertion,
            m_cont: FCont,
            m_leaf: FLeaf,
-           m_endpoints: FEndpoints) -> Self {
-        let (restriction_paths, outer_value_term) = outer_value.unpack();
+           m_endpoints: FEndpoints,
+    ) -> Self {
         Modification {
             create_leaf_if_absent,
             outer_value,
-            restriction_paths,
-            outer_value_term,
             m_cont,
             m_leaf,
             m_endpoints,
@@ -293,7 +285,7 @@ where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
     }
 
     fn perform(&mut self, n: &mut Node) {
-        self.node(n, &Stack::Item(&Value::from(vec![self.outer_value_term.clone()]).wrap(), &Stack::Empty))
+        self.node(n, &Stack::Item(&Value::from(vec![self.outer_value.clone()]).wrap(), &Stack::Empty))
     }
 
     fn node(&mut self, n: &mut Node, term_stack: &Stack<&Assertion>) {
@@ -301,10 +293,11 @@ where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
         for (selector, table) in &mut n.edges {
             let mut next_stack = term_stack;
             for _ in 0..selector.pop_count { next_stack = next_stack.pop() }
-            let next_value = step(next_stack.top(), selector.index);
-            if let Some(next_class) = class_of(next_value) {
-                if let Some(next_node) = table.get_mut(&next_class) {
-                    self.node(next_node, &Stack::Item(next_value, next_stack))
+            if let Some(next_value) = step(next_stack.top(), &selector.step) {
+                if let Some(next_class) = class_of(next_value) {
+                    if let Some(next_node) = table.get_mut(&next_class) {
+                        self.node(next_node, &Stack::Item(next_value, next_stack))
+                    }
                 }
             }
         }
@@ -314,24 +307,24 @@ where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
         (self.m_cont)(c, self.outer_value);
         let mut empty_const_paths = Vec::new();
         for (const_paths, const_val_map) in &mut c.leaf_map {
-            let const_vals = project_paths(self.outer_value_term, const_paths);
-            let leaf_opt = if self.create_leaf_if_absent {
-                Some(const_val_map.entry(const_vals.clone()).or_insert_with(Leaf::new))
-            } else {
-                const_val_map.get_mut(&const_vals)
-            };
-            if let Some(leaf) = leaf_opt {
-                (self.m_leaf)(leaf, self.outer_value);
-                for (capture_paths, endpoints) in &mut leaf.endpoints_map {
-                    if is_unrestricted(&capture_paths, self.restriction_paths) {
-                        (self.m_endpoints)(endpoints,
-                                           project_paths(self.outer_value_term, &capture_paths));
+            if let Some(const_vals) = project_paths(self.outer_value, const_paths) {
+                let leaf_opt = if self.create_leaf_if_absent {
+                    Some(const_val_map.entry(const_vals.clone()).or_insert_with(Leaf::new))
+                } else {
+                    const_val_map.get_mut(&const_vals)
+                };
+                if let Some(leaf) = leaf_opt {
+                    (self.m_leaf)(leaf, self.outer_value);
+                    for (capture_paths, endpoints) in &mut leaf.endpoints_map {
+                        if let Some(cs) = project_paths(self.outer_value, &capture_paths) {
+                            (self.m_endpoints)(endpoints, cs);
+                        }
                     }
-                }
-                if leaf.is_empty() {
-                    const_val_map.remove(&const_vals);
-                    if const_val_map.is_empty() {
-                        empty_const_paths.push(const_paths.clone());
+                    if leaf.is_empty() {
+                        const_val_map.remove(&const_vals);
+                        if const_val_map.is_empty() {
+                            empty_const_paths.push(const_paths.clone());
+                        }
                     }
                 }
             }
@@ -344,69 +337,122 @@ where FCont: FnMut(&mut Continuation, &CachedAssertion) -> (),
 
 fn class_of(v: &Assertion) -> Option<Guard> {
     match v.value() {
-        Value::Sequence(ref vs) => Some(Guard::Seq(vs.len())),
-        Value::Record(ref r) => Some(Guard::Rec(r.label().clone(), r.arity())),
+        Value::Sequence(vs) => Some(Guard::Seq(vs.len())),
+        Value::Record(r) => Some(Guard::Rec(r.label().clone(), r.arity())),
+        Value::Dictionary(_) => Some(Guard::Map),
         _ => None,
     }
 }
 
-fn project_path<'a>(v: &'a Assertion, p: &Path) -> &'a Assertion {
+fn project_path<'a>(v: &'a Assertion, p: &Path) -> Option<&'a Assertion> {
     let mut v = v;
     for i in p {
-        v = step(v, *i);
+        match step(v, i) {
+            Some(w) => v = w,
+            None => return None,
+        }
     }
-    v
+    Some(v)
 }
 
-fn project_paths<'a>(v: &'a Assertion, ps: &Paths) -> Captures {
-    Arc::new(ps.iter().map(|p| project_path(v, p)).cloned().collect())
-}
-
-fn step(v: &Assertion, i: usize) -> &Assertion {
-    match v.value() {
-        Value::Sequence(ref vs) => &vs[i],
-        Value::Record(ref r) => &r.fields()[i],
-        _ => panic!("step: non-sequence, non-record {:?}", v)
+fn project_paths<'a>(v: &'a Assertion, ps: &Paths) -> Option<Captures> {
+    let mut vs = Vec::new();
+    for p in ps {
+        match project_path(v, p) {
+            Some(c) => vs.push(c.clone()),
+            None => return None,
+        }
     }
+    Some(Captures::new(vs))
 }
 
-#[derive(Debug)]
-struct Continuation {
-    cached_assertions: Set<CachedAssertion>,
-    leaf_map: Map<Paths, Map<Captures, Leaf>>,
+fn step<'a>(v: &'a Assertion, s: &PathStep) -> Option<&'a Assertion> {
+    match (v.value(), s) {
+        (Value::Sequence(vs), PathStep::Index(i)) =>
+            if *i < vs.len() { Some(&vs[*i]) } else { None },
+        (Value::Record(r), PathStep::Index(i)) =>
+            if *i < r.arity() { Some(&r.fields()[*i]) } else { None },
+        (Value::Dictionary(m), PathStep::Key(k)) =>
+            m.get(k),
+        _ =>
+            None,
+    }
 }
 
 impl Continuation {
-    fn new(cached_assertions: Set<CachedAssertion>) -> Self {
+    fn new(cached_assertions: Set<Assertion>) -> Self {
         Continuation { cached_assertions, leaf_map: Map::new() }
     }
-}
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Selector {
-    pop_count: usize,
-    index: usize,
-}
+    pub fn add_observer(
+        &mut self,
+        t: &mut Activation,
+        analysis: &pattern::PatternAnalysis,
+        observer: &Arc<Ref>,
+    ) {
+        let cached_assertions = &self.cached_assertions;
+        let const_val_map =
+            self.leaf_map.entry(analysis.const_paths.clone()).or_insert_with({
+                || {
+                    let mut cvm = Map::new();
+                    for a in cached_assertions {
+                        if let Some(key) = project_paths(a, &analysis.const_paths) {
+                            cvm.entry(key).or_insert_with(Leaf::new)
+                                .cached_assertions.insert(a.clone());
+                        }
+                    }
+                    cvm
+                }
+            });
+        let leaf = const_val_map.entry(analysis.const_values.clone()).or_insert_with(Leaf::new);
+        let leaf_cached_assertions = &leaf.cached_assertions;
+        let endpoints = leaf.endpoints_map.entry(analysis.capture_paths.clone()).or_insert_with(|| {
+            let mut b = Bag::new();
+            for term in leaf_cached_assertions {
+                if let Some(captures) = project_paths(term, &analysis.capture_paths) {
+                    *b.entry(captures).or_insert(0) += 1;
+                }
+            }
+            Endpoints { cached_captures: b, endpoints: Map::new() }
+        });
+        let mut capture_map = Map::new();
+        for cs in endpoints.cached_captures.keys() {
+            capture_map.insert(cs.clone(), t.assert(observer.clone(), cs.clone()));
+        }
+        endpoints.endpoints.insert(observer.clone(), capture_map);
+    }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Guard {
-    Rec(Assertion, usize),
-    Seq(usize),
-}
-
-impl Guard {
-    fn arity(&self) -> usize {
-        match self {
-            Guard::Rec(_, s) => *s,
-            Guard::Seq(s) => *s
+    pub fn remove_observer(
+        &mut self,
+        analysis: pattern::PatternAnalysis,
+        observer: &Arc<Ref>,
+    ) {
+        if let Entry::Occupied(mut const_val_map_entry)
+            = self.leaf_map.entry(analysis.const_paths)
+        {
+            let const_val_map = const_val_map_entry.get_mut();
+            if let Entry::Occupied(mut leaf_entry)
+                = const_val_map.entry(analysis.const_values)
+            {
+                let leaf = leaf_entry.get_mut();
+                if let Entry::Occupied(mut endpoints_entry)
+                    = leaf.endpoints_map.entry(analysis.capture_paths)
+                {
+                    let endpoints = endpoints_entry.get_mut();
+                    endpoints.endpoints.remove(observer);
+                    if endpoints.endpoints.is_empty() {
+                        endpoints_entry.remove_entry();
+                    }
+                }
+                if leaf.is_empty() {
+                    leaf_entry.remove_entry();
+                }
+            }
+            if const_val_map.is_empty() {
+                const_val_map_entry.remove_entry();
+            }
         }
     }
-}
-
-#[derive(Debug)]
-struct Leaf { // aka Topic
-    cached_assertions: Set<CachedAssertion>,
-    endpoints_map: Map<Paths, Endpoints>,
 }
 
 impl Leaf {
@@ -418,192 +464,3 @@ impl Leaf {
         self.cached_assertions.is_empty() && self.endpoints_map.is_empty()
     }
 }
-
-#[derive(Debug)]
-struct Endpoints {
-    cached_captures: Bag<Captures>,
-    endpoints: Set<Endpoint>,
-}
-
-impl Endpoints {
-    fn new(cached_captures: Bag<Captures>) -> Self {
-        Endpoints { cached_captures, endpoints: Set::new() }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum CachedAssertion {
-    VisibilityRestricted(Paths, Assertion),
-    Unrestricted(Assertion),
-}
-
-impl From<&Assertion> for CachedAssertion {
-    fn from(a: &Assertion) -> Self {
-        CachedAssertion::Unrestricted(a.clone())
-    }
-}
-
-impl CachedAssertion {
-    fn unscope(&self) -> &Assertion {
-        match self {
-            CachedAssertion::VisibilityRestricted(_, a) => a,
-            CachedAssertion::Unrestricted(a) => a,
-        }
-    }
-
-    fn unpack(&self) -> (Option<&Paths>, &Assertion) {
-        match self {
-            CachedAssertion::VisibilityRestricted(ps, a) => (Some(ps), a),
-            CachedAssertion::Unrestricted(a) => (None, a),
-        }
-    }
-}
-
-fn is_unrestricted(capture_paths: &Paths, restriction_paths: Option<&Paths>) -> bool {
-    // We are "unrestricted" if Set(capture_paths) ⊆ Set(restriction_paths). Since both
-    // variables really hold lists, we operate with awareness of the order the lists are
-    // built here. We know that the lists are built in fringe order; that is, they are
-    // sorted wrt `pathCmp`.
-    match restriction_paths {
-        None => true, // not visibility-restricted in the first place
-        Some(rpaths) => {
-            let mut rpi = rpaths.iter();
-            'outer: for c in capture_paths {
-                'inner: loop {
-                    match rpi.next() {
-                        None => {
-                            // there's at least one capture_paths entry (`c`) that does
-                            // not appear in restriction_paths, so we are restricted
-                            return false;
-                        }
-                        Some(r) => match c.cmp(r) {
-                            Ordering::Less => {
-                                // `c` is less than `r`, but restriction_paths is sorted,
-                                // so `c` does not appear in restriction_paths, and we are
-                                // thus restricted.
-                                return false;
-                            }
-                            Ordering::Equal => {
-                                // `c` is equal to `r`, so we may yet be unrestricted.
-                                // Discard both `c` and `r` and continue.
-                                continue 'outer;
-                            }
-                            Ordering::Greater => {
-                                // `c` is greater than `r`, but capture_paths and
-                                // restriction_paths are sorted, so while we might yet
-                                // come to an `r` that is equal to `c`, we will never find
-                                // another `c` that is less than this `c`. Discard this
-                                // `r` then, keeping the `c`, and compare against the next
-                                // `r`.
-                                continue 'inner;
-                            }
-                        }
-                    }
-                }
-            }
-            // We went all the way through capture_paths without finding any `c` not in
-            // restriction_paths.
-            true
-        }
-    }
-}
-
-pub struct Analyzer {
-    const_paths: Paths,
-    const_vals: Vec<Assertion>,
-    capture_paths: Paths,
-    path: Path,
-}
-
-impl Analyzer {
-    fn walk(&mut self, mut a: &Assertion) -> Skeleton {
-        while let Some(fields) = a.value().as_simple_record("capture", Some(1)) {
-            self.capture_paths.push(self.path.clone());
-            a = &fields[0];
-        }
-
-        if a.value().is_simple_record("discard", Some(0)) {
-            Skeleton::Blank
-        } else {
-            match class_of(a) {
-                Some(cls) => {
-                    let arity = cls.arity();
-                    Skeleton::Guarded(cls,
-                                      (0..arity).map(|i| {
-                                          self.path.push(i);
-                                          let s = self.walk(step(a, i));
-                                          self.path.pop();
-                                          s
-                                      }).collect())
-                }
-                None => {
-                    self.const_paths.push(self.path.clone());
-                    self.const_vals.push(a.clone());
-                    Skeleton::Blank
-                }
-            }
-        }
-    }
-}
-
-pub fn analyze(a: &Assertion) -> AnalysisResults {
-    let mut z = Analyzer {
-        const_paths: Vec::new(),
-        const_vals: Vec::new(),
-        capture_paths: Vec::new(),
-        path: Vec::new(),
-    };
-    let skeleton = z.walk(a);
-    AnalysisResults {
-        skeleton,
-        const_paths: z.const_paths,
-        const_vals: Arc::new(z.const_vals),
-        capture_paths: z.capture_paths,
-        assertion: a.clone(),
-    }
-}
-
-// pub fn instantiate_assertion(a: &Assertion, cs: Captures) -> CachedAssertion {
-//     let mut capture_paths = Vec::new();
-//     let mut path = Vec::new();
-//     let mut vs: Vec<Assertion> = (*cs).clone();
-//     vs.reverse();
-//     let instantiated = instantiate_assertion_walk(&mut capture_paths, &mut path, &mut vs, a);
-//     CachedAssertion::VisibilityRestricted(capture_paths, instantiated)
-// }
-
-// fn instantiate_assertion_walk(capture_paths: &mut Paths,
-//                               path: &mut Path,
-//                               vs: &mut Vec<Assertion>,
-//                               a: &Assertion) -> Assertion {
-//     if let Some(fields) = a.value().as_simple_record("capture", Some(1)) {
-//         capture_paths.push(path.clone());
-//         let v = vs.pop().unwrap();
-//         instantiate_assertion_walk(capture_paths, path, vs, &fields[0]);
-//         v
-//     } else if a.value().is_simple_record("discard", Some(0)) {
-//         Value::Domain(Syndicate::new_placeholder()).wrap()
-//     } else {
-//         let f = |(i, aa)| {
-//             path.push(i);
-//             let vv = instantiate_assertion_walk(capture_paths,
-//                                                 path,
-//                                                 vs,
-//                                                 aa);
-//             path.pop();
-//             vv
-//         };
-//         match class_of(a) {
-//             Some(Guard::Seq(_)) =>
-//                 Value::from(Vec::from_iter(a.value().as_sequence().unwrap()
-//                                            .iter().enumerate().map(f)))
-//                 .wrap(),
-//             Some(Guard::Rec(l, fieldcount)) =>
-//                 Value::record(l, a.value().as_record(Some(fieldcount)).unwrap().1
-//                               .iter().enumerate().map(f).collect())
-//                 .wrap(),
-//             None =>
-//                 a.clone(),
-//         }
-//     }
-// }

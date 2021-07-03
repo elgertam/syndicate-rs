@@ -1,68 +1,40 @@
-use super::V;
-use super::ConnId;
-use super::dataspace;
-use super::packets;
-use super::spaces;
-use super::config;
-
-use core::time::Duration;
-use futures::{Sink, SinkExt, Stream};
 use futures::FutureExt;
+use futures::StreamExt;
 use futures::select;
-use preserves::value;
-use std::pin::Pin;
-use std::sync::{Mutex, Arc, atomic::{AtomicUsize, Ordering}};
-use tokio::stream::StreamExt;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver, error::TryRecvError};
-use tokio::time::interval;
+use futures::{Sink, SinkExt, Stream};
 
-pub type ResultC2S = Result<packets::C2S, packets::Error>;
+use preserves::value;
+
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::actor::*;
+use super::config;
+use super::error::Error;
+use super::error::error;
+use super::packets;
 
 pub struct Peer<I, O>
-where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = packets::Error>,
+where I: Stream<Item = Result<packets::Packet, Error>> + Send,
+      O: Sink<packets::Packet, Error = Error>,
 {
-    id: ConnId,
-    tx: UnboundedSender<packets::S2C>,
-    rx: UnboundedReceiver<packets::S2C>,
     i: Pin<Box<I>>,
     o: Pin<Box<O>>,
-    space: Option<dataspace::DataspaceRef>,
-}
-
-fn err(s: &str, ctx: V) -> packets::S2C {
-    packets::S2C::Err(s.into(), ctx)
+    ds: Arc<Ref>,
+    config: Arc<config::ServerConfig>,
 }
 
 impl<I, O> Peer<I, O>
-where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = packets::Error>,
+where I: Stream<Item = Result<packets::Packet, Error>> + Send,
+      O: Sink<packets::Packet, Error = Error>,
 {
-    pub fn new(id: ConnId, i: I, o: O) -> Self {
-        let (tx, rx) = unbounded_channel();
-        Peer{ id, tx, rx, i: Box::pin(i), o: Box::pin(o), space: None }
+    pub fn new(i: I, o: O, ds: Arc<Ref>, config: Arc<config::ServerConfig>) -> Self {
+        Peer{ i: Box::pin(i), o: Box::pin(o), ds, config }
     }
 
-    pub async fn run(&mut self, spaces: Arc<Mutex<spaces::Spaces>>, config: &config::ServerConfig) ->
-        Result<(), packets::Error>
-    {
-        let firstpacket = self.i.next().await;
-        let dsname = if let Some(Ok(packets::C2S::Connect(dsname))) = firstpacket {
-            dsname
-        } else {
-            let e = format!("Expected initial Connect, got {:?}", firstpacket);
-            self.o.send(err(&e, value::FALSE.clone())).await?;
-            return Err(preserves::error::syntax_error(&e))
-        };
-
-        self.space = Some(spaces.lock().unwrap().lookup(&dsname));
+    pub async fn run(mut self) -> Result<(), packets::Error> {
         let queue_depth = Arc::new(AtomicUsize::new(0));
-        self.space.as_ref().unwrap().write().unwrap().register(
-            self.id,
-            self.tx.clone(),
-            Arc::clone(&queue_depth));
-
-        let mut ping_timer = interval(Duration::from_secs(60));
 
         let mut running = true;
         let mut overloaded = None;
@@ -71,12 +43,11 @@ where I: Stream<Item = ResultC2S> + Send,
             let mut to_send = Vec::new();
 
             let queue_depth_sample = queue_depth.load(Ordering::Relaxed);
-            if queue_depth_sample > config.overload_threshold {
+            if queue_depth_sample > self.config.overload_threshold {
                 let n = overloaded.unwrap_or(0);
                 tracing::warn!(turns=n, queue_depth=queue_depth_sample, "overloaded");
-                if n == config.overload_turn_limit {
-                    to_send.push(err("Overloaded",
-                                     value::Value::from(queue_depth_sample as u64).wrap()));
+                if n == self.config.overload_turn_limit {
+                    to_send.push(error("Overloaded", queue_depth_sample as u128));
                     running = false;
                 } else {
                     if queue_depth_sample > previous_sample.unwrap_or(0) {
@@ -94,50 +65,22 @@ where I: Stream<Item = ResultC2S> + Send,
             previous_sample = Some(queue_depth_sample);
 
             select! {
-                _instant = ping_timer.next().boxed().fuse() => to_send.push(packets::S2C::Ping()),
                 frame = self.i.next().fuse() => match frame {
                     Some(res) => match res {
                         Ok(p) => {
                             tracing::trace!(packet = debug(&p), "input");
                             match p {
-                                packets::C2S::Turn(actions) => {
-                                    match self.space.as_ref().unwrap().write().unwrap()
-                                        .turn(self.id, actions)
-                                    {
-                                        Ok(()) => (),
-                                        Err((msg, ctx)) => {
-                                            to_send.push(err(&msg, ctx));
-                                            running = false;
-                                        }
-                                    }
+                                packets::Packet::Turn(b) => {
+                                    let packets::Turn(actions) = &*b;
+                                    /* ... */
                                 }
-                                packets::C2S::Ping() =>
-                                    to_send.push(packets::S2C::Pong()),
-                                packets::C2S::Pong() =>
-                                    (),
-                                packets::C2S::Connect(_) => {
-                                    to_send.push(err("Unexpected Connect", value::to_value(p)));
-                                    running = false;
+                                packets::Packet::Error(b) => {
+                                    let e = &*b;
+                                    /* ... */
                                 }
                             }
                         }
-                        Err(e) if preserves::error::is_eof_error(&e) => {
-                            tracing::trace!("eof");
-                            running = false;
-                        }
-                        Err(e) if preserves::error::is_syntax_error(&e) => {
-                            to_send.push(err(&e.to_string(), value::FALSE.clone()));
-                            running = false;
-                        }
-                        Err(e) => {
-                            if preserves::error::is_io_error(&e) {
-                                return Err(e);
-                            } else {
-                                to_send.push(err(&format!("Packet deserialization error: {}", e),
-                                                 value::FALSE.clone()));
-                                running = false;
-                            }
-                        }
+                        Err(e) => return Err(e),
                     }
                     None => {
                         tracing::trace!("remote has closed");
@@ -167,7 +110,7 @@ where I: Stream<Item = ResultC2S> + Send,
                     }
                     if !ok {
                         /* weird. */
-                        to_send.push(err("Outbound channel closed unexpectedly", value::FALSE.clone()));
+                        to_send.push(error("Outbound channel closed unexpectedly", value::FALSE.clone()));
                         running = false;
                     }
                 },
@@ -183,16 +126,5 @@ where I: Stream<Item = ResultC2S> + Send,
             tokio::task::yield_now().await;
         }
         Ok(())
-    }
-}
-
-impl<I, O> Drop for Peer<I, O>
-where I: Stream<Item = ResultC2S> + Send,
-      O: Sink<packets::S2C, Error = packets::Error>,
-{
-    fn drop(&mut self) {
-        if let Some(ref s) = self.space {
-            s.write().unwrap().deregister(self.id);
-        }
     }
 }
