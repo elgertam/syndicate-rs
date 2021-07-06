@@ -1,5 +1,3 @@
-#![recursion_limit="512"]
-
 pub use preserves::value;
 
 pub use schemas::internal_protocol::Handle;
