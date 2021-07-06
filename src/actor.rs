@@ -1,3 +1,7 @@
+pub use futures::future::BoxFuture;
+
+pub use std::future::ready;
+
 use super::Assertion;
 use super::ActorId;
 use super::Handle;
@@ -5,16 +9,12 @@ use super::schemas::internal_protocol::*;
 use super::error::Error;
 
 use preserves::value::Domain;
-use preserves::value::IOResult;
 use preserves::value::IOValue;
 use preserves::value::Map;
 use preserves::value::NestedValue;
 
 use std::boxed::Box;
-use std::cell::Cell;
 use std::collections::hash_map::HashMap;
-use std::future::Future;
-use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -27,7 +27,7 @@ use tracing::{Instrument, trace, error};
 pub type ActorResult = Result<(), Error>;
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
-pub trait Entity {
+pub trait Entity: Send {
     fn assert(&mut self, _t: &mut Activation, _a: Assertion, _h: Handle) -> ActorResult {
         Ok(())
     }
@@ -41,6 +41,12 @@ pub trait Entity {
         t.message(peer, Assertion::new(true));
         Ok(())
     }
+    fn turn_end(&mut self, _t: &mut Activation) -> ActorResult {
+        Ok(())
+    }
+    fn exit_hook(&mut self, _t: &mut Activation, _exit_status: &ActorResult) -> BoxFuture<ActorResult> {
+        Box::pin(ready(Ok(())))
+    }
 }
 
 type OutboundAssertions = Map<Handle, Arc<Ref>>;
@@ -48,10 +54,12 @@ type OutboundAssertions = Map<Handle, Arc<Ref>>;
 // This is what other implementations call a "Turn", renamed here to
 // avoid conflicts with schemas::internal_protocol::Turn.
 pub struct Activation<'activation> {
-    outbound_assertions: &'activation mut OutboundAssertions,
+    pub actor: &'activation mut Actor,
     queues: HashMap<ActorId, Vec<(Arc<Ref>, Event)>>,
+    turn_end_revisit_flag: bool,
 }
 
+#[derive(Debug)]
 enum SystemMessage {
     Release,
     ReleaseOid(Oid),
@@ -63,17 +71,21 @@ pub struct Mailbox {
     pub actor_id: ActorId,
     pub mailbox_id: u64,
     tx: UnboundedSender<SystemMessage>,
-    pub queue_depth: Arc<AtomicUsize>,
-    pub mailbox_count: Arc<AtomicUsize>,
+    queue_depth: Arc<AtomicUsize>,
+    mailbox_count: Arc<AtomicUsize>,
 }
 
 pub struct Actor {
-    pub template_mailbox: Mailbox,
+    actor_id: ActorId,
+    tx: UnboundedSender<SystemMessage>,
     rx: UnboundedReceiver<SystemMessage>,
-    pub outbound_assertions: OutboundAssertions,
-    pub oid_map: Map<Oid, Cell<Box<dyn Entity + Send>>>,
-    pub next_task_id: u64,
-    pub linked_tasks: Map<u64, CancellationToken>,
+    queue_depth: Arc<AtomicUsize>,
+    mailbox_count: Arc<AtomicUsize>,
+    outbound_assertions: OutboundAssertions,
+    oid_map: Map<Oid, Box<dyn Entity + Send>>,
+    next_task_id: u64,
+    linked_tasks: Map<u64, CancellationToken>,
+    exit_hooks: Vec<Oid>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -87,13 +99,10 @@ pub struct Ref {
 
 impl<'activation> Activation<'activation> {
     pub fn for_actor(actor: &'activation mut Actor) -> Self {
-        Self::for_actor_details(&mut actor.outbound_assertions)
-    }
-
-    pub fn for_actor_details(outbound_assertions: &'activation mut OutboundAssertions) -> Self {
         Activation {
-            outbound_assertions,
+            actor,
             queues: HashMap::new(),
+            turn_end_revisit_flag: false,
         }
     }
 
@@ -101,12 +110,12 @@ impl<'activation> Activation<'activation> {
         let handle = crate::next_handle();
         self.queue_for(&r).push((Arc::clone(&r), Event::Assert(Box::new(
             Assert { assertion: Assertion(a.into()), handle: handle.clone() }))));
-        self.outbound_assertions.insert(handle.clone(), r);
+        self.actor.outbound_assertions.insert(handle.clone(), r);
         handle
     }
 
     pub fn retract(&mut self, handle: Handle) {
-        if let Some(r) = self.outbound_assertions.remove(&handle) {
+        if let Some(r) = self.actor.outbound_assertions.remove(&handle) {
             self.retract_known_ref(r, handle)
         }
     }
@@ -120,17 +129,39 @@ impl<'activation> Activation<'activation> {
             Message { body: Assertion(m.into()) }))))
     }
 
+    pub fn set_turn_end_flag(&mut self) {
+        self.turn_end_revisit_flag = true;
+    }
+
     fn queue_for(&mut self, r: &Arc<Ref>) -> &mut Vec<(Arc<Ref>, Event)> {
         self.queues.entry(r.relay.actor_id).or_default()
     }
 
-    pub fn deliver(&mut self) {
+    fn deliver(&mut self) {
         for (_actor_id, turn) in std::mem::take(&mut self.queues).into_iter() {
             if turn.len() == 0 { continue; }
             let first_ref = Arc::clone(&turn[0].0);
             let target = &first_ref.relay;
             target.send(Turn(turn.into_iter().map(
                 |(r, e)| TurnEvent { oid: r.target.clone(), event: e }).collect()));
+        }
+    }
+
+    fn with_oid<R,
+                    Ff: FnOnce(&mut Self) -> R,
+                    Fs: FnOnce(&mut Self, &mut Box<dyn Entity + Send>) -> R>(
+        &mut self,
+        oid: &Oid,
+        kf: Ff,
+        ks: Fs,
+    ) -> R {
+        match self.actor.oid_map.remove_entry(&oid) {
+            None => kf(self),
+            Some((k, mut e)) => {
+                let result = ks(self, &mut e);
+                self.actor.oid_map.insert(k, e);
+                result
+            }
         }
     }
 }
@@ -182,20 +213,28 @@ impl PartialOrd for Mailbox {
 impl Clone for Mailbox {
     fn clone(&self) -> Self {
         let Mailbox { actor_id, tx, queue_depth, mailbox_count, .. } = self;
-        mailbox_count.fetch_add(1, Ordering::SeqCst);
-        Mailbox {
+        let _old_refcount = mailbox_count.fetch_add(1, Ordering::SeqCst);
+        let new_mailbox = Mailbox {
             actor_id: *actor_id,
             mailbox_id: crate::next_mailbox_id(),
             tx: tx.clone(),
             queue_depth: Arc::clone(queue_depth),
             mailbox_count: Arc::clone(mailbox_count),
-        }
+        };
+        trace!(old_mailbox = debug(&self),
+               new_mailbox = debug(&new_mailbox),
+               new_mailbox_refcount = debug(_old_refcount + 1));
+        new_mailbox
     }
 }
 
 impl Drop for Mailbox {
     fn drop(&mut self) {
-        if self.mailbox_count.fetch_sub(1, Ordering::SeqCst) == 1 {
+        let old_mailbox_refcount = self.mailbox_count.fetch_sub(1, Ordering::SeqCst);
+        let new_mailbox_refcount = old_mailbox_refcount - 1;
+        trace!(mailbox = debug(&self),
+               new_mailbox_refcount);
+        if new_mailbox_refcount == 0 {
             let _ = self.tx.send(SystemMessage::Release);
             ()
         }
@@ -205,58 +244,99 @@ impl Drop for Mailbox {
 impl Actor {
     pub fn new() -> Self {
         let (tx, rx) = unbounded_channel();
+        let actor_id = crate::next_actor_id();
+        trace!(id = actor_id, "Actor::new");
         Actor {
-            template_mailbox: Mailbox {
-                actor_id: crate::next_actor_id(),
-                mailbox_id: crate::next_mailbox_id(),
-                tx,
-                queue_depth: Arc::new(AtomicUsize::new(0)),
-                mailbox_count: Arc::new(AtomicUsize::new(0)),
-            },
+            actor_id,
+            tx,
             rx,
+            queue_depth: Arc::new(AtomicUsize::new(0)),
+            mailbox_count: Arc::new(AtomicUsize::new(0)),
             outbound_assertions: Map::new(),
             oid_map: Map::new(),
             next_task_id: 0,
             linked_tasks: Map::new(),
+            exit_hooks: Vec::new(),
         }
     }
 
     pub fn id(&self) -> ActorId {
-        self.template_mailbox.actor_id
+        self.actor_id
+    }
+
+    fn mailbox(&mut self) -> Mailbox {
+        let _old_refcount = self.mailbox_count.fetch_add(1, Ordering::SeqCst);
+        let new_mailbox = Mailbox {
+            actor_id: self.actor_id,
+            mailbox_id: crate::next_mailbox_id(),
+            tx: self.tx.clone(),
+            queue_depth: Arc::clone(&self.queue_depth),
+            mailbox_count: Arc::clone(&self.mailbox_count),
+        };
+        trace!(new_mailbox = debug(&new_mailbox),
+               new_mailbox_refcount = debug(_old_refcount + 1));
+        new_mailbox
+    }
+
+    pub fn shutdown(&mut self) {
+        let _ = self.tx.send(SystemMessage::Release);
+        ()
     }
 
     pub fn create<E: Entity + Send + 'static>(&mut self, e: E) -> Arc<Ref> {
         let r = Ref {
-            relay: self.template_mailbox.clone(),
+            relay: self.mailbox(),
             target: crate::next_oid(),
         };
-        self.oid_map.insert(r.target.clone(), Cell::new(Box::new(e)));
+        self.oid_map.insert(r.target.clone(), Box::new(e));
         Arc::new(r)
     }
 
-    pub fn boot<F: Future<Output = ActorResult> + Send + 'static>(
+    pub fn boot<F: 'static + Send + FnOnce(&mut Self) -> BoxFuture<ActorResult>>(
         mut self,
         name: tracing::Span,
         boot: F,
     ) -> ActorHandle {
+        let id = self.id();
         tokio::spawn(async move {
-            trace!("start");
-            let run_future = self.run(boot);
-            let result = run_future.await;
+            trace!(id, "start");
+            let result = self.run(boot).await;
+            {
+                let mut t = Activation::for_actor(&mut self);
+                for oid in std::mem::take(&mut t.actor.exit_hooks) {
+                    match t.actor.oid_map.remove_entry(&oid) {
+                        None => (),
+                        Some((k, mut e)) => {
+                            if let Err(err) = e.exit_hook(&mut t, &result).await {
+                                tracing::warn!(err = debug(err),
+                                               oid = debug(oid),
+                                               "error in exit hook");
+                            }
+                            t.actor.oid_map.insert(k, e);
+                        }
+                    }
+                }
+            }
             match &result {
-                Ok(()) => trace!("normal stop"),
-                Err(e) => error!("{}", e),
+                Ok(()) => trace!(id, "normal stop"),
+                Err(e) => error!(id, "error stop: {}", e),
             }
             result
         }.instrument(name))
     }
 
     pub fn start(self, name: tracing::Span) -> ActorHandle {
-        self.boot(name, ready(Ok(())))
+        self.boot(name, |_ac| Box::pin(ready(Ok(()))))
     }
 
-    async fn run<F: Future<Output = ActorResult>>(&mut self, boot: F) -> ActorResult {
-        boot.await?;
+    async fn run<F: 'static + Send + FnOnce(&mut Self) -> BoxFuture<ActorResult>>(
+        &mut self,
+        boot: F,
+    ) -> ActorResult {
+        let id = self.id();
+        trace!(id, "boot");
+        boot(self).await?;
+        trace!(id, "run");
         loop {
             match self.rx.recv().await {
                 None =>
@@ -265,6 +345,7 @@ impl Actor {
                         detail: _Any::new(false),
                     })?,
                 Some(m) => {
+                    trace!(id, m = debug(&m), "system message");
                     if self.handle(m)? {
                         return Ok(());
                     }
@@ -273,10 +354,14 @@ impl Actor {
                     // (instead zeroing it on queue empty - it only needs to be approximate),
                     // but try_recv has been removed from mpsc at the time of writing. See
                     // https://github.com/tokio-rs/tokio/issues/3350 .
-                    self.template_mailbox.queue_depth.fetch_sub(1, Ordering::Relaxed);
+                    self.queue_depth.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         }
+    }
+
+    pub fn add_exit_hook(&mut self, oid: &Oid) {
+        self.exit_hooks.push(oid.clone())
     }
 
     fn handle(&mut self, m: SystemMessage) -> Result<bool, Error> {
@@ -288,29 +373,34 @@ impl Actor {
                 Ok(false)
             }
             SystemMessage::Turn(Turn(events)) => {
+                let mut t = Activation::for_actor(self);
+                let mut revisit_oids = Vec::new();
                 for TurnEvent { oid, event } in events.into_iter() {
-                    if let Some(e) = self.oid_map.get_mut(&oid) {
-                        let mut t = Activation::for_actor_details(&mut self.outbound_assertions);
-                        let e = e.get_mut();
-                        match event {
-                            Event::Assert(b) => {
-                                let Assert { assertion: Assertion(assertion), handle } = *b;
-                                e.assert(&mut t, assertion, handle)?;
-                            }
-                            Event::Retract(b) => {
-                                let Retract { handle } = *b;
-                                e.retract(&mut t, handle)?;
-                            }
-                            Event::Message(b) => {
-                                let Message { body: Assertion(body) } = *b;
-                                e.message(&mut t, body)?;
-                            }
-                            Event::Sync(b) => {
-                                let Sync { peer } = *b;
-                                e.sync(&mut t, peer)?;
-                            }
+                    t.with_oid(&oid, |_| Ok(()), |t, e| match event {
+                        Event::Assert(b) => {
+                            let Assert { assertion: Assertion(assertion), handle } = *b;
+                            e.assert(t, assertion, handle)
                         }
+                        Event::Retract(b) => {
+                            let Retract { handle } = *b;
+                            e.retract(t, handle)
+                        }
+                        Event::Message(b) => {
+                            let Message { body: Assertion(body) } = *b;
+                            e.message(t, body)
+                        }
+                        Event::Sync(b) => {
+                            let Sync { peer } = *b;
+                            e.sync(t, peer)
+                        }
+                    })?;
+                    if t.turn_end_revisit_flag {
+                        t.turn_end_revisit_flag = false;
+                        revisit_oids.push(oid);
                     }
+                }
+                for oid in revisit_oids {
+                    t.with_oid(&oid, |_| Ok(()), |t, e| e.turn_end(t))?;
                 }
                 Ok(false)
             }
@@ -319,33 +409,41 @@ impl Actor {
         }
     }
 
-    pub fn linked_task<F: Future<Output = ActorResult> + Send + 'static>(
+    pub fn linked_task<F: futures::Future<Output = ActorResult> + Send + 'static>(
         &mut self,
         name: tracing::Span,
         boot: F,
-    ) {
-        let mailbox = self.template_mailbox.clone();
+    ) -> ActorHandle {
+        let id = self.id();
+        let mailbox = self.mailbox();
         let token = CancellationToken::new();
         let task_id = self.next_task_id;
         self.next_task_id += 1;
-        {
+        let handle = {
             let token = token.clone();
             tokio::spawn(async move {
-                trace!("linked task start");
+                trace!(id, task_id, "linked task start");
                 select! {
-                    _ = token.cancelled() => (),
-                    result = boot => match result {
-                        Ok(()) => trace!("linked task normal stop"),
-                        Err(e) => {
-                            error!("linked task error: {}", e);
-                            let _ = mailbox.tx.send(SystemMessage::Crash(e));
-                            ()
+                    _ = token.cancelled() => {
+                        trace!(id, task_id, "linked task cancelled");
+                        Ok(())
+                    }
+                    result = boot => {
+                        match &result {
+                            Ok(()) => trace!(id, task_id, "linked task normal stop"),
+                            Err(e) => {
+                                error!(id, task_id, "linked task error: {}", e);
+                                let _ = mailbox.tx.send(SystemMessage::Crash(e.clone()));
+                                ()
+                            }
                         }
+                        result
                     }
                 }
-            }.instrument(name));
-        }
+            }.instrument(name))
+        };
         self.linked_tasks.insert(task_id, token);
+        handle
     }
 }
 
@@ -363,6 +461,12 @@ impl Drop for Actor {
     }
 }
 
+impl Ref {
+    pub fn external_event(&self, event: Event) {
+        self.relay.send(Turn(vec![TurnEvent { oid: self.target.clone(), event }]))
+    }
+}
+
 impl Drop for Ref {
     fn drop(&mut self) {
         let _ = self.relay.tx.send(SystemMessage::ReleaseOid(self.target.clone()));
@@ -370,20 +474,17 @@ impl Drop for Ref {
     }
 }
 
-impl Domain for Ref {
-    fn from_preserves(v: IOValue) -> IOResult<Self> {
-        panic!("aiee")
-    }
-    fn as_preserves(&self) -> IOValue {
-        panic!("aiee")
+impl Domain for Ref {}
+
+impl std::convert::TryFrom<&IOValue> for Ref {
+    type Error = preserves_schema::support::ParseError;
+    fn try_from(_v: &IOValue) -> Result<Self, Self::Error> {
+        panic!("Attempted to serialize Ref via IOValue");
     }
 }
 
-impl Domain for super::schemas::sturdy::WireRef {
-    fn from_preserves(v: IOValue) -> IOResult<Self> {
-        panic!("aiee")
-    }
-    fn as_preserves(&self) -> IOValue {
-        panic!("aiee")
+impl std::convert::From<&Ref> for IOValue {
+    fn from(_v: &Ref) -> IOValue {
+        panic!("Attempted to deserialize Ref via IOValue");
     }
 }

@@ -13,10 +13,9 @@ pub mod bag;
 pub mod config;
 pub mod dataspace;
 pub mod error;
-pub mod schemas;
-pub mod packets;
 pub mod pattern;
-pub mod peer;
+pub mod relay;
+pub mod schemas;
 pub mod skeleton;
 
 pub type Assertion = schemas::dataspace::_Any;
