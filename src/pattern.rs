@@ -1,4 +1,4 @@
-use crate::Assertion;
+use crate::actor::Assertion;
 use crate::schemas::dataspace_patterns::*;
 
 use preserves::value::NestedValue;

@@ -1,5 +1,3 @@
-use super::Assertion;
-use super::Handle;
 use super::skeleton;
 use super::actor::*;
 use super::schemas::dataspace::*;
@@ -70,7 +68,7 @@ impl Dataspace {
 
 impl Entity for Dataspace {
     fn assert(&mut self, t: &mut Activation, a: Assertion, h: Handle) -> ActorResult {
-        tracing::trace!(action = debug(&a), "assert");
+        tracing::trace!(assertion = debug(&a), handle = debug(&h), "assert");
 
         let old_assertions = self.index.assertion_count();
         self.index.insert(t, &a);
@@ -88,9 +86,11 @@ impl Entity for Dataspace {
     }
 
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
+        tracing::trace!(handle = debug(&h), "retract");
+
         if let Some((a, maybe_o)) = self.handle_map.remove(&h) {
             if let Some(o) = maybe_o {
-                self.index.remove_observer(o.pattern, &o.observer);
+                self.index.remove_observer(t, o.pattern, &o.observer);
                 self.churn.observers_removed += 1;
             }
 
@@ -103,6 +103,8 @@ impl Entity for Dataspace {
     }
 
     fn message(&mut self, t: &mut Activation, m: Assertion) -> ActorResult {
+        tracing::trace!(body = debug(&m), "message");
+
         self.index.send(t, &m, &mut self.churn.messages_delivered);
         self.churn.messages_injected += 1;
         Ok(())

@@ -1,4 +1,3 @@
-use super::Assertion;
 use super::bag;
 
 use preserves::value::{Map, Set, Value, NestedValue};
@@ -7,6 +6,7 @@ use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::sync::Arc;
 
+use crate::actor::Assertion;
 use crate::actor::Activation;
 use crate::actor::Ref;
 use crate::schemas::internal_protocol::Handle;
@@ -85,11 +85,12 @@ impl Index {
 
     pub fn remove_observer(
         &mut self,
+        t: &mut Activation,
         pat: ds::Pattern,
         observer: &Arc<Ref>,
     ) {
         let analysis = pattern::PatternAnalysis::new(&pat);
-        self.root.extend(&pat).remove_observer(analysis, observer);
+        self.root.extend(&pat).remove_observer(t, analysis, observer);
         self.observer_count -= 1;
     }
 
@@ -105,7 +106,7 @@ impl Index {
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), 1) == bag::Net::AbsentToPresent {
                             for (observer, capture_map) in &mut es.endpoints {
-                                capture_map.insert(cs.clone(), t.assert(observer.clone(), cs.clone()));
+                                capture_map.insert(cs.clone(), t.assert(observer, cs.clone()));
                             }
                         }
                     })
@@ -150,7 +151,7 @@ impl Index {
             |es, cs| {
                 *delivery_count += es.endpoints.len();
                 for observer in es.endpoints.keys() {
-                    t.message(observer.clone(), cs.clone());
+                    t.message(observer, cs.clone());
                 }
             }).perform(&mut self.root);
     }
@@ -417,13 +418,14 @@ impl Continuation {
         });
         let mut capture_map = Map::new();
         for cs in endpoints.cached_captures.keys() {
-            capture_map.insert(cs.clone(), t.assert(observer.clone(), cs.clone()));
+            capture_map.insert(cs.clone(), t.assert(observer, cs.clone()));
         }
         endpoints.endpoints.insert(observer.clone(), capture_map);
     }
 
     pub fn remove_observer(
         &mut self,
+        t: &mut Activation,
         analysis: pattern::PatternAnalysis,
         observer: &Arc<Ref>,
     ) {
@@ -439,7 +441,11 @@ impl Continuation {
                     = leaf.endpoints_map.entry(analysis.capture_paths)
                 {
                     let endpoints = endpoints_entry.get_mut();
-                    endpoints.endpoints.remove(observer);
+                    if let Some(capture_map) = endpoints.endpoints.remove(observer) {
+                        for handle in capture_map.into_values() {
+                            t.retract(handle)
+                        }
+                    }
                     if endpoints.endpoints.is_empty() {
                         endpoints_entry.remove_entry();
                     }

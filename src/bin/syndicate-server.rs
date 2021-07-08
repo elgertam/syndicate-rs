@@ -1,17 +1,26 @@
 use futures::SinkExt;
 use futures::StreamExt;
 
+use preserves::value::Map;
+use preserves::value::NestedValue;
+use preserves::value::Value;
+
+use std::convert::TryFrom;
 use std::future::ready;
+use std::iter::FromIterator;
 use std::sync::Arc;
 
 use structopt::StructOpt; // for from_args in main
 
 use syndicate::actor::*;
 use syndicate::dataspace::*;
+use syndicate::during::DuringEntity;
+use syndicate::during::DuringResult;
 use syndicate::error::Error;
 use syndicate::error::error;
 use syndicate::config;
 use syndicate::relay;
+use syndicate::schemas::internal_protocol::_Any;
 
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
@@ -71,19 +80,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     trace!("startup");
 
-    let ds = {
-        let mut ac = Actor::new();
-        let ds = ac.create(Dataspace::new());
-        daemons.push(ac.start(tracing::info_span!("dataspace")));
-        ds
-    };
+    let ds = Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new());
+    let gateway = Actor::create_and_start(syndicate::name!("gateway"),
+                                          DuringEntity::new(Arc::clone(&ds), handle_resolve));
+    {
+        let ds = Arc::clone(&ds);
+        Actor::new().boot(syndicate::name!("rootcap"), |t| Box::pin(async move {
+            use syndicate::schemas::gatekeeper;
+            t.assert(&ds, &gatekeeper::Bind {
+                oid: _Any::new("syndicate"),
+                key: vec![0; 16],
+                target: ds.clone(),
+            });
+            Ok(())
+        }));
+    }
 
     for port in config.ports.clone() {
-        let ds = Arc::clone(&ds);
+        let gateway = Arc::clone(&gateway);
         let config = Arc::clone(&config);
-        let mut ac = Actor::new();
-        ac.linked_task(tracing::info_span!("tcp", port), run_listener(ds, port, config));
-        daemons.push(ac.start(tracing::info_span!("tcp", port)));
+        daemons.push(Actor::new().boot(
+            syndicate::name!("tcp", port),
+            move |t| Box::pin(ready(Ok(t.actor.linked_task(syndicate::name!("listener"),
+                                                           run_listener(gateway, port, config)))))));
     }
 
     futures::future::join_all(daemons).await;
@@ -93,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //---------------------------------------------------------------------------
 
 fn message_error<E: std::fmt::Display>(e: E) -> Error {
-    error(&e.to_string(), false)
+    error(&e.to_string(), _Any::new(false))
 }
 
 fn extract_binary_packets(
@@ -117,9 +136,9 @@ fn extract_binary_packets(
 }
 
 async fn run_connection(
-    ac: &mut Actor,
+    t: &mut Activation<'_>,
     stream: TcpStream,
-    ds: Arc<Ref>,
+    gateway: Arc<Ref>,
     addr: std::net::SocketAddr,
     config: Arc<config::ServerConfig>,
 ) -> ActorResult {
@@ -141,21 +160,69 @@ async fn run_connection(
                 (relay::Input::Bytes(Box::pin(i)), relay::Output::Bytes(Box::pin(o)))
             }
         }
-        0 => Err(error("closed before starting", false))?,
+        0 => Err(error("closed before starting", _Any::new(false)))?,
         _ => unreachable!()
     };
-    Ok(relay::TunnelRelay::run(ac, i, o)?)
+    relay::TunnelRelay::run(t, i, o, Some(gateway), None);
+    Ok(())
 }
 
-async fn run_listener(ds: Arc<Ref>, port: u16, config: Arc<config::ServerConfig>) -> ActorResult {
+async fn run_listener(
+    gateway: Arc<Ref>,
+    port: u16,
+    config: Arc<config::ServerConfig>,
+) -> ActorResult {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     loop {
         let (stream, addr) = listener.accept().await?;
-        let ds = Arc::clone(&ds);
+        let gateway = Arc::clone(&gateway);
         let config = Arc::clone(&config);
         let ac = Actor::new();
-        let id = ac.id();
-        ac.boot(tracing::info_span!(parent: None, "connection", id),
-                move |ac| Box::pin(run_connection(ac, stream, ds, addr, config)));
+        ac.boot(syndicate::name!(parent: None, "connection"),
+                move |t| Box::pin(run_connection(t, stream, gateway, addr, config)));
+    }
+}
+
+//---------------------------------------------------------------------------
+
+fn handle_resolve(ds: &mut Arc<Ref>, t: &mut Activation, a: Assertion) -> DuringResult<Arc<Ref>> {
+    use syndicate::schemas::dataspace;
+    use syndicate::schemas::dataspace_patterns as p;
+    use syndicate::schemas::gatekeeper;
+    match gatekeeper::Resolve::try_from(&a) {
+        Err(_) => Ok(None),
+        Ok(gatekeeper::Resolve { sturdyref, observer }) => {
+            // TODO: codegen plugin to generate pattern constructors
+            let handler = t.actor.create(DuringEntity::new(observer, |observer, t, a| {
+                let bindings = a.value().to_sequence()?;
+                let key = bindings[0].value().to_bytestring()?;
+                let target = bindings[1].value().to_embedded()?;
+                tracing::trace!(key = debug(&key), target = debug(&target), "resolved!");
+                // TODO attenuation and validity checks
+                let h = t.assert(observer, _Any::domain(Arc::clone(target)));
+                Ok(Some(Box::new(|_observer, t| Ok(t.retract(h)))))
+            }));
+            let oh = t.assert(ds, &dataspace::Observe {
+                pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
+                    ctor: Box::new(p::CRec {
+                        label: Value::symbol("bind").wrap(),
+                        arity: 3.into(),
+                    }),
+                    members: Map::from_iter(vec![
+                        (0.into(), p::Pattern::DLit(Box::new(p::DLit { value: sturdyref.oid }))),
+                        (1.into(), p::Pattern::DBind(Box::new(p::DBind {
+                            name: "key".to_owned(),
+                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                        }))),
+                        (2.into(), p::Pattern::DBind(Box::new(p::DBind {
+                            name: "target".to_owned(),
+                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                        }))),
+                    ].into_iter())
+                })),
+                observer: handler,
+            });
+            Ok(Some(Box::new(|_ds, t| Ok(t.retract(oh)))))
+        }
     }
 }
