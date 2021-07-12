@@ -1,4 +1,3 @@
-use futures::Future;
 pub use futures::future::BoxFuture;
 
 pub use std::future::ready;
@@ -54,14 +53,20 @@ pub trait Entity: Send {
     }
 }
 
-type OutboundAssertions = Map<Handle, Arc<Ref>>;
+enum Destination {
+    ImmediateSelf(Oid),
+    Remote(Arc<Ref>),
+}
+
+type OutboundAssertions = Map<Handle, Destination>;
+type PendingEventQueue = Vec<(Arc<Ref>, Event)>;
 
 // This is what other implementations call a "Turn", renamed here to
 // avoid conflicts with schemas::internal_protocol::Turn.
 pub struct Activation<'activation> {
     pub actor: &'activation mut Actor,
-    queues: HashMap<ActorId, Vec<(Arc<Ref>, Event)>>,
-    turn_end_revisit_flag: bool,
+    queues: HashMap<ActorId, PendingEventQueue>,
+    immediate_self: Vec<TurnEvent>,
 }
 
 #[derive(Debug)]
@@ -119,26 +124,53 @@ impl<'activation> Activation<'activation> {
         Activation {
             actor,
             queues: HashMap::new(),
-            turn_end_revisit_flag: false,
+            immediate_self: Vec::new(),
         }
+    }
+
+    fn immediate_oid(&self, r: &Arc<Ref>) -> Oid {
+        if r.relay.actor_id != self.actor.actor_id {
+            panic!("Cannot use immediate_self to send to remote peers");
+        }
+        r.target.clone()
     }
 
     pub fn assert<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<Assertion> {
         let handle = crate::next_handle();
         self.queue_for(r).push((Arc::clone(r), Event::Assert(Box::new(
             Assert { assertion: Assertion(a.into()), handle: handle.clone() }))));
-        self.actor.outbound_assertions.insert(handle.clone(), Arc::clone(r));
+        self.actor.outbound_assertions.insert(handle.clone(), Destination::Remote(Arc::clone(r)));
+        handle
+    }
+
+    pub fn assert_immediate_self<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<Assertion> {
+        let oid = self.immediate_oid(r);
+        let handle = crate::next_handle();
+        self.immediate_self.push(TurnEvent {
+            oid: oid.clone(),
+            event: Event::Assert(Box::new(
+                Assert { assertion: Assertion(a.into()), handle: handle.clone() })),
+        });
+        self.actor.outbound_assertions.insert(handle.clone(), Destination::ImmediateSelf(oid));
         handle
     }
 
     pub fn retract(&mut self, handle: Handle) {
-        if let Some(r) = self.actor.outbound_assertions.remove(&handle) {
-            self.retract_known_ref(r, handle)
+        if let Some(d) = self.actor.outbound_assertions.remove(&handle) {
+            self.retract_known_ref(d, handle)
         }
     }
 
-    pub fn retract_known_ref(&mut self, r: Arc<Ref>, handle: Handle) {
-        self.queue_for(&r).push((r, Event::Retract(Box::new(Retract { handle }))));
+    fn retract_known_ref(&mut self, d: Destination, handle: Handle) {
+        match d {
+            Destination::Remote(r) =>
+                self.queue_for(&r).push((r, Event::Retract(Box::new(Retract { handle })))),
+            Destination::ImmediateSelf(oid) =>
+                self.immediate_self.push(TurnEvent {
+                    oid,
+                    event: Event::Retract(Box::new(Retract { handle })),
+                }),
+        }
     }
 
     pub fn message<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<Assertion> {
@@ -146,19 +178,25 @@ impl<'activation> Activation<'activation> {
             Message { body: Assertion(m.into()) }))))
     }
 
+    pub fn message_immediate_self<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<Assertion> {
+        self.immediate_self.push(TurnEvent {
+            oid: self.immediate_oid(r),
+            event: Event::Message(Box::new(Message { body: Assertion(m.into()) })),
+        })
+    }
+
     pub fn sync(&mut self, r: &Arc<Ref>, peer: Arc<Ref>) {
         self.queue_for(r).push((Arc::clone(r), Event::Sync(Box::new(Sync { peer }))));
     }
 
-    pub fn set_turn_end_flag(&mut self) {
-        self.turn_end_revisit_flag = true;
-    }
-
-    fn queue_for(&mut self, r: &Arc<Ref>) -> &mut Vec<(Arc<Ref>, Event)> {
+    fn queue_for(&mut self, r: &Arc<Ref>) -> &mut PendingEventQueue {
         self.queues.entry(r.relay.actor_id).or_default()
     }
 
     fn deliver(&mut self) {
+        if !self.immediate_self.is_empty() {
+            panic!("Unprocessed immediate_self events remain at deliver() time");
+        }
         for (_actor_id, turn) in std::mem::take(&mut self.queues).into_iter() {
             if turn.len() == 0 { continue; }
             let first_ref = Arc::clone(&turn[0].0);
@@ -189,9 +227,6 @@ impl<'activation> Activation<'activation> {
 
 impl<'activation> Drop for Activation<'activation> {
     fn drop(&mut self) {
-        if self.turn_end_revisit_flag {
-            panic!("turn_end_revisit_flag is set");
-        }
         self.deliver()
     }
 }
@@ -422,35 +457,31 @@ impl Actor {
                 self.oid_map.remove(&oid);
                 Ok(false)
             }
-            SystemMessage::Turn(Turn(events)) => {
+            SystemMessage::Turn(Turn(mut events)) => {
                 let mut t = Activation::for_actor(self);
-                let mut revisit_oids = Vec::new();
-                for TurnEvent { oid, event } in events.into_iter() {
-                    t.with_oid(&oid, |_| Ok(()), |t, e| match event {
-                        Event::Assert(b) => {
-                            let Assert { assertion: Assertion(assertion), handle } = *b;
-                            e.assert(t, assertion, handle)
-                        }
-                        Event::Retract(b) => {
-                            let Retract { handle } = *b;
-                            e.retract(t, handle)
-                        }
-                        Event::Message(b) => {
-                            let Message { body: Assertion(body) } = *b;
-                            e.message(t, body)
-                        }
-                        Event::Sync(b) => {
-                            let Sync { peer } = *b;
-                            e.sync(t, peer)
-                        }
-                    })?;
-                    if t.turn_end_revisit_flag {
-                        t.turn_end_revisit_flag = false;
-                        revisit_oids.push(oid);
+                loop {
+                    for TurnEvent { oid, event } in events.into_iter() {
+                        t.with_oid(&oid, |_| Ok(()), |t, e| match event {
+                            Event::Assert(b) => {
+                                let Assert { assertion: Assertion(assertion), handle } = *b;
+                                e.assert(t, assertion, handle)
+                            }
+                            Event::Retract(b) => {
+                                let Retract { handle } = *b;
+                                e.retract(t, handle)
+                            }
+                            Event::Message(b) => {
+                                let Message { body: Assertion(body) } = *b;
+                                e.message(t, body)
+                            }
+                            Event::Sync(b) => {
+                                let Sync { peer } = *b;
+                                e.sync(t, peer)
+                            }
+                        })?;
                     }
-                }
-                for oid in revisit_oids.into_iter() {
-                    t.with_oid(&oid, |_| Ok(()), |t, e| e.turn_end(t))?;
+                    events = std::mem::take(&mut t.immediate_self);
+                    if events.is_empty() { break; }
                 }
                 t.actor.queue_depth.fetch_sub(1, Ordering::Relaxed); // see (***) in this file
                 Ok(false)

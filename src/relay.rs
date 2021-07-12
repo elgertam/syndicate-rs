@@ -492,7 +492,8 @@ impl Entity for TunnelRelay {
                 tunnel_relay::RelayProtocol::Output(b) => match *b {
                     tunnel_relay::Output { oid, event } => {
                         if self.pending_outbound.is_empty() {
-                            t.set_turn_end_flag();
+                            t.message_immediate_self(
+                                &self.self_ref, &tunnel_relay::RelayProtocol::Flush);
                         }
                         let turn_event = TurnEvent {
                             oid: Oid(oid.0),
@@ -509,14 +510,13 @@ impl Entity for TunnelRelay {
                         }
                     }
                 }
+                tunnel_relay::RelayProtocol::Flush => {
+                    let events = std::mem::take(&mut self.pending_outbound);
+                    self.send_packet(Packet::Turn(Box::new(Turn(events))))?
+                }
             }
         }
         Ok(())
-    }
-
-    fn turn_end(&mut self, _t: &mut Activation) -> ActorResult {
-        let events = std::mem::take(&mut self.pending_outbound);
-        self.send_packet(Packet::Turn(Box::new(Turn(events))))
     }
 
     fn exit_hook(&mut self, _t: &mut Activation, exit_status: &ActorResult) -> BoxFuture<ActorResult> {
