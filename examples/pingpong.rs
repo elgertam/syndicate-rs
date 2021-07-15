@@ -190,15 +190,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut stats_timer = interval(Duration::from_secs(1));
                 loop {
                     stats_timer.tick().await;
-                    consumer.external_event(Event::Message(Box::new(Message {
-                        body: Assertion(_Any::new(true)),
-                    }))).await;
+                    consumer.external_event(&Debtor::new(syndicate::name!("debtor")),
+                                            Event::Message(Box::new(Message {
+                                                body: Assertion(_Any::new(true)),
+                                            }))).await?;
                 }
             });
 
             if let PingPongMode::Ping(c) = &config.mode {
                 let turn_count = c.turn_count;
                 let action_count = c.action_count;
+                let debtor = t.debtor.clone();
                 t.actor.linked_task(syndicate::name!("boot-ping"), async move {
                     let padding: _Any = Value::ByteString(vec![0; bytes_padding]).wrap();
                     for _ in 0..turn_count {
@@ -211,7 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 body: Assertion(current_rec.clone()),
                             })));
                         }
-                        ds.external_events(events).await
+                        ds.external_events(&debtor, events).await?
                     }
                     Ok(())
                 });

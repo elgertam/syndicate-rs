@@ -17,11 +17,14 @@ use preserves::value::NestedValue;
 
 use std::boxed::Box;
 use std::collections::hash_map::HashMap;
+use std::convert::TryInto;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 
 use tokio::select;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+// use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use tracing;
@@ -68,15 +71,30 @@ type PendingEventQueue = Vec<(Arc<Ref>, Event)>;
 // avoid conflicts with schemas::internal_protocol::Turn.
 pub struct Activation<'activation> {
     pub actor: &'activation mut Actor,
+    pub debtor: Arc<Debtor>,
     queues: HashMap<ActorId, PendingEventQueue>,
     immediate_self: Vec<TurnEvent>,
+}
+
+#[derive(Debug)]
+pub struct Debtor {
+    id: u64,
+    debt: Arc<AtomicI64>,
+    // notify: Notify,
+}
+
+#[derive(Debug)]
+pub struct LoanedItem<T> {
+    pub debtor: Arc<Debtor>,
+    pub cost: usize,
+    pub item: T,
 }
 
 #[derive(Debug)]
 enum SystemMessage {
     Release,
     ReleaseOid(Oid),
-    Turn(Turn),
+    Turn(LoanedItem<Turn>),
     Crash(Error),
 }
 
@@ -84,7 +102,6 @@ pub struct Mailbox {
     pub actor_id: ActorId,
     pub mailbox_id: u64,
     tx: UnboundedSender<SystemMessage>,
-    queue_depth: Arc<AtomicUsize>,
     mailbox_count: Arc<AtomicUsize>,
 }
 
@@ -92,7 +109,6 @@ pub struct Actor {
     actor_id: ActorId,
     tx: UnboundedSender<SystemMessage>,
     rx: Option<UnboundedReceiver<SystemMessage>>,
-    queue_depth: Arc<AtomicUsize>,
     mailbox_count: Arc<AtomicUsize>,
     outbound_assertions: OutboundAssertions,
     oid_map: Map<Oid, Box<dyn Entity + Send>>,
@@ -115,6 +131,8 @@ pub struct Ref {
 
 //---------------------------------------------------------------------------
 
+static NEXT_DEBTOR_ID: AtomicU64 = AtomicU64::new(4);
+
 preserves_schema::support::lazy_static! {
     pub static ref INERT_REF: Arc<Ref> = {
         struct InertEntity;
@@ -125,12 +143,40 @@ preserves_schema::support::lazy_static! {
                 |t| Box::pin(ready(Ok(t.actor.shutdown()))));
         e
     };
+
+    pub static ref SYNDICATE_CREDIT: i64 = {
+        let credit =
+            std::env::var("SYNDICATE_CREDIT").unwrap_or("100".to_owned())
+            .parse::<i64>().expect("Valid SYNDICATE_CREDIT environment variable");
+        tracing::info!("Configured SYNDICATE_CREDIT = {}", credit);
+        credit
+    };
+
+    pub static ref DEBTORS: RwLock<Map<u64, (tracing::Span, Arc<AtomicI64>)>> =
+        RwLock::new(Map::new());
+}
+
+pub fn start_debt_reporter() {
+    Actor::new().boot(crate::name!("debt-reporter"), |t| Box::pin(async move {
+        t.actor.linked_task(crate::name!("tick"), async move {
+            let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
+            loop {
+                timer.tick().await;
+                for (id, (name, debt)) in DEBTORS.read().unwrap().iter() {
+                    let _enter = name.enter();
+                    tracing::info!(id, debt = debug(debt.load(Ordering::Relaxed)));
+                }
+            }
+        });
+        Ok(())
+    }));
 }
 
 impl<'activation> Activation<'activation> {
-    pub fn for_actor(actor: &'activation mut Actor) -> Self {
+    pub fn new(actor: &'activation mut Actor, debtor: Arc<Debtor>) -> Self {
         Activation {
             actor,
+            debtor,
             queues: HashMap::new(),
             immediate_self: Vec::new(),
         }
@@ -217,8 +263,10 @@ impl<'activation> Activation<'activation> {
             if turn.len() == 0 { continue; }
             let first_ref = Arc::clone(&turn[0].0);
             let target = &first_ref.addr.mailbox;
-            target.send(Turn(turn.into_iter().map(
-                |(r, e)| TurnEvent { oid: r.addr.oid.clone(), event: e }).collect()));
+            let _ = target.send(
+                &self.debtor,
+                Turn(turn.into_iter().map(
+                    |(r, e)| TurnEvent { oid: r.addr.oid.clone(), event: e }).collect()));
         }
     }
 
@@ -247,15 +295,70 @@ impl<'activation> Drop for Activation<'activation> {
     }
 }
 
-impl Mailbox {
-    pub fn send(&self, t: Turn) {
-        if let Ok(()) = self.tx.send(SystemMessage::Turn(t)) {
-            self.queue_depth.fetch_add(1, Ordering::Relaxed);
-        }
+impl Debtor {
+    pub fn new(name: tracing::Span) -> Arc<Self> {
+        let id = NEXT_DEBTOR_ID.fetch_add(1, Ordering::Relaxed);
+        let debt = Arc::new(AtomicI64::new(0));
+        DEBTORS.write().unwrap().insert(id, (name, Arc::clone(&debt)));
+        Arc::new(Debtor {
+            id,
+            debt,
+            // notify: Notify::new(),
+        })
     }
 
-    pub fn current_queue_depth(&self) -> usize {
-        self.queue_depth.load(Ordering::Relaxed)
+    pub fn balance(&self) -> i64 {
+        self.debt.load(Ordering::Relaxed)
+    }
+
+    pub fn borrow(&self, token_count: usize) {
+        let token_count: i64 = token_count.try_into().expect("manageable token count");
+        self.debt.fetch_add(token_count, Ordering::Relaxed);
+    }
+
+    pub fn repay(&self, token_count: usize) {
+        let token_count: i64 = token_count.try_into().expect("manageable token count");
+        let _old_debt = self.debt.fetch_sub(token_count, Ordering::Relaxed);
+        // if _old_debt - token_count <= *SYNDICATE_CREDIT {
+        //     self.notify.notify_one();
+        // }
+    }
+
+    pub async fn ensure_clear_funds(&self) {
+        let limit = *SYNDICATE_CREDIT;
+        tokio::task::yield_now().await;
+        while self.balance() > limit {
+            tokio::task::yield_now().await;
+            // self.notify.notified().await;
+        }
+    }
+}
+
+impl Drop for Debtor {
+    fn drop(&mut self) {
+        DEBTORS.write().unwrap().remove(&self.id);
+    }
+}
+
+impl<T> LoanedItem<T> {
+    pub fn new(debtor: &Arc<Debtor>, cost: usize, item: T) -> Self {
+        debtor.borrow(cost);
+        LoanedItem { debtor: Arc::clone(debtor), cost, item }
+    }
+}
+
+impl<T> Drop for LoanedItem<T> {
+    fn drop(&mut self) {
+        self.debtor.repay(self.cost);
+    }
+}
+
+impl Mailbox {
+    #[must_use]
+    pub fn send(&self, debtor: &Arc<Debtor>, t: Turn) -> ActorResult {
+        let token_count = t.0.len();
+        self.tx.send(SystemMessage::Turn(LoanedItem::new(debtor, token_count, t)))
+            .map_err(|_| error("Target actor not running", _Any::new(false)))
     }
 }
 
@@ -292,13 +395,12 @@ impl PartialOrd for Mailbox {
 
 impl Clone for Mailbox {
     fn clone(&self) -> Self {
-        let Mailbox { actor_id, tx, queue_depth, mailbox_count, .. } = self;
+        let Mailbox { actor_id, tx, mailbox_count, .. } = self;
         let _old_refcount = mailbox_count.fetch_add(1, Ordering::SeqCst);
         let new_mailbox = Mailbox {
             actor_id: *actor_id,
             mailbox_id: crate::next_mailbox_id(),
             tx: tx.clone(),
-            queue_depth: Arc::clone(queue_depth),
             mailbox_count: Arc::clone(mailbox_count),
         };
         // tracing::trace!(old_mailbox = debug(&self),
@@ -330,7 +432,6 @@ impl Actor {
             actor_id,
             tx,
             rx: Some(rx),
-            queue_depth: Arc::new(AtomicUsize::new(0)),
             mailbox_count: Arc::new(AtomicUsize::new(0)),
             outbound_assertions: Map::new(),
             oid_map: Map::new(),
@@ -366,7 +467,6 @@ impl Actor {
             actor_id: self.actor_id,
             mailbox_id: crate::next_mailbox_id(),
             tx: self.tx.clone(),
-            queue_depth: Arc::clone(&self.queue_depth),
             mailbox_count: Arc::clone(&self.mailbox_count),
         };
         // tracing::trace!(new_mailbox = debug(&new_mailbox),
@@ -410,19 +510,9 @@ impl Actor {
         name.record("actor_id", &self.id());
         tokio::spawn(async move {
             tracing::trace!("start");
-            {
-                let queue_depth = Arc::clone(&self.queue_depth);
-                self.linked_task(crate::name!("queue-monitor"), async move {
-                    let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
-                    loop {
-                        timer.tick().await;
-                        tracing::info!(queue_depth = debug(queue_depth.load(Ordering::Relaxed)));
-                    }
-                });
-            }
             let result = self.run(boot).await;
             {
-                let mut t = Activation::for_actor(&mut self);
+                let mut t = Activation::new(&mut self, Debtor::new(crate::name!("shutdown")));
                 for r in std::mem::take(&mut t.actor.exit_hooks) {
                     match t.actor.oid_map.remove_entry(&r.addr.oid) {
                         None => (),
@@ -458,7 +548,7 @@ impl Actor {
     ) -> ActorResult {
         let _id = self.id();
         // tracing::trace!(_id, "boot");
-        boot(&mut Activation::for_actor(self)).await?;
+        boot(&mut Activation::new(self, Debtor::new(crate::name!("boot")))).await?;
         // tracing::trace!(_id, "run");
         loop {
             match self.rx.as_mut().expect("present rx channel half").recv().await {
@@ -469,11 +559,6 @@ impl Actor {
                     if should_stop {
                         return Ok(());
                     }
-                    // We would have a loop calling try_recv until it answers "no more at
-                    // present" here, to avoid decrementing queue_depth for every message
-                    // (instead zeroing it on queue empty - it only needs to be approximate),
-                    // but try_recv has been removed from mpsc at the time of writing. See
-                    // https://github.com/tokio-rs/tokio/issues/3350 . (***)
                 }
             }
         }
@@ -494,8 +579,9 @@ impl Actor {
                 self.oid_map.remove(&oid);
                 Ok(false)
             }
-            SystemMessage::Turn(Turn(mut events)) => {
-                let mut t = Activation::for_actor(self);
+            SystemMessage::Turn(mut loaned_item) => {
+                let mut events = std::mem::take(&mut loaned_item.item.0);
+                let mut t = Activation::new(self, Arc::clone(&loaned_item.debtor));
                 loop {
                     for TurnEvent { oid, event } in events.into_iter() {
                         t.with_oid(&oid, |_| Ok(()), |t, e| match event {
@@ -520,7 +606,6 @@ impl Actor {
                     events = std::mem::take(&mut t.immediate_self);
                     if events.is_empty() { break; }
                 }
-                t.actor.queue_depth.fetch_sub(1, Ordering::Relaxed); // see (***) in this file
                 Ok(false)
             }
             SystemMessage::Crash(e) => {
@@ -581,31 +666,26 @@ impl Drop for Actor {
 
         let to_clear = std::mem::take(&mut self.outbound_assertions);
         {
-            let mut t = Activation::for_actor(self);
+            let mut t = Activation::new(self, Debtor::new(crate::name!("drop")));
             for (handle, r) in to_clear.into_iter() {
                 tracing::trace!(h = debug(&handle), "retract on termination");
                 t.retract_known_ref(r, handle);
             }
         }
 
-        // In future, could do this:
-        // tokio::spawn(async move {
-        //     while let Some(m) = rx.recv().await {
-        //         match m { ... }
-        //     }
-        // });
-
         tracing::trace!("Actor::drop");
     }
 }
 
 impl Ref {
-    pub async fn external_event(&self, event: Event) {
-        self.addr.mailbox.send(Turn(vec![TurnEvent { oid: self.addr.oid.clone(), event }]))
+    #[must_use]
+    pub async fn external_event(&self, debtor: &Arc<Debtor>, event: Event) -> ActorResult {
+        self.addr.mailbox.send(debtor, Turn(vec![TurnEvent { oid: self.addr.oid.clone(), event }]))
     }
 
-    pub async fn external_events(&self, events: Vec<Event>) {
-        self.addr.mailbox.send(Turn(events.into_iter().map(|event| TurnEvent {
+    #[must_use]
+    pub async fn external_events(&self, debtor: &Arc<Debtor>, events: Vec<Event>) -> ActorResult {
+        self.addr.mailbox.send(debtor, Turn(events.into_iter().map(|event| TurnEvent {
             oid: self.addr.oid.clone(),
             event,
         }).collect()))

@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::relay;
+use syndicate::schemas::internal_protocol::*;
 use syndicate::sturdy;
-use syndicate::value::NestedValue;
 use syndicate::value::Value;
 
 use tokio::net::TcpStream;
@@ -33,6 +31,7 @@ fn says(who: _Any, what: _Any) -> _Any {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
+    syndicate::actor::start_debt_reporter();
     Actor::new().boot(syndicate::name!("producer"), |t| Box::pin(async move {
         let config = Config::from_args();
         let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
@@ -40,18 +39,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
             let padding: _Any = Value::ByteString(vec![0; config.bytes_padding]).wrap();
             let action_count = config.action_count;
-
-            let producer = syndicate::entity(Arc::clone(&*INERT_REF))
-                .on_message(move |self_ref, t, _m| {
+            let debtor = Debtor::new(syndicate::name!("debtor"));
+            t.actor.linked_task(syndicate::name!("sender"), async move {
+                loop {
+                    debtor.ensure_clear_funds().await;
+                    let mut events = Vec::new();
                     for _ in 0..action_count {
-                        t.message(&ds, says(Value::from("producer").wrap(), padding.clone()));
+                        events.push(Event::Message(Box::new(Message {
+                            body: Assertion(says(Value::from("producer").wrap(), padding.clone())),
+                        })));
                     }
-                    t.message(&self_ref, _Any::new(true));
-                    Ok(())
-                })
-                .create_rec(t.actor, |_ac, self_ref, p_ref| *self_ref = Arc::clone(p_ref));
-
-            t.message(&producer, _Any::new(true));
+                    ds.external_events(&debtor, events).await?;
+                }
+            });
             Ok(None)
         });
         Ok(())

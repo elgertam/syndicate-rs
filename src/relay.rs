@@ -82,7 +82,7 @@ pub struct TunnelRelay
     outbound_assertions: Map<Handle, Vec<Arc<WireSymbol>>>,
     membranes: Membranes,
     pending_outbound: Vec<TurnEvent>,
-    output: UnboundedSender<Vec<u8>>,
+    output: UnboundedSender<LoanedItem<Vec<u8>>>,
 }
 
 struct RelayEntity {
@@ -208,7 +208,7 @@ impl TunnelRelay {
                 Err(*b)
             },
             Packet::Turn(b) => {
-                let t = &mut Activation::for_actor(t.actor);
+                let t = &mut Activation::new(t.actor, Arc::clone(&t.debtor));
                 let Turn(events) = *b;
                 for TurnEvent { oid, event } in events {
                     let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.0.clone())) {
@@ -321,9 +321,9 @@ impl TunnelRelay {
         Ok(PackedWriter::encode::<_, _Any, _>(&mut self.membranes, &item)?)
     }
 
-    pub fn send_packet(&mut self, p: Packet) -> ActorResult {
+    pub fn send_packet(&mut self, debtor: &Arc<Debtor>, cost: usize, p: Packet) -> ActorResult {
         let bs = self.encode_packet(p)?;
-        let _ = self.output.send(bs);
+        let _ = self.output.send(LoanedItem::new(debtor, cost, bs));
         Ok(())
     }
 }
@@ -445,20 +445,24 @@ pub async fn input_loop(
     i: Input,
     relay: Arc<Ref>,
 ) -> ActorResult {
-    async fn s<M: Into<_Any>>(relay: &Arc<Ref>, m: M) -> () {
-        relay.external_event(Event::Message(Box::new(Message { body: Assertion(m.into()) }))).await
+    #[must_use]
+    async fn s<M: Into<_Any>>(relay: &Arc<Ref>, debtor: &Arc<Debtor>, m: M) -> ActorResult {
+        debtor.ensure_clear_funds().await;
+        relay.external_event(debtor, Event::Message(Box::new(Message { body: Assertion(m.into()) }))).await
     }
+
+    let debtor = Debtor::new(crate::name!("input-loop"));
 
     match i {
         Input::Packets(mut src) => {
             loop {
                 match src.next().await {
                     None => {
-                        s(&relay, &tunnel_relay::Input::Eof).await;
+                        s(&relay, &debtor, &tunnel_relay::Input::Eof).await?;
                         return Ok(());
                     }
                     Some(bs) => {
-                        s(&relay, &tunnel_relay::Input::Packet { bs: bs? }).await;
+                        s(&relay, &debtor, &tunnel_relay::Input::Packet { bs: bs? }).await?;
                     }
                 }
             }
@@ -471,7 +475,7 @@ pub async fn input_loop(
                     Ok(n) => n,
                     Err(e) =>
                         if e.kind() == io::ErrorKind::ConnectionReset {
-                            s(&relay, &tunnel_relay::Input::Eof).await;
+                            s(&relay, &debtor, &tunnel_relay::Input::Eof).await?;
                             return Ok(());
                         } else {
                             return Err(e)?;
@@ -479,14 +483,14 @@ pub async fn input_loop(
                 };
                 match n {
                     0 => {
-                        s(&relay, &tunnel_relay::Input::Eof).await;
+                        s(&relay, &debtor, &tunnel_relay::Input::Eof).await?;
                         return Ok(());
                     }
                     _ => {
                         while buf.has_remaining() {
                             let bs = buf.chunk();
                             let n = bs.len();
-                            s(&relay, &tunnel_relay::Input::Segment { bs: bs.to_vec() }).await;
+                            s(&relay, &debtor, &tunnel_relay::Input::Segment { bs: bs.to_vec() }).await?;
                             buf.advance(n);
                         }
                     }
@@ -498,17 +502,19 @@ pub async fn input_loop(
 
 pub async fn output_loop(
     mut o: Output,
-    mut output_rx: UnboundedReceiver<Vec<u8>>,
+    mut output_rx: UnboundedReceiver<LoanedItem<Vec<u8>>>,
 ) -> ActorResult {
     loop {
         match output_rx.recv().await {
             None =>
                 return Ok(()),
-            Some(bs) => match &mut o {
-                Output::Packets(sink) => sink.send(bs).await?,
-                Output::Bytes(w) => {
-                    w.write_all(&bs).await?;
-                    w.flush().await?;
+            Some(mut loaned_item) => {
+                match &mut o {
+                    Output::Packets(sink) => sink.send(std::mem::take(&mut loaned_item.item)).await?,
+                    Output::Bytes(w) => {
+                        w.write_all(&loaned_item.item).await?;
+                        w.flush().await?;
+                    }
                 }
             }
         }
@@ -578,17 +584,17 @@ impl Entity for TunnelRelay {
                 }
                 tunnel_relay::RelayProtocol::Flush => {
                     let events = std::mem::take(&mut self.pending_outbound);
-                    self.send_packet(Packet::Turn(Box::new(Turn(events))))?
+                    self.send_packet(&t.debtor, events.len(), Packet::Turn(Box::new(Turn(events))))?
                 }
             }
         }
         Ok(())
     }
 
-    fn exit_hook(&mut self, _t: &mut Activation, exit_status: &ActorResult) -> BoxFuture<ActorResult> {
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &ActorResult) -> BoxFuture<ActorResult> {
         if let Err(e) = exit_status {
             let e = e.clone();
-            Box::pin(ready(self.send_packet(Packet::Error(Box::new(e)))))
+            Box::pin(ready(self.send_packet(&t.debtor, 1, Packet::Error(Box::new(e)))))
         } else {
             Box::pin(ready(Ok(())))
         }

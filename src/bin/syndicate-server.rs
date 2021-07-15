@@ -32,6 +32,7 @@ use tungstenite::Message;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
+    syndicate::actor::start_debt_reporter();
 
     {
         const BRIGHT_GREEN: &str = "\x1b[92m";

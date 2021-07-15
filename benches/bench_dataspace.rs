@@ -56,16 +56,17 @@ pub fn bench_pub(c: &mut Criterion) {
                 let mut ac = Actor::new();
                 let ds = ac.create(Dataspace::new());
                 let shutdown = ac.create(ShutdownEntity);
+                let debtor = Debtor::new(syndicate::name!("sender-debtor"));
                 ac.linked_task(syndicate::name!("sender"), async move {
                     for _ in 0..iters {
-                        ds.external_event(Event::Message(Box::new(Message {
+                        ds.external_event(&debtor, Event::Message(Box::new(Message {
                             body: Assertion(says(_Any::new("bench_pub"),
                                                  Value::ByteString(vec![]).wrap())),
-                        }))).await
+                        }))).await?
                     }
-                    shutdown.external_event(Event::Message(Box::new(Message {
+                    shutdown.external_event(&debtor, Event::Message(Box::new(Message {
                         body: Assertion(_Any::new(true)),
-                    }))).await;
+                    }))).await?;
                     Ok(())
                 });
                 ac.start(syndicate::name!("dataspace")).await.unwrap().unwrap();
@@ -123,16 +124,17 @@ pub fn bench_pub(c: &mut Criterion) {
                             })),
                             observer: shutdown,
                         });
+                        let debtor = t.debtor.clone();
                         t.actor.linked_task(syndicate::name!("sender"), async move {
                             for _ in 0..iters {
-                                ds.external_event(Event::Message(Box::new(Message {
+                                ds.external_event(&debtor, Event::Message(Box::new(Message {
                                     body: Assertion(says(_Any::new("bench_pub"),
                                                          Value::ByteString(vec![]).wrap())),
-                                }))).await
+                                }))).await?
                             }
-                            ds.external_event(Event::Message(Box::new(Message {
+                            ds.external_event(&debtor, Event::Message(Box::new(Message {
                                 body: Assertion(_Any::new(true)),
-                            }))).await;
+                            }))).await?;
                             Ok(())
                         });
                         Ok(())

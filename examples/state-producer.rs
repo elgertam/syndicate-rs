@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::relay;
+use syndicate::schemas::internal_protocol::*;
 use syndicate::sturdy;
-use syndicate::value::NestedValue;
 use syndicate::value::Value;
 
 use tokio::net::TcpStream;
@@ -24,29 +22,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
         let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
         relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
-            let presence: _Any = Value::simple_record1(
-                "Present",
-                Value::from(std::process::id()).wrap()).wrap();
-
-            let mut handle = Some(t.assert(&ds, presence.clone()));
-
-            let producer = syndicate::entity(Arc::clone(&*INERT_REF))
-                .on_message(move |self_ref, t, m| {
-                    match m.value().to_boolean()? {
-                        true => {
-                            handle = Some(t.assert(&ds, presence.clone()));
-                            t.message(&self_ref, _Any::new(false));
-                        }
-                        false => {
-                            t.retract(handle.take().unwrap());
-                            t.message(&self_ref, _Any::new(true));
-                        }
-                    }
-                    Ok(())
-                })
-                .create_rec(t.actor, |_ac, self_ref, p_ref| *self_ref = Arc::clone(p_ref));
-
-            t.message(&producer, _Any::new(false));
+            let debtor = Debtor::new(syndicate::name!("debtor"));
+            t.actor.linked_task(syndicate::name!("sender"), async move {
+                let presence: _Any = Value::simple_record1(
+                    "Present",
+                    Value::from(std::process::id()).wrap()).wrap();
+                let handle = syndicate::next_handle();
+                let assert_e = Event::Assert(Box::new(Assert {
+                    assertion: Assertion(presence),
+                    handle: handle.clone(),
+                }));
+                let retract_e = Event::Retract(Box::new(Retract {
+                    handle,
+                }));
+                ds.external_event(&debtor, assert_e.clone()).await?;
+                loop {
+                    debtor.ensure_clear_funds().await;
+                    ds.external_event(&debtor, retract_e.clone()).await?;
+                    ds.external_event(&debtor, assert_e.clone()).await?;
+                }
+            });
             Ok(None)
         });
         Ok(())
