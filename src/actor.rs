@@ -4,8 +4,11 @@ pub use std::future::ready;
 
 use super::ActorId;
 use super::schemas::internal_protocol::*;
+use super::schemas::sturdy;
 use super::error::Error;
 use super::error::error;
+use super::rewrite::CaveatError;
+use super::rewrite::CheckedCaveat;
 
 use preserves::value::Domain;
 use preserves::value::IOValue;
@@ -24,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing;
 use tracing::Instrument;
 
-pub type Assertion = super::schemas::dataspace::_Any;
+pub use super::schemas::internal_protocol::_Any;
 pub use super::schemas::internal_protocol::Handle;
 pub use super::schemas::internal_protocol::Oid;
 
@@ -32,17 +35,17 @@ pub type ActorResult = Result<(), Error>;
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
 pub trait Entity: Send {
-    fn assert(&mut self, _t: &mut Activation, _a: Assertion, _h: Handle) -> ActorResult {
+    fn assert(&mut self, _t: &mut Activation, _a: _Any, _h: Handle) -> ActorResult {
         Ok(())
     }
     fn retract(&mut self, _t: &mut Activation, _h: Handle) -> ActorResult {
         Ok(())
     }
-    fn message(&mut self, _t: &mut Activation, _m: Assertion) -> ActorResult {
+    fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
         Ok(())
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref>) -> ActorResult {
-        t.message(&peer, Assertion::new(true));
+        t.message(&peer, _Any::new(true));
         Ok(())
     }
     fn turn_end(&mut self, _t: &mut Activation) -> ActorResult {
@@ -88,21 +91,26 @@ pub struct Mailbox {
 pub struct Actor {
     actor_id: ActorId,
     tx: UnboundedSender<SystemMessage>,
-    rx: UnboundedReceiver<SystemMessage>,
+    rx: Option<UnboundedReceiver<SystemMessage>>,
     queue_depth: Arc<AtomicUsize>,
     mailbox_count: Arc<AtomicUsize>,
     outbound_assertions: OutboundAssertions,
     oid_map: Map<Oid, Box<dyn Entity + Send>>,
     next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
-    exit_hooks: Vec<Oid>,
+    exit_hooks: Vec<Arc<Ref>>,
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ObjectAddress {
+    pub mailbox: Mailbox,
+    pub oid: Oid,
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Ref {
-    pub relay: Mailbox,
-    pub target: Oid,
-    /* TODO: attenuation */
+    pub addr: Arc<ObjectAddress>,
+    pub attenuation: Vec<CheckedCaveat>,
 }
 
 //---------------------------------------------------------------------------
@@ -129,29 +137,33 @@ impl<'activation> Activation<'activation> {
     }
 
     fn immediate_oid(&self, r: &Arc<Ref>) -> Oid {
-        if r.relay.actor_id != self.actor.actor_id {
+        if r.addr.mailbox.actor_id != self.actor.actor_id {
             panic!("Cannot use immediate_self to send to remote peers");
         }
-        r.target.clone()
+        r.addr.oid.clone()
     }
 
-    pub fn assert<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<Assertion> {
+    pub fn assert<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<_Any> {
         let handle = crate::next_handle();
-        self.queue_for(r).push((Arc::clone(r), Event::Assert(Box::new(
-            Assert { assertion: Assertion(a.into()), handle: handle.clone() }))));
-        self.actor.outbound_assertions.insert(handle.clone(), Destination::Remote(Arc::clone(r)));
+        if let Some(assertion) = r.rewrite(a.into()) {
+            self.queue_for(r).push((Arc::clone(r), Event::Assert(Box::new(
+                Assert { assertion, handle: handle.clone() }))));
+            self.actor.outbound_assertions.insert(handle.clone(), Destination::Remote(Arc::clone(r)));
+        }
         handle
     }
 
-    pub fn assert_immediate_self<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<Assertion> {
+    pub fn assert_immediate_self<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<_Any> {
         let oid = self.immediate_oid(r);
         let handle = crate::next_handle();
-        self.immediate_self.push(TurnEvent {
-            oid: oid.clone(),
-            event: Event::Assert(Box::new(
-                Assert { assertion: Assertion(a.into()), handle: handle.clone() })),
-        });
-        self.actor.outbound_assertions.insert(handle.clone(), Destination::ImmediateSelf(oid));
+        if let Some(assertion) = r.rewrite(a.into()) {
+            self.immediate_self.push(TurnEvent {
+                oid: oid.clone(),
+                event: Event::Assert(Box::new(
+                    Assert { assertion, handle: handle.clone() })),
+            });
+            self.actor.outbound_assertions.insert(handle.clone(), Destination::ImmediateSelf(oid));
+        }
         handle
     }
 
@@ -173,16 +185,20 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    pub fn message<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<Assertion> {
-        self.queue_for(r).push((Arc::clone(r), Event::Message(Box::new(
-            Message { body: Assertion(m.into()) }))))
+    pub fn message<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<_Any> {
+        if let Some(body) = r.rewrite(m.into()) {
+            self.queue_for(r).push((Arc::clone(r), Event::Message(Box::new(
+                Message { body }))))
+        }
     }
 
-    pub fn message_immediate_self<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<Assertion> {
-        self.immediate_self.push(TurnEvent {
-            oid: self.immediate_oid(r),
-            event: Event::Message(Box::new(Message { body: Assertion(m.into()) })),
-        })
+    pub fn message_immediate_self<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<_Any> {
+        if let Some(body) = r.rewrite(m.into()) {
+            self.immediate_self.push(TurnEvent {
+                oid: self.immediate_oid(r),
+                event: Event::Message(Box::new(Message { body })),
+            })
+        }
     }
 
     pub fn sync(&mut self, r: &Arc<Ref>, peer: Arc<Ref>) {
@@ -190,7 +206,7 @@ impl<'activation> Activation<'activation> {
     }
 
     fn queue_for(&mut self, r: &Arc<Ref>) -> &mut PendingEventQueue {
-        self.queues.entry(r.relay.actor_id).or_default()
+        self.queues.entry(r.addr.mailbox.actor_id).or_default()
     }
 
     fn deliver(&mut self) {
@@ -200,9 +216,9 @@ impl<'activation> Activation<'activation> {
         for (_actor_id, turn) in std::mem::take(&mut self.queues).into_iter() {
             if turn.len() == 0 { continue; }
             let first_ref = Arc::clone(&turn[0].0);
-            let target = &first_ref.relay;
+            let target = &first_ref.addr.mailbox;
             target.send(Turn(turn.into_iter().map(
-                |(r, e)| TurnEvent { oid: r.target.clone(), event: e }).collect()));
+                |(r, e)| TurnEvent { oid: r.addr.oid.clone(), event: e }).collect()));
         }
     }
 
@@ -233,8 +249,13 @@ impl<'activation> Drop for Activation<'activation> {
 
 impl Mailbox {
     pub fn send(&self, t: Turn) {
-        let _ = self.tx.send(SystemMessage::Turn(t));
-        self.queue_depth.fetch_add(1, Ordering::Relaxed);
+        if let Ok(()) = self.tx.send(SystemMessage::Turn(t)) {
+            self.queue_depth.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn current_queue_depth(&self) -> usize {
+        self.queue_depth.load(Ordering::Relaxed)
     }
 }
 
@@ -308,7 +329,7 @@ impl Actor {
         Actor {
             actor_id,
             tx,
-            rx,
+            rx: Some(rx),
             queue_depth: Arc::new(AtomicUsize::new(0)),
             mailbox_count: Arc::new(AtomicUsize::new(0)),
             outbound_assertions: Map::new(),
@@ -369,7 +390,13 @@ impl Actor {
         f: F,
     ) -> Arc<Ref> {
         let oid = crate::next_oid();
-        let r = Arc::new(Ref { relay: self.mailbox(), target: oid.clone() });
+        let r = Arc::new(Ref {
+            addr: Arc::new(ObjectAddress {
+                mailbox: self.mailbox(),
+                oid: oid.clone(),
+            }),
+            attenuation: Vec::new(),
+        });
         f(self, &mut e, &r);
         self.oid_map.insert(oid, Box::new(e));
         r
@@ -383,16 +410,26 @@ impl Actor {
         name.record("actor_id", &self.id());
         tokio::spawn(async move {
             tracing::trace!("start");
+            {
+                let queue_depth = Arc::clone(&self.queue_depth);
+                self.linked_task(crate::name!("queue-monitor"), async move {
+                    let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
+                    loop {
+                        timer.tick().await;
+                        tracing::info!(queue_depth = debug(queue_depth.load(Ordering::Relaxed)));
+                    }
+                });
+            }
             let result = self.run(boot).await;
             {
                 let mut t = Activation::for_actor(&mut self);
-                for oid in std::mem::take(&mut t.actor.exit_hooks) {
-                    match t.actor.oid_map.remove_entry(&oid) {
+                for r in std::mem::take(&mut t.actor.exit_hooks) {
+                    match t.actor.oid_map.remove_entry(&r.addr.oid) {
                         None => (),
                         Some((k, mut e)) => {
                             if let Err(err) = e.exit_hook(&mut t, &result).await {
                                 tracing::error!(err = debug(err),
-                                                oid = debug(oid),
+                                                r = debug(&r),
                                                 "error in exit hook");
                             }
                             t.actor.oid_map.insert(k, e);
@@ -424,7 +461,7 @@ impl Actor {
         boot(&mut Activation::for_actor(self)).await?;
         // tracing::trace!(_id, "run");
         loop {
-            match self.rx.recv().await {
+            match self.rx.as_mut().expect("present rx channel half").recv().await {
                 None =>
                     Err(error("Unexpected channel close", _Any::new(false)))?,
                 Some(m) => {
@@ -442,8 +479,8 @@ impl Actor {
         }
     }
 
-    pub fn add_exit_hook(&mut self, oid: &Oid) {
-        self.exit_hooks.push(oid.clone())
+    pub fn add_exit_hook(&mut self, r: &Arc<Ref>) {
+        self.exit_hooks.push(Arc::clone(r))
     }
 
     async fn handle(&mut self, m: SystemMessage) -> Result<bool, Error> {
@@ -535,35 +572,78 @@ impl Actor {
 
 impl Drop for Actor {
     fn drop(&mut self) {
+        let mut rx = self.rx.take().expect("present rx channel half during drop");
+        rx.close();
+
         for (_task_id, token) in std::mem::take(&mut self.linked_tasks).into_iter() {
             token.cancel();
         }
 
         let to_clear = std::mem::take(&mut self.outbound_assertions);
-        let mut t = Activation::for_actor(self);
-        for (handle, r) in to_clear.into_iter() {
-            tracing::trace!(h = debug(&handle), "retract on termination");
-            t.retract_known_ref(r, handle);
+        {
+            let mut t = Activation::for_actor(self);
+            for (handle, r) in to_clear.into_iter() {
+                tracing::trace!(h = debug(&handle), "retract on termination");
+                t.retract_known_ref(r, handle);
+            }
         }
+
+        // In future, could do this:
+        // tokio::spawn(async move {
+        //     while let Some(m) = rx.recv().await {
+        //         match m { ... }
+        //     }
+        // });
+
         tracing::trace!("Actor::drop");
     }
 }
 
 impl Ref {
-    pub fn external_event(&self, event: Event) {
-        self.relay.send(Turn(vec![TurnEvent { oid: self.target.clone(), event }]))
+    pub async fn external_event(&self, event: Event) {
+        self.addr.mailbox.send(Turn(vec![TurnEvent { oid: self.addr.oid.clone(), event }]))
+    }
+
+    pub async fn external_events(&self, events: Vec<Event>) {
+        self.addr.mailbox.send(Turn(events.into_iter().map(|event| TurnEvent {
+            oid: self.addr.oid.clone(),
+            event,
+        }).collect()))
+    }
+
+    pub fn attenuate(&self, attenuation: &sturdy::Attenuation) -> Result<Arc<Self>, CaveatError> {
+        let mut r = Ref {
+            addr: Arc::clone(&self.addr),
+            attenuation: self.attenuation.clone(),
+        };
+        r.attenuation.extend(attenuation.check()?);
+        Ok(Arc::new(r))
+    }
+
+    pub fn rewrite(&self, mut a: _Any) -> Option<Assertion> {
+        for c in &self.attenuation {
+            match c.rewrite(&a) {
+                Some(v) => a = v,
+                None => return None,
+            }
+        }
+        Some(Assertion(a))
     }
 }
 
 impl std::fmt::Debug for Ref {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "⌜{}:{}⌝", self.relay.actor_id, self.target.0)
+        if self.attenuation.is_empty() {
+            write!(f, "⌜{}:{}⌝", self.addr.mailbox.actor_id, self.addr.oid.0)
+        } else {
+            write!(f, "⌜{}:{}\\{:?}⌝", self.addr.mailbox.actor_id, self.addr.oid.0, self.attenuation)
+        }
     }
 }
 
-impl Drop for Ref {
+impl Drop for ObjectAddress {
     fn drop(&mut self) {
-        let _ = self.relay.tx.send(SystemMessage::ReleaseOid(self.target.clone()));
+        let _ = self.mailbox.tx.send(SystemMessage::ReleaseOid(self.oid.clone()));
         ()
     }
 }

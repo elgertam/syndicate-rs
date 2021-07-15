@@ -13,9 +13,6 @@ fn main() -> Result<(), Error> {
 
     let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned(),
                                      "local-protocols/schema-bundle.bin".to_owned()])?;
-    for i in &inputs {
-        println!("cargo:rerun-if-changed={:?}", i);
-    }
     c.load_schemas_and_bundles(&inputs)?;
     compile(&c)
 }

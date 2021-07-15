@@ -6,7 +6,7 @@ use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use crate::actor::Assertion;
+use crate::actor::_Any;
 use crate::actor::Activation;
 use crate::actor::Ref;
 use crate::schemas::internal_protocol::Handle;
@@ -15,18 +15,18 @@ use crate::pattern::{self, PathStep, Path, Paths};
 
 type Bag<A> = bag::BTreeBag<A>;
 
-type Captures = Assertion;
+type Captures = _Any;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum Guard {
-    Rec(Assertion, usize),
+    Rec(_Any, usize),
     Seq(usize),
     Map,
 }
 
 #[derive(Debug)]
 pub struct Index {
-    all_assertions: Bag<Assertion>,
+    all_assertions: Bag<_Any>,
     observer_count: usize,
     root: Node,
 }
@@ -39,7 +39,7 @@ struct Node {
 
 #[derive(Debug)]
 struct Continuation {
-    cached_assertions: Set<Assertion>,
+    cached_assertions: Set<_Any>,
     leaf_map: Map<Paths, Map<Captures, Leaf>>,
 }
 
@@ -51,7 +51,7 @@ struct Selector {
 
 #[derive(Debug)]
 struct Leaf { // aka Topic
-    cached_assertions: Set<Assertion>,
+    cached_assertions: Set<_Any>,
     endpoints_map: Map<Paths, Endpoints>,
 }
 
@@ -94,7 +94,7 @@ impl Index {
         self.observer_count -= 1;
     }
 
-    pub fn insert(&mut self, t: &mut Activation, outer_value: &Assertion) {
+    pub fn insert(&mut self, t: &mut Activation, outer_value: &_Any) {
         let net = self.all_assertions.change(outer_value.clone(), 1);
         match net {
             bag::Net::AbsentToPresent => {
@@ -117,7 +117,7 @@ impl Index {
         }
     }
 
-    pub fn remove(&mut self, t: &mut Activation, outer_value: &Assertion) {
+    pub fn remove(&mut self, t: &mut Activation, outer_value: &_Any) {
         let net = self.all_assertions.change(outer_value.clone(), -1);
         match net {
             bag::Net::PresentToAbsent => {
@@ -142,7 +142,7 @@ impl Index {
         }
     }
 
-    pub fn send(&mut self, t: &mut Activation, outer_value: &Assertion, delivery_count: &mut usize) {
+    pub fn send(&mut self, t: &mut Activation, outer_value: &_Any, delivery_count: &mut usize) {
         Modification::new(
             false,
             &outer_value,
@@ -254,24 +254,24 @@ impl<'a, T> Stack<'a, T> {
 }
 
 struct Modification<'op, FCont, FLeaf, FEndpoints>
-where FCont: FnMut(&mut Continuation, &Assertion) -> (),
-      FLeaf: FnMut(&mut Leaf, &Assertion) -> (),
+where FCont: FnMut(&mut Continuation, &_Any) -> (),
+      FLeaf: FnMut(&mut Leaf, &_Any) -> (),
       FEndpoints: FnMut(&mut Endpoints, Captures) -> ()
 {
     create_leaf_if_absent: bool,
-    outer_value: &'op Assertion,
+    outer_value: &'op _Any,
     m_cont: FCont,
     m_leaf: FLeaf,
     m_endpoints: FEndpoints,
 }
 
 impl<'op, FCont, FLeaf, FEndpoints> Modification<'op, FCont, FLeaf, FEndpoints>
-where FCont: FnMut(&mut Continuation, &Assertion) -> (),
-      FLeaf: FnMut(&mut Leaf, &Assertion) -> (),
+where FCont: FnMut(&mut Continuation, &_Any) -> (),
+      FLeaf: FnMut(&mut Leaf, &_Any) -> (),
       FEndpoints: FnMut(&mut Endpoints, Captures) -> ()
 {
     fn new(create_leaf_if_absent: bool,
-           outer_value: &'op Assertion,
+           outer_value: &'op _Any,
            m_cont: FCont,
            m_leaf: FLeaf,
            m_endpoints: FEndpoints,
@@ -289,7 +289,7 @@ where FCont: FnMut(&mut Continuation, &Assertion) -> (),
         self.node(n, &Stack::Item(&Value::from(vec![self.outer_value.clone()]).wrap(), &Stack::Empty))
     }
 
-    fn node(&mut self, n: &mut Node, term_stack: &Stack<&Assertion>) {
+    fn node(&mut self, n: &mut Node, term_stack: &Stack<&_Any>) {
         self.continuation(&mut n.continuation);
         for (selector, table) in &mut n.edges {
             let mut next_stack = term_stack;
@@ -336,7 +336,7 @@ where FCont: FnMut(&mut Continuation, &Assertion) -> (),
     }
 }
 
-fn class_of(v: &Assertion) -> Option<Guard> {
+fn class_of(v: &_Any) -> Option<Guard> {
     match v.value() {
         Value::Sequence(vs) => Some(Guard::Seq(vs.len())),
         Value::Record(r) => Some(Guard::Rec(r.label().clone(), r.arity())),
@@ -345,7 +345,7 @@ fn class_of(v: &Assertion) -> Option<Guard> {
     }
 }
 
-fn project_path<'a>(v: &'a Assertion, p: &Path) -> Option<&'a Assertion> {
+fn project_path<'a>(v: &'a _Any, p: &Path) -> Option<&'a _Any> {
     let mut v = v;
     for i in p {
         match step(v, i) {
@@ -356,7 +356,7 @@ fn project_path<'a>(v: &'a Assertion, p: &Path) -> Option<&'a Assertion> {
     Some(v)
 }
 
-fn project_paths<'a>(v: &'a Assertion, ps: &Paths) -> Option<Captures> {
+fn project_paths<'a>(v: &'a _Any, ps: &Paths) -> Option<Captures> {
     let mut vs = Vec::new();
     for p in ps {
         match project_path(v, p) {
@@ -367,7 +367,7 @@ fn project_paths<'a>(v: &'a Assertion, ps: &Paths) -> Option<Captures> {
     Some(Captures::new(vs))
 }
 
-fn step<'a>(v: &'a Assertion, s: &PathStep) -> Option<&'a Assertion> {
+fn step<'a>(v: &'a _Any, s: &PathStep) -> Option<&'a _Any> {
     match (v.value(), s) {
         (Value::Sequence(vs), PathStep::Index(i)) =>
             if *i < vs.len() { Some(&vs[*i]) } else { None },
@@ -381,7 +381,7 @@ fn step<'a>(v: &'a Assertion, s: &PathStep) -> Option<&'a Assertion> {
 }
 
 impl Continuation {
-    fn new(cached_assertions: Set<Assertion>) -> Self {
+    fn new(cached_assertions: Set<_Any>) -> Self {
         Continuation { cached_assertions, leaf_map: Map::new() }
     }
 

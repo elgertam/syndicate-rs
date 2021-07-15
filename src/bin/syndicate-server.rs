@@ -14,32 +14,24 @@ use structopt::StructOpt; // for from_args in main
 
 use syndicate::actor::*;
 use syndicate::dataspace::*;
-use syndicate::during::DuringEntity;
 use syndicate::during::DuringResult;
 use syndicate::error::Error;
 use syndicate::error::error;
 use syndicate::config;
 use syndicate::relay;
 use syndicate::schemas::internal_protocol::_Any;
+use syndicate::sturdy;
 
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
-use tracing::{Level, info, trace};
+use tracing::{info, trace};
 
 use tungstenite::Message;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
-        .add_directive(tracing_subscriber::filter::LevelFilter::TRACE.into());
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
-        .with_ansi(true)
-        .with_max_level(Level::TRACE)
-        .with_env_filter(filter)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Could not set tracing global subscriber");
+    syndicate::convenient_logging()?;
 
     {
         const BRIGHT_GREEN: &str = "\x1b[92m";
@@ -81,17 +73,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     trace!("startup");
 
     let ds = Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new());
-    let gateway = Actor::create_and_start(syndicate::name!("gateway"),
-                                          DuringEntity::new(Arc::clone(&ds), handle_resolve));
+    let gateway = Actor::create_and_start(
+        syndicate::name!("gateway"),
+        syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve));
     {
         let ds = Arc::clone(&ds);
         Actor::new().boot(syndicate::name!("rootcap"), |t| Box::pin(async move {
             use syndicate::schemas::gatekeeper;
-            t.assert(&ds, &gatekeeper::Bind {
-                oid: _Any::new("syndicate"),
-                key: vec![0; 16],
-                target: ds.clone(),
-            });
+            let key = vec![0; 16];
+            let sr = sturdy::SturdyRef::mint(_Any::new("syndicate"), &key);
+            tracing::info!(rootcap = debug(&_Any::from(&sr)));
+            tracing::info!(rootcap = display(sr.to_hex()));
+            t.assert(&ds, &gatekeeper::Bind { oid: sr.oid.clone(), key, target: ds.clone() });
             Ok(())
         }));
     }
@@ -157,12 +150,22 @@ async fn run_connection(
             _ => {
                 info!(protocol = display("raw"), peer = debug(addr));
                 let (i, o) = stream.into_split();
-                (relay::Input::Bytes(Box::pin(i)), relay::Output::Bytes(Box::pin(o)))
+                (relay::Input::Bytes(Box::pin(i)),
+                 relay::Output::Bytes(Box::pin(o /* BufWriter::new(o) */)))
             }
         }
         0 => Err(error("closed before starting", _Any::new(false)))?,
         _ => unreachable!()
     };
+    struct ExitListener;
+    impl Entity for ExitListener {
+        fn exit_hook(&mut self, _t: &mut Activation, exit_status: &ActorResult) -> BoxFuture<ActorResult> {
+            info!(exit_status = debug(exit_status), "disconnect");
+            Box::pin(ready(Ok(())))
+        }
+    }
+    let exit_listener = t.actor.create(ExitListener);
+    t.actor.add_exit_hook(&exit_listener);
     relay::TunnelRelay::run(t, i, o, Some(gateway), None);
     Ok(())
 }
@@ -172,7 +175,9 @@ async fn run_listener(
     port: u16,
     config: Arc<config::ServerConfig>,
 ) -> ActorResult {
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+    let listen_addr = format!("0.0.0.0:{}", port);
+    tracing::info!("Listening on {}", listen_addr);
+    let listener = TcpListener::bind(listen_addr).await?;
     loop {
         let (stream, addr) = listener.accept().await?;
         let gateway = Arc::clone(&gateway);
@@ -185,31 +190,46 @@ async fn run_listener(
 
 //---------------------------------------------------------------------------
 
-fn handle_resolve(ds: &mut Arc<Ref>, t: &mut Activation, a: Assertion) -> DuringResult<Arc<Ref>> {
+fn handle_resolve(ds: &mut Arc<Ref>, t: &mut Activation, a: _Any) -> DuringResult<Arc<Ref>> {
     use syndicate::schemas::dataspace;
     use syndicate::schemas::dataspace_patterns as p;
     use syndicate::schemas::gatekeeper;
     match gatekeeper::Resolve::try_from(&a) {
         Err(_) => Ok(None),
         Ok(gatekeeper::Resolve { sturdyref, observer }) => {
-            // TODO: codegen plugin to generate pattern constructors
-            let handler = t.actor.create(DuringEntity::new(observer, |observer, t, a| {
-                let bindings = a.value().to_sequence()?;
-                let key = bindings[0].value().to_bytestring()?;
-                let target = bindings[1].value().to_embedded()?;
-                tracing::trace!(key = debug(&key), target = debug(&target), "resolved!");
-                // TODO attenuation and validity checks
-                let h = t.assert(observer, _Any::domain(Arc::clone(target)));
-                Ok(Some(Box::new(|_observer, t| Ok(t.retract(h)))))
-            }));
+            let queried_oid = sturdyref.oid.clone();
+            let handler = syndicate::entity(observer)
+                .on_asserted(move |observer, t, a| {
+                    let bindings = a.value().to_sequence()?;
+                    let key = bindings[0].value().to_bytestring()?;
+                    let unattenuated_target = bindings[1].value().to_embedded()?;
+                    match sturdyref.validate_and_attenuate(key, unattenuated_target) {
+                        Err(e) => {
+                            tracing::warn!(sturdyref = debug(&_Any::from(&sturdyref)),
+                                           "sturdyref failed validation: {}", e);
+                            Ok(None)
+                        },
+                        Ok(target) => {
+                            tracing::trace!(sturdyref = debug(&_Any::from(&sturdyref)),
+                                            target = debug(&target),
+                                            "sturdyref resolved");
+                            let h = t.assert(observer, _Any::domain(target));
+                            Ok(Some(Box::new(|_observer, t| Ok(t.retract(h)))))
+                        }
+                    }
+                })
+                .create(t.actor);
             let oh = t.assert(ds, &dataspace::Observe {
+                // TODO: codegen plugin to generate pattern constructors
                 pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
                     ctor: Box::new(p::CRec {
                         label: Value::symbol("bind").wrap(),
                         arity: 3.into(),
                     }),
                     members: Map::from_iter(vec![
-                        (0.into(), p::Pattern::DLit(Box::new(p::DLit { value: sturdyref.oid }))),
+                        (0.into(), p::Pattern::DLit(Box::new(p::DLit {
+                            value: queried_oid,
+                        }))),
                         (1.into(), p::Pattern::DBind(Box::new(p::DBind {
                             name: "key".to_owned(),
                             pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),

@@ -1,76 +1,97 @@
-#![recursion_limit = "256"]
+use std::iter::FromIterator;
+use std::sync::Arc;
 
-use syndicate::{V, value::Value};
-use syndicate::packets::{ClientCodec, C2S, S2C, Action, Event};
+use structopt::StructOpt;
+
+use syndicate::actor::*;
+use syndicate::relay;
+use syndicate::schemas::dataspace::Observe;
+use syndicate::schemas::dataspace_patterns as p;
+use syndicate::schemas::internal_protocol::*;
+use syndicate::sturdy;
+use syndicate::value::Map;
+use syndicate::value::NestedValue;
+use syndicate::value::Value;
+
 use tokio::net::TcpStream;
-use tokio_util::codec::Framed;
-use futures::SinkExt;
-use futures::StreamExt;
-use futures::FutureExt;
-use futures::select;
+
 use core::time::Duration;
 use tokio::time::interval;
 
+#[derive(Clone, Debug, StructOpt)]
+pub struct Config {
+    #[structopt(short = "d", default_value = "b4b303726566b10973796e646963617465b584b210a6480df5306611ddd0d3882b546e197784")]
+    dataspace: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let discard: V = Value::simple_record0("discard").wrap();
-    let capture: V = Value::simple_record1("capture", discard).wrap();
-
-    let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
-    frames.send(C2S::Connect(Value::from("chat").wrap())).await?;
-    frames.send(
-        C2S::Turn(vec![Action::Assert(
-            Value::from(0).wrap(),
-            Value::simple_record1("observe",
-                                  Value::simple_record1("Present", capture).wrap()).wrap())]))
-        .await?;
-
-    let mut stats_timer = interval(Duration::from_secs(1));
-    let mut turn_counter = 0;
-    let mut event_counter = 0;
-    let mut arrival_counter = 0;
-    let mut departure_counter = 0;
-    let mut occupancy = 0;
-
-    loop {
-        select! {
-            _instant = stats_timer.next().boxed().fuse() => {
-                print!("{:?} turns, {:?} events, {:?} arrivals, {:?} departures, {:?} present in the last second\n",
-                       turn_counter,
-                       event_counter,
-                       arrival_counter,
-                       departure_counter,
-                       occupancy);
-                turn_counter = 0;
-                event_counter = 0;
-                arrival_counter = 0;
-                departure_counter = 0;
-            },
-            frame = frames.next().boxed().fuse() => match frame {
-                None => return Ok(()),
-                Some(res) => match res? {
-                    S2C::Err(msg, _) => return Err(msg.into()),
-                    S2C::Turn(events) => {
-                        turn_counter = turn_counter + 1;
-                        event_counter = event_counter + events.len();
-                        for e in events {
-                            match e {
-                                Event::Add(_, _) => {
-                                    arrival_counter = arrival_counter + 1;
-                                    occupancy = occupancy + 1;
-                                },
-                                Event::Del(_, _) => {
-                                    departure_counter = departure_counter + 1;
-                                    occupancy = occupancy - 1;
-                                },
-                                _ => ()
-                            }
-                        }
-                    },
-                    S2C::Ping() => frames.send(C2S::Pong()).await?,
-                    S2C::Pong() => (),
+    syndicate::convenient_logging()?;
+    Actor::new().boot(syndicate::name!("consumer"), |t| Box::pin(async move {
+        let config = Config::from_args();
+        let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
+        let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
+        relay::connect_stream(t, i, o, sturdyref, (), |_state, t, ds| {
+            let consumer = {
+                #[derive(Default)]
+                struct State {
+                    event_counter: u64,
+                    arrival_counter: u64,
+                    departure_counter: u64,
+                    occupancy: u64,
                 }
-            },
-        }
-    }
+                syndicate::entity(State::default()).on_asserted(move |s, _, _| {
+                    s.event_counter += 1;
+                    s.arrival_counter += 1;
+                    s.occupancy += 1;
+                    Ok(Some(Box::new(|s, _| {
+                        s.event_counter += 1;
+                        s.departure_counter += 1;
+                        s.occupancy -= 1;
+                        Ok(())
+                    })))
+                }).on_message(move |s, _, _| {
+                    tracing::info!(
+                        "{:?} events, {:?} arrivals, {:?} departures, {:?} present in the last second",
+                        s.event_counter,
+                        s.arrival_counter,
+                        s.departure_counter,
+                        s.occupancy);
+                    s.event_counter = 0;
+                    s.arrival_counter = 0;
+                    s.departure_counter = 0;
+                    Ok(())
+                }).create(t.actor)
+            };
+
+            t.assert(&ds, &Observe {
+                pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
+                    ctor: Box::new(p::CRec {
+                        label: Value::symbol("Present").wrap(),
+                        arity: 1.into(),
+                    }),
+                    members: Map::from_iter(vec![
+                        (0.into(), p::Pattern::DBind(Box::new(p::DBind {
+                            name: "who".to_owned(),
+                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                        }))),
+                    ].into_iter()),
+                })),
+                observer: Arc::clone(&consumer),
+            });
+
+            t.actor.linked_task(syndicate::name!("tick"), async move {
+                let mut stats_timer = interval(Duration::from_secs(1));
+                loop {
+                    stats_timer.tick().await;
+                    consumer.external_event(Event::Message(Box::new(Message {
+                        body: Assertion(_Any::new(true)),
+                    }))).await;
+                }
+            });
+            Ok(None)
+        });
+        Ok(())
+    })).await??;
+    Ok(())
 }

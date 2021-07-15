@@ -1,11 +1,14 @@
-use futures::{SinkExt, StreamExt, poll};
-use std::task::Poll;
-use structopt::StructOpt;
-use tokio::net::TcpStream;
-use tokio_util::codec::Framed;
+use std::sync::Arc;
 
-use syndicate::packets::{ClientCodec, C2S, S2C, Action};
-use syndicate::value::{Value, IOValue};
+use structopt::StructOpt;
+
+use syndicate::actor::*;
+use syndicate::relay;
+use syndicate::sturdy;
+use syndicate::value::NestedValue;
+use syndicate::value::Value;
+
+use tokio::net::TcpStream;
 
 #[derive(Clone, Debug, StructOpt)]
 pub struct Config {
@@ -14,10 +17,13 @@ pub struct Config {
 
     #[structopt(short = "b", default_value = "0")]
     bytes_padding: usize,
+
+    #[structopt(short = "d", default_value = "b4b303726566b10973796e646963617465b584b210a6480df5306611ddd0d3882b546e197784")]
+    dataspace: String,
 }
 
 #[inline]
-fn says(who: IOValue, what: IOValue) -> IOValue {
+fn says(who: _Any, what: _Any) -> _Any {
     let mut r = Value::simple_record("Says", 2);
     r.fields_vec_mut().push(who);
     r.fields_vec_mut().push(what);
@@ -26,34 +32,29 @@ fn says(who: IOValue, what: IOValue) -> IOValue {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::from_args();
+    syndicate::convenient_logging()?;
+    Actor::new().boot(syndicate::name!("producer"), |t| Box::pin(async move {
+        let config = Config::from_args();
+        let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
+        let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
+        relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
+            let padding: _Any = Value::ByteString(vec![0; config.bytes_padding]).wrap();
+            let action_count = config.action_count;
 
-    let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
-    frames.send(C2S::Connect(Value::from("chat").wrap())).await?;
+            let producer = syndicate::entity(Arc::clone(&*INERT_REF))
+                .on_message(move |self_ref, t, _m| {
+                    for _ in 0..action_count {
+                        t.message(&ds, says(Value::from("producer").wrap(), padding.clone()));
+                    }
+                    t.message(&self_ref, _Any::new(true));
+                    Ok(())
+                })
+                .create_rec(t.actor, |_ac, self_ref, p_ref| *self_ref = Arc::clone(p_ref));
 
-    let padding: IOValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
-
-    loop {
-        let mut actions = vec![];
-        for _ in 0..config.action_count {
-            actions.push(Action::Message(says(Value::from("producer").wrap(),
-                                              padding.clone())));
-        }
-        frames.send(C2S::Turn(actions)).await?;
-
-        loop {
-            match poll!(frames.next()) {
-                Poll::Pending => break,
-                Poll::Ready(None) => {
-                    print!("Server closed connection");
-                    return Ok(());
-                }
-                Poll::Ready(Some(res)) => {
-                    let p = res?;
-                    print!("{:?}\n", p);
-                    if let S2C::Ping() = p { frames.send(C2S::Pong()).await? }
-                }
-            }
-        }
-    }
+            t.message(&producer, _Any::new(true));
+            Ok(None)
+        });
+        Ok(())
+    })).await??;
+    Ok(())
 }

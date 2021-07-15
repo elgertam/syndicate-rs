@@ -1,55 +1,39 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use futures::Sink;
-use std::mem::drop;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}};
-use std::task::{Context, Poll};
-use std::thread;
+
+use std::iter::FromIterator;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
-use structopt::StructOpt;
-use syndicate::peer::Peer;
-use syndicate::{config, spaces, packets, value::{Value, IOValue}};
+
+use syndicate::actor::*;
+use syndicate::dataspace::Dataspace;
+use syndicate::schemas::dataspace::Observe;
+use syndicate::schemas::dataspace_patterns as p;
+use syndicate::schemas::internal_protocol::*;
+use syndicate::value::Map;
+use syndicate::value::NestedValue;
+use syndicate::value::Value;
+
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+
 use tracing::Level;
 
-struct SinkTx<T> {
-    tx: Option<UnboundedSender<T>>,
-}
-
-impl<T> SinkTx<T> {
-    fn new(tx: UnboundedSender<T>) -> Self {
-        SinkTx { tx: Some(tx) }
-    }
-}
-
-impl<T> Sink<T> for SinkTx<T> {
-    type Error = packets::Error;
-
-    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), packets::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, v: T) -> Result<(), packets::Error> {
-        self.tx.as_ref().unwrap().send(v).map_err(|e| packets::Error::Message(e.to_string()))
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), packets::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), packets::Error>> {
-        (&mut self).tx = None;
-        Poll::Ready(Ok(()))
-    }
-}
-
 #[inline]
-fn says(who: IOValue, what: IOValue) -> IOValue {
+fn says(who: _Any, what: _Any) -> _Any {
     let mut r = Value::simple_record("Says", 2);
     r.fields_vec_mut().push(who);
     r.fields_vec_mut().push(what);
     r.finish().wrap()
+}
+
+struct ShutdownEntity;
+
+impl Entity for ShutdownEntity {
+    fn message(&mut self, t: &mut Activation, _m: _Any) -> ActorResult {
+        t.actor.shutdown();
+        Ok(())
+    }
 }
 
 pub fn bench_pub(c: &mut Criterion) {
@@ -63,119 +47,103 @@ pub fn bench_pub(c: &mut Criterion) {
     tracing::subscriber::set_global_default(subscriber)
         .expect("Could not set tracing global subscriber");
 
+    let rt = Runtime::new().unwrap();
+
     c.bench_function("publication alone", |b| {
         b.iter_custom(|iters| {
-            let no_args: Vec<String> = vec![];
-            let config = Arc::new(config::ServerConfig::from_iter(no_args.iter()));
-            let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
-
-            let (c2s_tx, c2s_rx) = unbounded_channel();
-            let (s2c_tx, _s2c_rx) = unbounded_channel();
-            let runtime_handle = thread::spawn(move || {
-                let mut rt = Runtime::new().unwrap();
-                rt.block_on(async {
-                    Peer::new(0, c2s_rx, SinkTx::new(s2c_tx)).run(spaces, &config).await.unwrap();
-                })
-            });
-
-            c2s_tx.send(Ok(packets::C2S::Connect(Value::from("bench_pub").wrap()))).unwrap();
-
-            let turn = packets::C2S::Turn(vec![
-                packets::Action::Message(says(Value::from("bench_pub").wrap(),
-                                              Value::ByteString(vec![]).wrap()))]);
-
             let start = Instant::now();
-            for _ in 0..iters {
-                c2s_tx.send(Ok(turn.clone())).unwrap();
-            }
-            drop(c2s_tx);
-            runtime_handle.join().unwrap();
+            rt.block_on(async move {
+                let mut ac = Actor::new();
+                let ds = ac.create(Dataspace::new());
+                let shutdown = ac.create(ShutdownEntity);
+                ac.linked_task(syndicate::name!("sender"), async move {
+                    for _ in 0..iters {
+                        ds.external_event(Event::Message(Box::new(Message {
+                            body: Assertion(says(_Any::new("bench_pub"),
+                                                 Value::ByteString(vec![]).wrap())),
+                        }))).await
+                    }
+                    shutdown.external_event(Event::Message(Box::new(Message {
+                        body: Assertion(_Any::new(true)),
+                    }))).await;
+                    Ok(())
+                });
+                ac.start(syndicate::name!("dataspace")).await.unwrap().unwrap();
+            });
             start.elapsed()
         })
     });
 
     c.bench_function("publication and subscription", |b| {
         b.iter_custom(|iters| {
-            let no_args: Vec<String> = vec![];
-            let config = Arc::new(config::ServerConfig::from_iter(no_args.iter()));
-            let spaces = Arc::new(Mutex::new(spaces::Spaces::new()));
+            let start = Instant::now();
+            rt.block_on(async move {
+                let ds = Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new());
+                let turn_count = Arc::new(AtomicU64::new(0));
 
-            let turn_count = Arc::new(AtomicU64::new(0));
-
-            let (c2s_tx, c2s_rx) = unbounded_channel();
-            let c2s_tx = Arc::new(c2s_tx);
-
-            {
-                let c2s_tx = c2s_tx.clone();
-
-                c2s_tx.send(Ok(packets::C2S::Connect(Value::from("bench_pub").wrap()))).unwrap();
-
-                let discard: IOValue = Value::simple_record0("discard").wrap();
-                let capture: IOValue = Value::simple_record1("capture", discard).wrap();
-                c2s_tx.send(Ok(packets::C2S::Turn(vec![
-                    packets::Action::Assert(Value::from(0).wrap(),
-                                            Value::simple_record1(
-                                                "observe",
-                                                says(Value::from("bench_pub").wrap(),
-                                                     capture)).wrap())]))).unwrap();
-
-                // tracing::info!("Sending {} messages", iters);
-                let turn = packets::C2S::Turn(vec![
-                    packets::Action::Message(says(Value::from("bench_pub").wrap(),
-                                                  Value::ByteString(vec![]).wrap()))]);
-                for _ in 0..iters {
-                    c2s_tx.send(Ok(turn.clone())).unwrap();
+                struct Receiver(Arc<AtomicU64>);
+                impl Entity for Receiver {
+                    fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
+                        self.0.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    }
                 }
 
-                c2s_tx.send(Ok(packets::C2S::Turn(vec![
-                    packets::Action::Clear(Value::from(0).wrap())]))).unwrap();
-            }
+                let mut ac = Actor::new();
+                let shutdown = ac.create(ShutdownEntity);
+                let receiver = ac.create(Receiver(Arc::clone(&turn_count)));
 
-            let start = Instant::now();
-            let runtime_handle = {
-                let turn_count = turn_count.clone();
-                let mut c2s_tx = Some(c2s_tx.clone());
-                thread::spawn(move || {
-                    let mut rt = Runtime::new().unwrap();
-                    rt.block_on(async move {
-                        let (s2c_tx, mut s2c_rx) = unbounded_channel();
-                        let consumer_handle = tokio::spawn(async move {
-                            while let Some(p) = s2c_rx.recv().await {
-                                // tracing::info!("Consumer got {:?}", &p);
-                                match p {
-                                    packets::S2C::Ping() => (),
-                                    packets::S2C::Turn(actions) => {
-                                        for a in actions {
-                                            match a {
-                                                packets::Event::Msg(_, _) => {
-                                                    turn_count.fetch_add(1, Ordering::Relaxed);
-                                                },
-                                                packets::Event::End(_) => {
-                                                    c2s_tx.take();
-                                                }
-                                                _ => panic!("Unexpected action: {:?}", a),
-                                            }
-                                        }
-                                    },
-                                    _ => panic!("Unexpected packet: {:?}", p),
-                                }
-                            }
-                            // tracing::info!("Consumer terminating");
+                {
+                    let iters = iters.clone();
+                    ac.boot(syndicate::name!("dataspace"), move |t| Box::pin(async move {
+                        t.assert(&ds, &Observe {
+                            pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
+                                ctor: Box::new(p::CRec {
+                                    label: Value::symbol("Says").wrap(),
+                                    arity: 2.into(),
+                                }),
+                                members: Map::from_iter(vec![
+                                    (0.into(), p::Pattern::DLit(Box::new(p::DLit {
+                                        value: _Any::new("bench_pub"),
+                                    }))),
+                                    (1.into(), p::Pattern::DBind(Box::new(p::DBind {
+                                        name: "what".to_owned(),
+                                        pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                                    }))),
+                                ].into_iter()),
+                            })),
+                            observer: receiver,
                         });
-                        Peer::new(0, c2s_rx, SinkTx::new(s2c_tx)).run(spaces, &config).await.unwrap();
-                        consumer_handle.await.unwrap();
-                    })
-                })
-            };
-            drop(c2s_tx);
-            runtime_handle.join().unwrap();
-            let elapsed = start.elapsed();
-
-            let actual_turns = turn_count.load(Ordering::SeqCst);
-            if actual_turns != iters {
-                panic!("Expected {}, got {} messages", iters, actual_turns);
-            }
-            elapsed
+                        t.assert(&ds, &Observe {
+                            pattern: p::Pattern::DBind(Box::new(p::DBind {
+                                name: "shutdownTrigger".to_owned(),
+                                pattern: p::Pattern::DLit(Box::new(p::DLit {
+                                    value: _Any::new(true),
+                                })),
+                            })),
+                            observer: shutdown,
+                        });
+                        t.actor.linked_task(syndicate::name!("sender"), async move {
+                            for _ in 0..iters {
+                                ds.external_event(Event::Message(Box::new(Message {
+                                    body: Assertion(says(_Any::new("bench_pub"),
+                                                         Value::ByteString(vec![]).wrap())),
+                                }))).await
+                            }
+                            ds.external_event(Event::Message(Box::new(Message {
+                                body: Assertion(_Any::new(true)),
+                            }))).await;
+                            Ok(())
+                        });
+                        Ok(())
+                    })).await.unwrap().unwrap();
+                }
+                let actual_turns = turn_count.load(Ordering::SeqCst);
+                if actual_turns != iters {
+                    panic!("Expected {}, got {} messages", iters, actual_turns);
+                }
+            });
+            start.elapsed()
         })
     });
 }

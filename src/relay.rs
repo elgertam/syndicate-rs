@@ -2,8 +2,10 @@ use bytes::Buf;
 use bytes::BytesMut;
 
 use crate::actor::*;
+use crate::during;
 use crate::error::Error;
 use crate::error::error;
+use crate::schemas::gatekeeper;
 use crate::schemas::internal_protocol::*;
 use crate::schemas::sturdy;
 use crate::schemas::tunnel_relay;
@@ -13,6 +15,7 @@ use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
 
+use preserves::error::is_eof_io_error;
 use preserves::value::BinarySource;
 use preserves::value::BytesBinarySource;
 use preserves::value::DomainDecode;
@@ -132,6 +135,32 @@ impl Membrane {
     }
 }
 
+pub fn connect_stream<I, O, E, F>(
+    t: &mut Activation,
+    i: I,
+    o: O,
+    sturdyref: sturdy::SturdyRef,
+    initial_state: E,
+    mut f: F,
+) where
+    I: 'static + Send + AsyncRead,
+    O: 'static + Send + AsyncWrite,
+    E: 'static + Send,
+    F: 'static + Send + FnMut(&mut E, &mut Activation, Arc<Ref>) -> during::DuringResult<E>
+{
+    let i = Input::Bytes(Box::pin(i));
+    let o = Output::Bytes(Box::pin(o));
+    let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into()))).unwrap();
+    let main_entity = t.actor.create(during::entity(initial_state).on_asserted(move |state, t, a| {
+        let denotation = a.value().to_embedded()?;
+        f(state, t, Arc::clone(denotation))
+    }));
+    t.assert(&gatekeeper, &gatekeeper::Resolve {
+        sturdyref,
+        observer: main_entity,
+    });
+}
+
 impl TunnelRelay {
     pub fn run(
         t: &mut Activation,
@@ -164,7 +193,7 @@ impl TunnelRelay {
                 result = Some(Arc::clone(&tr.membranes.import_oid(ac, tr_ref, io).obj));
             }
         });
-        t.actor.add_exit_hook(&tr_ref.target);
+        t.actor.add_exit_hook(&tr_ref);
         t.actor.linked_task(crate::name!("writer"), output_loop(o, output_rx));
         t.actor.linked_task(crate::name!("reader"), input_loop(i, tr_ref));
         result
@@ -179,6 +208,7 @@ impl TunnelRelay {
                 Err(*b)
             },
             Packet::Turn(b) => {
+                let t = &mut Activation::for_actor(t.actor);
                 let Turn(events) = *b;
                 for TurnEvent { oid, event } in events {
                     let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.0.clone())) {
@@ -347,8 +377,12 @@ impl Membranes {
                         if attenuation.is_empty() {
                             Ok(Arc::clone(&ws.obj))
                         } else {
-                            // TODO
-                            panic!("Non-empty attenuation not yet implemented")
+                            Ok(ws.obj.attenuate(&sturdy::Attenuation(attenuation))
+                               .map_err(|e| {
+                                   io::Error::new(
+                                       io::ErrorKind::InvalidInput,
+                                       format!("Invalid capability attenuation: {:?}", e))
+                               })?)
                         }
                     }
                     None => Ok(Arc::clone(&*INERT_REF)),
@@ -379,14 +413,29 @@ impl DomainEncode<_Ptr> for Membranes {
         d: &_Ptr,
     ) -> io::Result<()> {
         w.write(&mut NoEmbeddedDomainCodec, &_Any::from(&match self.exported.ref_map.get(d) {
-            Some(ws) => sturdy::WireRef::Mine { oid: Box::new(ws.oid.clone()) },
+            Some(ws) => sturdy::WireRef::Mine {
+                oid: Box::new(ws.oid.clone()),
+            },
             None => match self.imported.ref_map.get(d) {
                 Some(ws) => {
-                    // TODO: attenuation check
-                    sturdy::WireRef::Yours { oid: Box::new(ws.oid.clone()), attenuation: vec![] }
+                    if d.attenuation.is_empty() {
+                        sturdy::WireRef::Yours {
+                            oid: Box::new(ws.oid.clone()),
+                            attenuation: vec![],
+                        }
+                    } else {
+                        // We may trust the peer to enforce attenuation on our behalf, in
+                        // which case we can return sturdy::WireRef::Yours with an attenuation
+                        // attached here, but for now we don't.
+                        sturdy::WireRef::Mine {
+                            oid: Box::new(self.export_ref(Arc::clone(d), false).oid.clone()),
+                        }
+                    }
                 }
                 None =>
-                    sturdy::WireRef::Mine { oid: Box::new(self.export_ref(Arc::clone(d), false).oid.clone()) },
+                    sturdy::WireRef::Mine {
+                        oid: Box::new(self.export_ref(Arc::clone(d), false).oid.clone()),
+                    },
             }
         }))
     }
@@ -396,8 +445,8 @@ pub async fn input_loop(
     i: Input,
     relay: Arc<Ref>,
 ) -> ActorResult {
-    fn s<M: Into<_Any>>(relay: &Arc<Ref>, m: M) {
-        relay.external_event(Event::Message(Box::new(Message { body: Assertion(m.into()) })))
+    async fn s<M: Into<_Any>>(relay: &Arc<Ref>, m: M) -> () {
+        relay.external_event(Event::Message(Box::new(Message { body: Assertion(m.into()) }))).await
     }
 
     match i {
@@ -405,28 +454,39 @@ pub async fn input_loop(
             loop {
                 match src.next().await {
                     None => {
-                        s(&relay, &tunnel_relay::Input::Eof);
+                        s(&relay, &tunnel_relay::Input::Eof).await;
                         return Ok(());
                     }
-                    Some(bs) => s(&relay, &tunnel_relay::Input::Packet { bs: bs? }),
+                    Some(bs) => {
+                        s(&relay, &tunnel_relay::Input::Packet { bs: bs? }).await;
+                    }
                 }
             }
         }
         Input::Bytes(mut r) => {
             let mut buf = BytesMut::with_capacity(1024);
             loop {
-                buf.reserve(1024);
-                let n = r.read_buf(&mut buf).await?;
+                buf.reserve(8192);
+                let n = match r.read_buf(&mut buf).await {
+                    Ok(n) => n,
+                    Err(e) =>
+                        if e.kind() == io::ErrorKind::ConnectionReset {
+                            s(&relay, &tunnel_relay::Input::Eof).await;
+                            return Ok(());
+                        } else {
+                            return Err(e)?;
+                        },
+                };
                 match n {
                     0 => {
-                        s(&relay, &tunnel_relay::Input::Eof);
+                        s(&relay, &tunnel_relay::Input::Eof).await;
                         return Ok(());
                     }
                     _ => {
                         while buf.has_remaining() {
                             let bs = buf.chunk();
                             let n = bs.len();
-                            s(&relay, &tunnel_relay::Input::Segment { bs: bs.to_vec() });
+                            s(&relay, &tunnel_relay::Input::Segment { bs: bs.to_vec() }).await;
                             buf.advance(n);
                         }
                     }
@@ -446,7 +506,10 @@ pub async fn output_loop(
                 return Ok(()),
             Some(bs) => match &mut o {
                 Output::Packets(sink) => sink.send(bs).await?,
-                Output::Bytes(w) => w.write_all(&bs).await?,
+                Output::Bytes(w) => {
+                    w.write_all(&bs).await?;
+                    w.flush().await?;
+                }
             }
         }
     }
@@ -466,7 +529,7 @@ impl Entity for TunnelRelay {
                             &mut ActivatedMembranes(t, &self.self_ref, &mut self.membranes))
                             .demand_next(false)?;
                         tracing::trace!(packet = debug(&item), "-->");
-                        self.handle_inbound_packet(t, Packet::try_from(&item)?)?
+                        self.handle_inbound_packet(t, Packet::try_from(&item)?)?;
                     }
                     tunnel_relay::Input::Segment { bs } => {
                         self.input_buffer.extend_from_slice(&bs);
@@ -475,7 +538,10 @@ impl Entity for TunnelRelay {
                                 let mut src = BytesBinarySource::new(&self.input_buffer);
                                 let mut dec = ActivatedMembranes(t, &self.self_ref, &mut self.membranes);
                                 let mut r = src.packed::<_, _Any, _>(&mut dec);
-                                let e = r.next(false)?;
+                                let e = match r.next(false) {
+                                    Err(e) if is_eof_io_error(&e) => None,
+                                    result => result?,
+                                };
                                 (e, r.source.index)
                             };
                             match e {

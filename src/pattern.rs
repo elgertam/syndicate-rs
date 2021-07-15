@@ -1,4 +1,3 @@
-use crate::actor::Assertion;
 use crate::schemas::dataspace_patterns::*;
 
 use preserves::value::NestedValue;
@@ -8,7 +7,7 @@ use std::convert::TryFrom;
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum PathStep {
     Index(usize),
-    Key(Assertion),
+    Key(_Any),
 }
 
 pub type Path = Vec<PathStep>;

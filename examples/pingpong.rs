@@ -1,18 +1,23 @@
-#![recursion_limit = "512"]
+use std::iter::FromIterator;
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use structopt::StructOpt;
+
+use syndicate::actor::*;
+use syndicate::relay;
+use syndicate::schemas::dataspace::Observe;
+use syndicate::schemas::dataspace_patterns as p;
+use syndicate::schemas::internal_protocol::*;
+use syndicate::sturdy;
+use syndicate::value::Map;
+use syndicate::value::NestedValue;
+use syndicate::value::Value;
+
+use tokio::net::TcpStream;
 
 use core::time::Duration;
-use futures::FutureExt;
-use futures::SinkExt;
-use futures::StreamExt;
-use futures::select;
-use std::time::{SystemTime, SystemTimeError};
-use structopt::StructOpt;
-use tokio::net::TcpStream;
 use tokio::time::interval;
-use tokio_util::codec::Framed;
-
-use syndicate::packets::{ClientCodec, C2S, S2C, Action, Event};
-use syndicate::value::{NestedValue, Value, IOValue};
 
 #[derive(Clone, Debug, StructOpt)]
 pub struct PingConfig {
@@ -40,15 +45,15 @@ pub struct Config {
     #[structopt(subcommand)]
     mode: PingPongMode,
 
-    #[structopt(default_value = "pingpong")]
+    #[structopt(short = "d", default_value = "b4b303726566b10973796e646963617465b584b210a6480df5306611ddd0d3882b546e197784")]
     dataspace: String,
 }
 
-fn now() -> Result<u64, SystemTimeError> {
-    Ok(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() as u64)
+fn now() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("time after epoch").as_nanos() as u64
 }
 
-fn simple_record2(label: &str, v1: IOValue, v2: IOValue) -> IOValue {
+fn simple_record2(label: &str, v1: _Any, v2: _Any) -> _Any {
     let mut r = Value::simple_record(label, 2);
     r.fields_vec_mut().push(v1);
     r.fields_vec_mut().push(v2);
@@ -87,107 +92,134 @@ fn report_latencies(rtt_ns_samples: &Vec<u64>) {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::from_args();
+    syndicate::convenient_logging()?;
 
-    let (send_label, recv_label, report_latency_every, should_echo, bytes_padding) =
-        match config.mode {
-            PingPongMode::Ping(ref c) =>
-                ("Ping", "Pong", c.report_latency_every, false, c.bytes_padding),
-            PingPongMode::Pong =>
-                ("Pong", "Ping", 0, true, 0),
-        };
+    Actor::new().boot(syndicate::name!("pingpong"), move |t| Box::pin(async move {
+        let config = Config::from_args();
+        let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
+        let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
+        relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
 
-    let mut frames = Framed::new(TcpStream::connect("127.0.0.1:8001").await?, ClientCodec::new());
-    frames.send(C2S::Connect(Value::from(config.dataspace).wrap())).await?;
+            let (send_label, recv_label, report_latency_every, should_echo, bytes_padding) =
+                match config.mode {
+                    PingPongMode::Ping(ref c) =>
+                        ("Ping", "Pong", c.report_latency_every, false, c.bytes_padding),
+                    PingPongMode::Pong =>
+                        ("Pong", "Ping", 0, true, 0),
+                };
 
-    let discard: IOValue = Value::simple_record0("discard").wrap();
-    let capture: IOValue = Value::simple_record1("capture", discard).wrap();
-    let pat: IOValue = simple_record2(recv_label, capture.clone(), capture);
-    frames.send(
-        C2S::Turn(vec![Action::Assert(
-            Value::from(0).wrap(),
-            Value::simple_record1("observe", pat).wrap())]))
-        .await?;
+            let consumer = {
+                let ds = Arc::clone(&ds);
+                let mut turn_counter: u64 = 0;
+                let mut event_counter: u64 = 0;
+                let mut rtt_ns_samples: Vec<u64> = vec![0; report_latency_every];
+                let mut rtt_batch_count: usize = 0;
+                let mut current_reply = None;
+                syndicate::entity(Arc::clone(&*INERT_REF))
+                    .on_message(move |self_ref, t, m| {
+                        match m.value().as_boolean() {
+                            Some(true) => {
+                                tracing::info!("{:?} turns, {:?} events in the last second",
+                                               turn_counter,
+                                               event_counter);
+                                turn_counter = 0;
+                                event_counter = 0;
+                            }
+                            Some(false) => {
+                                current_reply = None;
+                            }
+                            None => {
+                                event_counter += 1;
+                                let bindings = m.value().to_sequence()?;
+                                let timestamp = &bindings[0];
+                                let padding = &bindings[1];
 
-    let padding: IOValue = Value::ByteString(vec![0; bytes_padding]).wrap();
+                                if should_echo || (report_latency_every == 0) {
+                                    t.message(&ds, simple_record2(&send_label,
+                                                                    timestamp.clone(),
+                                                                    padding.clone()));
+                                } else {
+                                    if let None = current_reply {
+                                        turn_counter += 1;
+                                        t.message_immediate_self(&self_ref, _Any::new(false));
+                                        let rtt_ns = now() - timestamp.value().to_u64()?;
+                                        rtt_ns_samples[rtt_batch_count] = rtt_ns;
+                                        rtt_batch_count += 1;
 
-    let mut stats_timer = interval(Duration::from_secs(1));
-    let mut turn_counter = 0;
-    let mut event_counter = 0;
-    let mut current_rec: IOValue = simple_record2(send_label,
-                                                  Value::from(0).wrap(),
-                                                  padding.clone());
-
-    if let PingPongMode::Ping(ref c) = config.mode {
-        for _ in 0..c.turn_count {
-            let mut actions = vec![];
-            current_rec = simple_record2(send_label,
-                                         Value::from(now()?).wrap(),
-                                         padding.clone());
-            for _ in 0..c.action_count {
-                actions.push(Action::Message(current_rec.clone()));
-            }
-            frames.send(C2S::Turn(actions)).await?;
-        }
-    }
-
-    let mut rtt_ns_samples: Vec<u64> = vec![0; report_latency_every];
-    let mut rtt_batch_count = 0;
-
-    loop {
-        select! {
-            _instant = stats_timer.next().boxed().fuse() => {
-                print!("{:?} turns, {:?} events in the last second\n", turn_counter, event_counter);
-                turn_counter = 0;
-                event_counter = 0;
-            },
-            frame = frames.next().boxed().fuse() => match frame {
-                None => return Ok(()),
-                Some(res) => match res? {
-                    S2C::Err(msg, _) => return Err(msg.into()),
-                    S2C::Turn(events) => {
-                        turn_counter = turn_counter + 1;
-                        event_counter = event_counter + events.len();
-                        let mut actions = vec![];
-                        let mut have_sample = false;
-                        for e in events {
-                            match e {
-                                Event::Msg(_, captures) => {
-                                    if should_echo || (report_latency_every == 0) {
-                                        actions.push(Action::Message(
-                                            simple_record2(send_label,
-                                                           captures[0].clone(),
-                                                           captures[1].clone())));
-                                    } else {
-                                        if !have_sample {
-                                            let rtt_ns = now()? - captures[0].value().to_u64()?;
-                                            rtt_ns_samples[rtt_batch_count] = rtt_ns;
-                                            rtt_batch_count = rtt_batch_count + 1;
-
-                                            if rtt_batch_count == report_latency_every {
-                                                rtt_ns_samples.sort();
-                                                report_latencies(&rtt_ns_samples);
-                                                rtt_batch_count = 0;
-                                            }
-
-                                            have_sample = true;
-                                            current_rec = simple_record2(send_label,
-                                                                         Value::from(now()?).wrap(),
-                                                                         padding.clone());
+                                        if rtt_batch_count == report_latency_every {
+                                            rtt_ns_samples.sort();
+                                            report_latencies(&rtt_ns_samples);
+                                            rtt_batch_count = 0;
                                         }
-                                        actions.push(Action::Message(current_rec.clone()));
+
+                                        current_reply = Some(
+                                            simple_record2(&send_label,
+                                                           Value::from(now()).wrap(),
+                                                           padding.clone()));
                                     }
+                                    t.message(&ds, current_reply.as_ref().expect("some reply").clone());
                                 }
-                                _ =>
-                                    ()
                             }
                         }
-                        frames.send(C2S::Turn(actions)).await?;
-                    },
-                    S2C::Ping() => frames.send(C2S::Pong()).await?,
-                    S2C::Pong() => (),
+                        Ok(())
+                    })
+                    .create_rec(t.actor, |_ac, self_ref, e_ref| *self_ref = Arc::clone(e_ref))
+            };
+
+            t.assert(&ds, &Observe {
+                pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
+                    ctor: Box::new(p::CRec {
+                        label: Value::symbol(recv_label).wrap(),
+                        arity: 2.into(),
+                    }),
+                    members: Map::from_iter(vec![
+                        (0.into(), p::Pattern::DBind(Box::new(p::DBind {
+                            name: "timestamp".to_owned(),
+                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                        }))),
+                        (1.into(), p::Pattern::DBind(Box::new(p::DBind {
+                            name: "padding".to_owned(),
+                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                        }))),
+                    ].into_iter()),
+                })),
+                observer: Arc::clone(&consumer),
+            });
+
+            t.actor.linked_task(syndicate::name!("tick"), async move {
+                let mut stats_timer = interval(Duration::from_secs(1));
+                loop {
+                    stats_timer.tick().await;
+                    consumer.external_event(Event::Message(Box::new(Message {
+                        body: Assertion(_Any::new(true)),
+                    }))).await;
                 }
-            },
-        }
-    }
+            });
+
+            if let PingPongMode::Ping(c) = &config.mode {
+                let turn_count = c.turn_count;
+                let action_count = c.action_count;
+                t.actor.linked_task(syndicate::name!("boot-ping"), async move {
+                    let padding: _Any = Value::ByteString(vec![0; bytes_padding]).wrap();
+                    for _ in 0..turn_count {
+                        let mut events = vec![];
+                        let current_rec = simple_record2(send_label,
+                                                         Value::from(now()).wrap(),
+                                                         padding.clone());
+                        for _ in 0..action_count {
+                            events.push(Event::Message(Box::new(Message {
+                                body: Assertion(current_rec.clone()),
+                            })));
+                        }
+                        ds.external_events(events).await
+                    }
+                    Ok(())
+                });
+            }
+
+            Ok(None)
+        });
+        Ok(())
+    })).await??;
+    Ok(())
 }

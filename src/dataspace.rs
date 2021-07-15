@@ -1,6 +1,7 @@
 use super::skeleton;
 use super::actor::*;
 use super::schemas::dataspace::*;
+use super::schemas::dataspace::_Any;
 
 use preserves::value::Map;
 
@@ -40,7 +41,7 @@ impl Churn {
 #[derive(Debug)]
 pub struct Dataspace {
     pub index: skeleton::Index,
-    pub handle_map: Map<Handle, (Assertion, Option<Observe>)>,
+    pub handle_map: Map<Handle, (_Any, Option<Observe>)>,
     pub churn: Churn,
 }
 
@@ -67,7 +68,7 @@ impl Dataspace {
 }
 
 impl Entity for Dataspace {
-    fn assert(&mut self, t: &mut Activation, a: Assertion, h: Handle) -> ActorResult {
+    fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
         tracing::trace!(assertion = debug(&a), handle = debug(&h), "assert");
 
         let old_assertions = self.index.assertion_count();
@@ -102,7 +103,7 @@ impl Entity for Dataspace {
         Ok(())
     }
 
-    fn message(&mut self, t: &mut Activation, m: Assertion) -> ActorResult {
+    fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
         tracing::trace!(body = debug(&m), "message");
 
         self.index.send(t, &m, &mut self.churn.messages_delivered);

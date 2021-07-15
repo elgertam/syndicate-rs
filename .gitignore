@@ -1,4 +1,4 @@
 /target
 **/*.rs.bk
 scratch/
-src/gen/**/*.rs
+src/schemas/**/*.rs
