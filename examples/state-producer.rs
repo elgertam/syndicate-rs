@@ -35,11 +35,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let retract_e = Event::Retract(Box::new(Retract {
                     handle,
                 }));
-                ds.external_event(&debtor, assert_e.clone()).await?;
+                external_event(&ds, &debtor, assert_e.clone()).await?;
                 loop {
                     debtor.ensure_clear_funds().await;
-                    ds.external_event(&debtor, retract_e.clone()).await?;
-                    ds.external_event(&debtor, assert_e.clone()).await?;
+                    external_event(&ds, &debtor, retract_e.clone()).await?;
+                    external_event(&ds, &debtor, assert_e.clone()).await?;
                 }
             });
             Ok(None)

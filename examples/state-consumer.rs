@@ -84,10 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut stats_timer = interval(Duration::from_secs(1));
                 loop {
                     stats_timer.tick().await;
-                    consumer.external_event(&Debtor::new(syndicate::name!("debtor")),
-                                            Event::Message(Box::new(Message {
-                                                body: Assertion(_Any::new(true)),
-                                            }))).await?;
+                    external_event(&consumer,
+                                   &Debtor::new(syndicate::name!("debtor")),
+                                   Event::Message(Box::new(Message {
+                                       body: Assertion(_Any::new(true)),
+                                   }))).await?;
                 }
             });
             Ok(None)

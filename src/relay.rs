@@ -451,7 +451,7 @@ pub async fn input_loop(
     #[must_use]
     async fn s<M: Into<_Any>>(relay: &Arc<Ref>, debtor: &Arc<Debtor>, m: M) -> ActorResult {
         debtor.ensure_clear_funds().await;
-        relay.external_event(debtor, Event::Message(Box::new(Message { body: Assertion(m.into()) }))).await
+        external_event(relay, debtor, Event::Message(Box::new(Message { body: Assertion(m.into()) }))).await
     }
 
     let debtor = Debtor::new(crate::name!("input-loop"));

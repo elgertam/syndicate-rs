@@ -45,11 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     debtor.ensure_clear_funds().await;
                     let mut events = Vec::new();
                     for _ in 0..action_count {
-                        events.push(Event::Message(Box::new(Message {
+                        events.push((ds.clone(), Event::Message(Box::new(Message {
                             body: Assertion(says(Value::from("producer").wrap(), padding.clone())),
-                        })));
+                        }))));
                     }
-                    ds.external_events(&debtor, events).await?;
+                    external_events(&ds, &debtor, events).await?;
                 }
             });
             Ok(None)

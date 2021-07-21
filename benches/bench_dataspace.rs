@@ -59,12 +59,12 @@ pub fn bench_pub(c: &mut Criterion) {
                 let debtor = Debtor::new(syndicate::name!("sender-debtor"));
                 ac.linked_task(syndicate::name!("sender"), async move {
                     for _ in 0..iters {
-                        ds.external_event(&debtor, Event::Message(Box::new(Message {
+                        external_event(&ds, &debtor, Event::Message(Box::new(Message {
                             body: Assertion(says(_Any::new("bench_pub"),
                                                  Value::ByteString(vec![]).wrap())),
                         }))).await?
                     }
-                    shutdown.external_event(&debtor, Event::Message(Box::new(Message {
+                    external_event(&shutdown, &debtor, Event::Message(Box::new(Message {
                         body: Assertion(_Any::new(true)),
                     }))).await?;
                     Ok(())
@@ -127,12 +127,12 @@ pub fn bench_pub(c: &mut Criterion) {
                         let debtor = t.debtor.clone();
                         t.actor.linked_task(syndicate::name!("sender"), async move {
                             for _ in 0..iters {
-                                ds.external_event(&debtor, Event::Message(Box::new(Message {
+                                external_event(&ds, &debtor, Event::Message(Box::new(Message {
                                     body: Assertion(says(_Any::new("bench_pub"),
                                                          Value::ByteString(vec![]).wrap())),
                                 }))).await?
                             }
-                            ds.external_event(&debtor, Event::Message(Box::new(Message {
+                            external_event(&ds, &debtor, Event::Message(Box::new(Message {
                                 body: Assertion(_Any::new(true)),
                             }))).await?;
                             Ok(())
