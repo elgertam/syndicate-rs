@@ -913,6 +913,7 @@ dependencies = [
  "preserves",
  "regex",
  "structopt",
+ "thiserror",
 ]
 
 [[package]]
