@@ -15,6 +15,7 @@ use preserves::value::IOValue;
 use preserves::value::Map;
 use preserves::value::NestedValue;
 
+use std::any::Any;
 use std::boxed::Box;
 use std::collections::hash_map::HashMap;
 use std::convert::TryInto;
@@ -31,12 +32,13 @@ use tracing::Instrument;
 
 pub use super::schemas::internal_protocol::_Any;
 pub use super::schemas::internal_protocol::Handle;
-pub use super::schemas::internal_protocol::Oid;
 
 pub type ActorResult = Result<(), Error>;
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
-pub trait Entity: Send {
+pub trait Entity: Send + std::marker::Sync {
+    fn as_any(&mut self) -> &mut dyn Any;
+
     fn assert(&mut self, _t: &mut Activation, _a: _Any, _h: Handle) -> ActorResult {
         Ok(())
     }
@@ -53,8 +55,8 @@ pub trait Entity: Send {
     fn turn_end(&mut self, _t: &mut Activation) -> ActorResult {
         Ok(())
     }
-    fn exit_hook(&mut self, _t: &mut Activation, _exit_status: &ActorResult) -> BoxFuture<ActorResult> {
-        Box::pin(ready(Ok(())))
+    fn exit_hook(&mut self, _t: &mut Activation, _exit_status: &ActorResult) -> ActorResult {
+        Ok(())
     }
 }
 
@@ -92,7 +94,6 @@ pub struct LoanedItem<T> {
 #[derive(Debug)]
 enum SystemMessage {
     Release,
-    ReleaseOid(Oid),
     Turn(LoanedItem<PendingEventQueue>),
     Crash(Error),
 }
@@ -110,16 +111,46 @@ pub struct Actor {
     rx: Option<UnboundedReceiver<SystemMessage>>,
     mailbox_count: Arc<AtomicUsize>,
     outbound_assertions: OutboundAssertions,
-    oid_map: Map<Oid, Box<dyn Entity + Send>>,
     next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
     exit_hooks: Vec<Arc<Ref>>,
 }
 
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ObjectAddress {
     pub mailbox: Mailbox,
-    pub oid: Oid,
+    pub target: RwLock<Box<dyn Entity>>,
+}
+
+impl ObjectAddress {
+    pub fn oid(&self) -> usize {
+        std::ptr::addr_of!(*self) as usize
+    }
+}
+
+impl PartialEq for ObjectAddress {
+    fn eq(&self, other: &Self) -> bool {
+        self.oid() == other.oid()
+    }
+}
+
+impl Eq for ObjectAddress {}
+
+impl std::hash::Hash for ObjectAddress {
+    fn hash<H>(&self, hash: &mut H) where H: std::hash::Hasher {
+        self.oid().hash(hash)
+    }
+}
+
+impl PartialOrd for ObjectAddress {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ObjectAddress {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.oid().cmp(&other.oid())
+    }
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -135,7 +166,11 @@ static NEXT_DEBTOR_ID: AtomicU64 = AtomicU64::new(4);
 preserves_schema::support::lazy_static! {
     pub static ref INERT_REF: Arc<Ref> = {
         struct InertEntity;
-        impl crate::actor::Entity for InertEntity {}
+        impl crate::actor::Entity for InertEntity {
+            fn as_any(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
         let mut ac = Actor::new();
         let e = ac.create(InertEntity);
         ac.boot(tracing::info_span!(parent: None, "INERT_REF"),
@@ -254,24 +289,6 @@ impl<'activation> Activation<'activation> {
             let first_ref = Arc::clone(&turn[0].0);
             let target = &first_ref.addr.mailbox;
             let _ = target.send(&self.debtor, turn);
-        }
-    }
-
-    fn with_oid<R,
-                    Ff: FnOnce(&mut Self) -> R,
-                    Fs: FnOnce(&mut Self, &mut Box<dyn Entity + Send>) -> R>(
-        &mut self,
-        oid: &Oid,
-        kf: Ff,
-        ks: Fs,
-    ) -> R {
-        match self.actor.oid_map.remove_entry(&oid) {
-            None => kf(self),
-            Some((k, mut e)) => {
-                let result = ks(self, &mut e);
-                self.actor.oid_map.insert(k, e);
-                result
-            }
         }
     }
 }
@@ -421,18 +438,20 @@ impl Actor {
             rx: Some(rx),
             mailbox_count: Arc::new(AtomicUsize::new(0)),
             outbound_assertions: Map::new(),
-            oid_map: Map::new(),
             next_task_id: 0,
             linked_tasks: Map::new(),
             exit_hooks: Vec::new(),
         }
     }
 
-    pub fn create_and_start<E: Entity + Send + 'static>(name: tracing::Span, e: E) -> Arc<Ref> {
+    pub fn create_and_start<E: Entity + Send + std::marker::Sync + 'static>(
+        name: tracing::Span,
+        e: E,
+    ) -> Arc<Ref> {
         Self::create_and_start_rec(name, e, |_, _, _| ())
     }
 
-    pub fn create_and_start_rec<E: Entity + Send + 'static,
+    pub fn create_and_start_rec<E: Entity + Send + std::marker::Sync + 'static,
                                 F: FnOnce(&mut Self, &mut E, &Arc<Ref>) -> ()>(
         name: tracing::Span,
         e: E,
@@ -466,26 +485,24 @@ impl Actor {
         ()
     }
 
-    pub fn create<E: Entity + Send + 'static>(&mut self, e: E) -> Arc<Ref> {
+    pub fn create<E: Entity + Send + std::marker::Sync + 'static>(&mut self, e: E) -> Arc<Ref> {
         self.create_rec(e, |_, _, _| ())
     }
 
-    pub fn create_rec<E: Entity + Send + 'static,
+    pub fn create_rec<E: Entity + Send + std::marker::Sync + 'static,
                       F: FnOnce(&mut Self, &mut E, &Arc<Ref>) -> ()>(
         &mut self,
-        mut e: E,
+        e: E,
         f: F,
     ) -> Arc<Ref> {
-        let oid = crate::next_oid();
         let r = Arc::new(Ref {
             addr: Arc::new(ObjectAddress {
                 mailbox: self.mailbox(),
-                oid: oid.clone(),
+                target: RwLock::new(Box::new(e)),
             }),
             attenuation: Vec::new(),
         });
-        f(self, &mut e, &r);
-        self.oid_map.insert(oid, Box::new(e));
+        f(self, r.addr.target.write().expect("unpoisoned").as_any().downcast_mut().unwrap(), &r);
         r
     }
 
@@ -501,16 +518,11 @@ impl Actor {
             {
                 let mut t = Activation::new(&mut self, Debtor::new(crate::name!("shutdown")));
                 for r in std::mem::take(&mut t.actor.exit_hooks) {
-                    match t.actor.oid_map.remove_entry(&r.addr.oid) {
-                        None => (),
-                        Some((k, mut e)) => {
-                            if let Err(err) = e.exit_hook(&mut t, &result).await {
-                                tracing::error!(err = debug(err),
-                                                r = debug(&r),
-                                                "error in exit hook");
-                            }
-                            t.actor.oid_map.insert(k, e);
-                        }
+                    let mut e = r.addr.target.write().expect("unpoisoned");
+                    if let Err(err) = e.exit_hook(&mut t, &result) {
+                        tracing::error!(err = debug(err),
+                                        r = debug(&r),
+                                        "error in exit hook");
                     }
                 }
             }
@@ -561,34 +573,30 @@ impl Actor {
                 tracing::trace!("SystemMessage::Release");
                 Ok(true)
             }
-            SystemMessage::ReleaseOid(oid) => {
-                tracing::trace!("SystemMessage::ReleaseOid({:?})", &oid);
-                self.oid_map.remove(&oid);
-                Ok(false)
-            }
             SystemMessage::Turn(mut loaned_item) => {
                 let mut events = std::mem::take(&mut loaned_item.item);
                 let mut t = Activation::new(self, Arc::clone(&loaned_item.debtor));
                 loop {
                     for (r, event) in events.into_iter() {
-                        t.with_oid(&r.addr.oid, |_| Ok(()), |t, e| match event {
+                        let mut e = r.addr.target.write().expect("unpoisoned");
+                        match event {
                             Event::Assert(b) => {
                                 let Assert { assertion: Assertion(assertion), handle } = *b;
-                                e.assert(t, assertion, handle)
+                                e.assert(&mut t, assertion, handle)?
                             }
                             Event::Retract(b) => {
                                 let Retract { handle } = *b;
-                                e.retract(t, handle)
+                                e.retract(&mut t, handle)?
                             }
                             Event::Message(b) => {
                                 let Message { body: Assertion(body) } = *b;
-                                e.message(t, body)
+                                e.message(&mut t, body)?
                             }
                             Event::Sync(b) => {
                                 let Sync { peer } = *b;
-                                e.sync(t, peer)
+                                e.sync(&mut t, peer)?
                             }
-                        })?;
+                        }
                     }
                     events = std::mem::take(&mut t.immediate_self);
                     if events.is_empty() { break; }
@@ -698,17 +706,10 @@ impl Ref {
 impl std::fmt::Debug for Ref {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         if self.attenuation.is_empty() {
-            write!(f, "⌜{}:{}⌝", self.addr.mailbox.actor_id, self.addr.oid.0)
+            write!(f, "⌜{}:{:016x}⌝", self.addr.mailbox.actor_id, self.addr.oid())
         } else {
-            write!(f, "⌜{}:{}\\{:?}⌝", self.addr.mailbox.actor_id, self.addr.oid.0, self.attenuation)
+            write!(f, "⌜{}:{:016x}\\{:?}⌝", self.addr.mailbox.actor_id, self.addr.oid(), self.attenuation)
         }
-    }
-}
-
-impl Drop for ObjectAddress {
-    fn drop(&mut self) {
-        let _ = self.mailbox.tx.send(SystemMessage::ReleaseOid(self.oid.clone()));
-        ()
     }
 }
 

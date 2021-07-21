@@ -5,6 +5,7 @@ use preserves::value::Map;
 use preserves::value::NestedValue;
 use preserves::value::Value;
 
+use std::any::Any;
 use std::convert::TryFrom;
 use std::future::ready;
 use std::iter::FromIterator;
@@ -158,9 +159,12 @@ async fn run_connection(
     };
     struct ExitListener;
     impl Entity for ExitListener {
-        fn exit_hook(&mut self, _t: &mut Activation, exit_status: &ActorResult) -> BoxFuture<ActorResult> {
+        fn as_any(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn exit_hook(&mut self, _t: &mut Activation, exit_status: &ActorResult) -> ActorResult {
             tracing::info!(exit_status = debug(exit_status), "disconnect");
-            Box::pin(ready(Ok(())))
+            Ok(())
         }
     }
     let exit_listener = t.actor.create(ExitListener);

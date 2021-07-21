@@ -5,6 +5,7 @@ use super::schemas::dataspace::_Any;
 
 use preserves::value::Map;
 
+use std::any::Any;
 use std::convert::TryFrom;
 
 #[derive(Debug)]
@@ -68,6 +69,9 @@ impl Dataspace {
 }
 
 impl Entity for Dataspace {
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
     fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
         // tracing::trace!(assertion = debug(&a), handle = debug(&h), "assert");
 

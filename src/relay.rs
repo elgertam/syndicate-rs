@@ -34,6 +34,7 @@ use preserves::value::signed_integer::SignedInteger;
 use preserves_schema::support::Deserialize;
 use preserves_schema::support::ParseError;
 
+use std::any::Any;
 use std::convert::TryFrom;
 use std::io;
 use std::pin::Pin;
@@ -147,8 +148,8 @@ pub fn connect_stream<I, O, E, F>(
 ) where
     I: 'static + Send + AsyncRead,
     O: 'static + Send + AsyncWrite,
-    E: 'static + Send,
-    F: 'static + Send + FnMut(&mut E, &mut Activation, Arc<Ref>) -> during::DuringResult<E>
+    E: 'static + Send + std::marker::Sync,
+    F: 'static + Send + std::marker::Sync + FnMut(&mut E, &mut Activation, Arc<Ref>) -> during::DuringResult<E>
 {
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
@@ -263,6 +264,9 @@ impl TunnelRelay {
                                 peer: Arc<Ref>,
                             }
                             impl Entity for SyncPeer {
+                                fn as_any(&mut self) -> &mut dyn Any {
+                                    self
+                                }
                                 fn message(&mut self, t: &mut Activation, a: _Any) -> ActorResult {
                                     if let Some(true) = a.value().as_boolean() {
                                         t.message(&self.peer, _Any::new(true));
@@ -526,6 +530,9 @@ pub async fn output_loop(
 }
 
 impl Entity for TunnelRelay {
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
     fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
         if let Ok(m) = tunnel_relay::RelayProtocol::try_from(&m) {
             match m {
@@ -595,17 +602,19 @@ impl Entity for TunnelRelay {
         Ok(())
     }
 
-    fn exit_hook(&mut self, t: &mut Activation, exit_status: &ActorResult) -> BoxFuture<ActorResult> {
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &ActorResult) -> ActorResult {
         if let Err(e) = exit_status {
             let e = e.clone();
-            Box::pin(ready(self.send_packet(&t.debtor, 1, Packet::Error(Box::new(e)))))
-        } else {
-            Box::pin(ready(Ok(())))
+            self.send_packet(&t.debtor, 1, Packet::Error(Box::new(e)))?;
         }
+        Ok(())
     }
 }
 
 impl Entity for RelayEntity {
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
     fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
         Ok(t.message(&self.relay_ref, &tunnel_relay::Output {
             oid: self.oid.clone(),

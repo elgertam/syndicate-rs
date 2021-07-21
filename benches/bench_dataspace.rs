@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
+use std::any::Any;
 use std::iter::FromIterator;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -30,6 +31,9 @@ fn says(who: _Any, what: _Any) -> _Any {
 struct ShutdownEntity;
 
 impl Entity for ShutdownEntity {
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
     fn message(&mut self, t: &mut Activation, _m: _Any) -> ActorResult {
         t.actor.shutdown();
         Ok(())
@@ -84,6 +88,9 @@ pub fn bench_pub(c: &mut Criterion) {
 
                 struct Receiver(Arc<AtomicU64>);
                 impl Entity for Receiver {
+                    fn as_any(&mut self) -> &mut dyn Any {
+                        self
+                    }
                     fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
                         self.0.fetch_add(1, Ordering::Relaxed);
                         Ok(())

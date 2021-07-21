@@ -2,12 +2,13 @@ use crate::actor::*;
 
 use preserves::value::NestedValue;
 
+use std::any::Any;
 use std::sync::Arc;
 
 struct Tracer(tracing::Span);
 
 fn set_name_oid(_ac: &mut Actor, t: &mut Tracer, r: &Arc<Ref>) {
-    t.0.record("oid", &tracing::field::display(&r.addr.oid.0));
+    t.0.record("oid", &tracing::field::display(&r.addr.oid()));
 }
 
 pub fn tracer(ac: &mut Actor, name: tracing::Span) -> Arc<Ref> {
@@ -19,6 +20,9 @@ pub fn tracer_top(name: tracing::Span) -> Arc<Ref> {
 }
 
 impl Entity for Tracer {
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
     fn assert(&mut self, _t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
         let _guard = self.0.enter();
         tracing::trace!(a = debug(&a), h = debug(&h), "assert");

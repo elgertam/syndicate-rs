@@ -3,7 +3,6 @@ pub use preserves::value;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use actor::Handle;
-use actor::Oid;
 
 pub mod actor;
 pub mod bag;
@@ -32,12 +31,6 @@ const BUMP_AMOUNT: u8 = 10;
 static NEXT_ACTOR_ID: AtomicU64 = AtomicU64::new(1);
 pub fn next_actor_id() -> ActorId {
     NEXT_ACTOR_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
-}
-
-static NEXT_OID: AtomicU64 = AtomicU64::new(2);
-pub fn next_oid() -> Oid {
-    Oid(value::signed_integer::SignedInteger::from(
-        NEXT_OID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed) as u128))
 }
 
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(3);
