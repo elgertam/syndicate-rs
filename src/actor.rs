@@ -27,7 +27,6 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
 // use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use tracing;
 use tracing::Instrument;
 
 pub use super::schemas::internal_protocol::_Any;
@@ -263,10 +262,11 @@ impl<'activation> Activation<'activation> {
             if turn.len() == 0 { continue; }
             let first_ref = Arc::clone(&turn[0].0);
             let target = &first_ref.addr.mailbox;
-            let _ = target.send(
-                &self.debtor,
-                Turn(turn.into_iter().map(
-                    |(r, e)| TurnEvent { oid: r.addr.oid.clone(), event: e }).collect()));
+            let mut turn_events = Vec::new();
+            for (r, e) in turn.into_iter() {
+                turn_events.push(TurnEvent { oid: r.addr.oid.clone(), event: e });
+            }
+            let _ = target.send(&self.debtor, Turn(turn_events));
         }
     }
 

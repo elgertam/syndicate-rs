@@ -13,7 +13,7 @@ vendored-openssl = ["openssl/vendored"]
 
 [profile.release]
 debug = true
-lto = true
+# lto = true
 
 [lib]
 name = "syndicate"

@@ -15,6 +15,7 @@ use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
 
+use preserves::error::Error as PreservesError;
 use preserves::error::is_eof_io_error;
 use preserves::value::BinarySource;
 use preserves::value::BytesBinarySource;
@@ -30,6 +31,9 @@ use preserves::value::Reader;
 use preserves::value::Writer;
 use preserves::value::signed_integer::SignedInteger;
 
+use preserves_schema::support::Deserialize;
+use preserves_schema::support::ParseError;
+
 use std::convert::TryFrom;
 use std::io;
 use std::pin::Pin;
@@ -43,8 +47,6 @@ use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
-
-use tracing;
 
 struct WireSymbol {
     oid: sturdy::Oid,
@@ -200,6 +202,7 @@ impl TunnelRelay {
     }
 
     fn handle_inbound_packet(&mut self, t: &mut Activation, p: Packet) -> ActorResult {
+        // tracing::trace!(packet = debug(&p), "-->");
         match p {
             Packet::Error(b) => {
                 tracing::info!(message = debug(b.message.clone()),
@@ -317,7 +320,7 @@ impl TunnelRelay {
 
     fn encode_packet(&mut self, p: Packet) -> Result<Vec<u8>, Error> {
         let item = _Any::from(&p);
-        tracing::trace!(packet = debug(&item), "<--");
+        // tracing::trace!(packet = debug(&item), "<--");
         Ok(PackedWriter::encode::<_, _Any, _>(&mut self.membranes, &item)?)
     }
 
@@ -468,9 +471,10 @@ pub async fn input_loop(
             }
         }
         Input::Bytes(mut r) => {
-            let mut buf = BytesMut::with_capacity(1024);
+            const BUFSIZE: usize = 65536;
+            let mut buf = BytesMut::with_capacity(BUFSIZE);
             loop {
-                buf.reserve(8192);
+                buf.reserve(BUFSIZE);
                 let n = match r.read_buf(&mut buf).await {
                     Ok(n) => n,
                     Err(e) =>
@@ -531,11 +535,10 @@ impl Entity for TunnelRelay {
                     }
                     tunnel_relay::Input::Packet { bs } => {
                         let mut src = BytesBinarySource::new(&bs);
-                        let item = src.packed::<_, _Any, _>(
-                            &mut ActivatedMembranes(t, &self.self_ref, &mut self.membranes))
-                            .demand_next(false)?;
-                        tracing::trace!(packet = debug(&item), "-->");
-                        self.handle_inbound_packet(t, Packet::try_from(&item)?)?;
+                        let mut dec = ActivatedMembranes(t, &self.self_ref, &mut self.membranes);
+                        let mut r = src.packed::<_, _Any, _>(&mut dec);
+                        let item = Packet::deserialize(&mut r)?;
+                        self.handle_inbound_packet(t, item)?;
                     }
                     tunnel_relay::Input::Segment { bs } => {
                         self.input_buffer.extend_from_slice(&bs);
@@ -544,9 +547,11 @@ impl Entity for TunnelRelay {
                                 let mut src = BytesBinarySource::new(&self.input_buffer);
                                 let mut dec = ActivatedMembranes(t, &self.self_ref, &mut self.membranes);
                                 let mut r = src.packed::<_, _Any, _>(&mut dec);
-                                let e = match r.next(false) {
-                                    Err(e) if is_eof_io_error(&e) => None,
-                                    result => result?,
+                                let e = match Packet::deserialize(&mut r) {
+                                    Err(ParseError::Preserves(PreservesError::Io(e)))
+                                        if is_eof_io_error(&e) =>
+                                        None,
+                                    result => Some(result?),
                                 };
                                 (e, r.source.index)
                             };
@@ -554,8 +559,7 @@ impl Entity for TunnelRelay {
                                 None => break,
                                 Some(item) => {
                                     self.input_buffer.advance(count);
-                                    tracing::trace!(packet = debug(&item), "-->");
-                                    self.handle_inbound_packet(t, Packet::try_from(&item)?)?;
+                                    self.handle_inbound_packet(t, item)?;
                                 }
                             }
                         }

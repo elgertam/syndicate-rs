@@ -25,8 +25,6 @@ use syndicate::sturdy;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
-use tracing::{info, trace};
-
 use tungstenite::Message;
 
 #[tokio::main]
@@ -41,37 +39,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         const NORMAL: &str = "\x1b[0m";
         const BRIGHT_YELLOW: &str = "\x1b[93m";
 
-        info!(r"{}    ______   {}", GREEN, NORMAL);
-        info!(r"{}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"{}  /  {},{}__/{}  \ {}                         ____           __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"{} /{}\__/  \{},{}  \{}   _______  ______  ____/ /_/________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
-        info!(r"{} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"{}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"{}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        info!(r"                  /____/");
+        tracing::info!(r"{}    ______   {}", GREEN, NORMAL);
+        tracing::info!(r"{}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        tracing::info!(r"{}  /  {},{}__/{}  \ {}                         ____           __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        tracing::info!(r"{} /{}\__/  \{},{}  \{}   _______  ______  ____/ /_/________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
+        tracing::info!(r"{} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        tracing::info!(r"{}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        tracing::info!(r"{}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        tracing::info!(r"                  /____/");
 
-        // info!(r"   {}   __{}__{}__   {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        // info!(r"   {}  /{}_/  \_{}\  {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        // info!(r"   {} /  \__/  \ {}                         __             __", BRIGHT_GREEN, NORMAL);
-        // info!(r"   {}/{}\__/  \__/{}\{}   _______  ______  ____/ /__________  / /____", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        // info!(r"   {}\{}/  \__/  \{}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        // info!(r"   {} \__/  \__/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", BRIGHT_GREEN, NORMAL);
-        // info!(r"   {}  \_{}\__/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        // info!(r"                    /____/");
+        // tracing::info!(r"   {}   __{}__{}__   {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // tracing::info!(r"   {}  /{}_/  \_{}\  {}", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // tracing::info!(r"   {} /  \__/  \ {}                         __             __", BRIGHT_GREEN, NORMAL);
+        // tracing::info!(r"   {}/{}\__/  \__/{}\{}   _______  ______  ____/ /__________  / /____", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // tracing::info!(r"   {}\{}/  \__/  \{}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // tracing::info!(r"   {} \__/  \__/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", BRIGHT_GREEN, NORMAL);
+        // tracing::info!(r"   {}  \_{}\__/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        // tracing::info!(r"                    /____/");
 
-        info!(r"");
-        info!(r" {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
-        info!(r"");
-        info!(r" documentation & reference material: https://syndicate-lang.org/");
-        info!(r" source code & bugs: https://git.syndicate-lang.org/syndicate-lang/syndicate-rs");
-        info!(r"");
+        tracing::info!(r"");
+        tracing::info!(r" {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
+        tracing::info!(r"");
+        tracing::info!(r" documentation & reference material: https://syndicate-lang.org/");
+        tracing::info!(r" source code & bugs: https://git.syndicate-lang.org/syndicate-lang/syndicate-rs");
+        tracing::info!(r"");
     }
 
     let config = Arc::new(config::ServerConfig::from_args());
 
     let mut daemons = Vec::new();
 
-    trace!("startup");
+    tracing::trace!("startup");
 
     let ds = Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new());
     let gateway = Actor::create_and_start(
@@ -140,7 +138,7 @@ async fn run_connection(
     let (i, o) = match stream.peek(&mut buf).await? {
         1 => match buf[0] {
             71 /* ASCII 'G' for "GET" */ => {
-                info!(protocol = display("websocket"), peer = debug(addr));
+                tracing::info!(protocol = display("websocket"), peer = debug(addr));
                 let s = tokio_tungstenite::accept_async(stream).await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 let (o, i) = s.split();
@@ -149,7 +147,7 @@ async fn run_connection(
                 (relay::Input::Packets(Box::pin(i)), relay::Output::Packets(Box::pin(o)))
             },
             _ => {
-                info!(protocol = display("raw"), peer = debug(addr));
+                tracing::info!(protocol = display("raw"), peer = debug(addr));
                 let (i, o) = stream.into_split();
                 (relay::Input::Bytes(Box::pin(i)),
                  relay::Output::Bytes(Box::pin(o /* BufWriter::new(o) */)))
@@ -161,7 +159,7 @@ async fn run_connection(
     struct ExitListener;
     impl Entity for ExitListener {
         fn exit_hook(&mut self, _t: &mut Activation, exit_status: &ActorResult) -> BoxFuture<ActorResult> {
-            info!(exit_status = debug(exit_status), "disconnect");
+            tracing::info!(exit_status = debug(exit_status), "disconnect");
             Box::pin(ready(Ok(())))
         }
     }

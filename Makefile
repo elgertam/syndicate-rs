@@ -42,6 +42,14 @@ arm-binary-release:
 arm-binary-debug:
 	cross build --target=armv7-unknown-linux-musleabihf --all-targets --features vendored-openssl
 
+aarch64-binary: aarch64-binary-release
+
+aarch64-binary-release:
+	cross build --target=aarch64-unknown-linux-musl --release --all-targets --features vendored-openssl
+
+aarch64-binary-debug:
+	cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
+
 pull-protocols:
 	git subtree pull -P protocols \
 		-m 'Merge latest changes from the syndicate-protocols repository' \

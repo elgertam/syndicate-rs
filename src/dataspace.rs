@@ -69,7 +69,7 @@ impl Dataspace {
 
 impl Entity for Dataspace {
     fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
-        tracing::trace!(assertion = debug(&a), handle = debug(&h), "assert");
+        // tracing::trace!(assertion = debug(&a), handle = debug(&h), "assert");
 
         let old_assertions = self.index.assertion_count();
         self.index.insert(t, &a);
@@ -87,7 +87,7 @@ impl Entity for Dataspace {
     }
 
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
-        tracing::trace!(handle = debug(&h), "retract");
+        // tracing::trace!(handle = debug(&h), "retract");
 
         if let Some((a, maybe_o)) = self.handle_map.remove(&h) {
             if let Some(o) = maybe_o {
@@ -104,7 +104,7 @@ impl Entity for Dataspace {
     }
 
     fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
-        tracing::trace!(body = debug(&m), "message");
+        // tracing::trace!(body = debug(&m), "message");
 
         self.index.send(t, &m, &mut self.churn.messages_delivered);
         self.churn.messages_injected += 1;
