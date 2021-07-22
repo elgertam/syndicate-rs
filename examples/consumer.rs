@@ -7,7 +7,6 @@ use syndicate::actor::*;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::dataspace_patterns as p;
-use syndicate::schemas::internal_protocol::*;
 use syndicate::sturdy;
 use syndicate::value::Map;
 use syndicate::value::NestedValue;
@@ -68,11 +67,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut stats_timer = interval(Duration::from_secs(1));
                 loop {
                     stats_timer.tick().await;
-                    external_event(&consumer,
+                    let consumer = Arc::clone(&consumer);
+                    external_event(&Arc::clone(&consumer),
                                    &Debtor::new(syndicate::name!("debtor")),
-                                   Event::Message(Box::new(Message {
-                                       body: Assertion(_Any::new(true)),
-                                   }))).await?;
+                                   Box::new(move |t| consumer.with_entity(
+                                       |e| e.message(t, _Any::new(true)))))?;
                 }
             });
             Ok(None)

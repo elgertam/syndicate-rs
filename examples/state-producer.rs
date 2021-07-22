@@ -1,8 +1,9 @@
+use std::sync::Arc;
+
 use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::relay;
-use syndicate::schemas::internal_protocol::*;
 use syndicate::sturdy;
 use syndicate::value::Value;
 
@@ -28,18 +29,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Present",
                     Value::from(std::process::id()).wrap()).wrap();
                 let handle = syndicate::next_handle();
-                let assert_e = Event::Assert(Box::new(Assert {
-                    assertion: Assertion(presence),
-                    handle: handle.clone(),
-                }));
-                let retract_e = Event::Retract(Box::new(Retract {
-                    handle,
-                }));
-                external_event(&ds, &debtor, assert_e.clone()).await?;
+                let assert_e = || {
+                    let ds = Arc::clone(&ds);
+                    let presence = presence.clone();
+                    let handle = handle.clone();
+                    external_event(&Arc::clone(&ds), &debtor, Box::new(
+                        move |t| ds.with_entity(|e| e.assert(t, presence, handle))))
+                };
+                let retract_e = || {
+                    let ds = Arc::clone(&ds);
+                    let handle = handle.clone();
+                    external_event(&Arc::clone(&ds), &debtor, Box::new(
+                        move |t| ds.with_entity(|e| e.retract(t, handle))))
+                };
+                assert_e()?;
                 loop {
                     debtor.ensure_clear_funds().await;
-                    external_event(&ds, &debtor, retract_e.clone()).await?;
-                    external_event(&ds, &debtor, assert_e.clone()).await?;
+                    retract_e()?;
+                    assert_e()?;
                 }
             });
             Ok(None)

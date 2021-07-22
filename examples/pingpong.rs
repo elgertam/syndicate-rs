@@ -8,7 +8,6 @@ use syndicate::actor::*;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::dataspace_patterns as p;
-use syndicate::schemas::internal_protocol::*;
 use syndicate::sturdy;
 use syndicate::value::Map;
 use syndicate::value::NestedValue;
@@ -190,11 +189,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut stats_timer = interval(Duration::from_secs(1));
                 loop {
                     stats_timer.tick().await;
-                    external_event(&consumer,
+                    let consumer = Arc::clone(&consumer);
+                    external_event(&Arc::clone(&consumer),
                                    &Debtor::new(syndicate::name!("debtor")),
-                                   Event::Message(Box::new(Message {
-                                       body: Assertion(_Any::new(true)),
-                                   }))).await?;
+                                   Box::new(move |t| consumer.with_entity(
+                                       |e| e.message(t, _Any::new(true)))))?;
                 }
             });
 
@@ -205,16 +204,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 t.actor.linked_task(syndicate::name!("boot-ping"), async move {
                     let padding: _Any = Value::ByteString(vec![0; bytes_padding]).wrap();
                     for _ in 0..turn_count {
-                        let mut events = vec![];
+                        let mut events: PendingEventQueue = vec![];
                         let current_rec = simple_record2(send_label,
                                                          Value::from(now()).wrap(),
                                                          padding.clone());
                         for _ in 0..action_count {
-                            events.push((ds.clone(), Event::Message(Box::new(Message {
-                                body: Assertion(current_rec.clone()),
-                            }))));
+                            let ds = Arc::clone(&ds);
+                            let current_rec = current_rec.clone();
+                            events.push(Box::new(move |t| ds.with_entity(
+                                |e| e.message(t, current_rec))));
                         }
-                        external_events(&ds, &debtor, events).await?
+                        external_events(&ds, &debtor, events)?
                     }
                     Ok(())
                 });

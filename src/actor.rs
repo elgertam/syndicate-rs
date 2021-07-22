@@ -3,7 +3,6 @@ pub use futures::future::BoxFuture;
 pub use std::future::ready;
 
 use super::ActorId;
-use super::schemas::internal_protocol::*;
 use super::schemas::sturdy;
 use super::error::Error;
 use super::error::error;
@@ -25,7 +24,6 @@ use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 
 use tokio::select;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
-// use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use tracing::Instrument;
@@ -61,19 +59,20 @@ pub trait Entity: Send + std::marker::Sync {
 }
 
 enum Destination {
-    ImmediateSelf(Arc<Ref>),
-    Remote(Arc<Ref>),
+    ImmediateSelf(Action),
+    Remote(Arc<Ref>, Action),
 }
 
 type OutboundAssertions = Map<Handle, Destination>;
-type PendingEventQueue = Vec<(Arc<Ref>, Event)>;
+pub type Action = Box<dyn Send + Sync + FnOnce(&mut Activation) -> ActorResult>;
+pub type PendingEventQueue = Vec<Action>;
 
 // This is what other implementations call a "Turn", renamed here to
 // avoid conflicts with schemas::internal_protocol::Turn.
 pub struct Activation<'activation> {
     pub actor: &'activation mut Actor,
     pub debtor: Arc<Debtor>,
-    queues: HashMap<ActorId, PendingEventQueue>,
+    queues: HashMap<ActorId, (UnboundedSender<SystemMessage>, PendingEventQueue)>,
     immediate_self: PendingEventQueue,
 }
 
@@ -91,7 +90,6 @@ pub struct LoanedItem<T> {
     pub item: T,
 }
 
-#[derive(Debug)]
 enum SystemMessage {
     Release,
     Turn(LoanedItem<PendingEventQueue>),
@@ -225,9 +223,20 @@ impl<'activation> Activation<'activation> {
     pub fn assert<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<_Any> {
         let handle = crate::next_handle();
         if let Some(assertion) = r.rewrite(a.into()) {
-            self.queue_for(r).push((Arc::clone(r), Event::Assert(Box::new(
-                Assert { assertion, handle: handle.clone() }))));
-            self.actor.outbound_assertions.insert(handle.clone(), Destination::Remote(Arc::clone(r)));
+            {
+                let r = Arc::clone(r);
+                let handle = handle.clone();
+                self.queue_for(&r).push(Box::new(
+                    move |t| r.with_entity(|e| e.assert(t, assertion, handle))));
+            }
+            {
+                let r = Arc::clone(r);
+                let handle = handle.clone();
+                self.actor.outbound_assertions.insert(
+                    handle.clone(),
+                    Destination::Remote(Arc::clone(&r), Box::new(
+                        move |t| r.with_entity(|e| e.retract(t, handle)))));
+            }
         }
         handle
     }
@@ -236,59 +245,73 @@ impl<'activation> Activation<'activation> {
         self.immediate_oid(r);
         let handle = crate::next_handle();
         if let Some(assertion) = r.rewrite(a.into()) {
-            self.immediate_self.push((r.clone(), Event::Assert(Box::new(
-                Assert { assertion, handle: handle.clone() }))));
-            self.actor.outbound_assertions.insert(handle.clone(), Destination::ImmediateSelf(r.clone()));
+            {
+                let r = Arc::clone(r);
+                let handle = handle.clone();
+                self.immediate_self.push(Box::new(
+                    move |t| r.with_entity(|e| e.assert(t, assertion, handle))));
+            }
+            {
+                let r = Arc::clone(r);
+                let handle = handle.clone();
+                self.actor.outbound_assertions.insert(
+                    handle.clone(),
+                    Destination::ImmediateSelf(Box::new(
+                        move |t| r.with_entity(|e| e.retract(t, handle)))));
+            }
         }
         handle
     }
 
     pub fn retract(&mut self, handle: Handle) {
         if let Some(d) = self.actor.outbound_assertions.remove(&handle) {
-            self.retract_known_ref(d, handle)
+            self.retract_known_ref(d)
         }
     }
 
-    fn retract_known_ref(&mut self, d: Destination, handle: Handle) {
+    fn retract_known_ref(&mut self, d: Destination) {
         match d {
-            Destination::Remote(r) =>
-                self.queue_for(&r).push((r, Event::Retract(Box::new(Retract { handle })))),
-            Destination::ImmediateSelf(r) =>
-                self.immediate_self.push((r, Event::Retract(Box::new(Retract { handle })))),
+            Destination::Remote(r, action) =>
+                self.queue_for(&r).push(action),
+            Destination::ImmediateSelf(action) =>
+                self.immediate_self.push(action),
         }
     }
 
     pub fn message<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<_Any> {
         if let Some(body) = r.rewrite(m.into()) {
-            self.queue_for(r).push((Arc::clone(r), Event::Message(Box::new(
-                Message { body }))))
+            let r = Arc::clone(r);
+            self.queue_for(&r).push(Box::new(
+                move |t| r.with_entity(|e| e.message(t, body))))
         }
     }
 
     pub fn message_immediate_self<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<_Any> {
         self.immediate_oid(r);
         if let Some(body) = r.rewrite(m.into()) {
-            self.immediate_self.push((r.clone(), Event::Message(Box::new(Message { body }))));
+            let r = Arc::clone(r);
+            self.immediate_self.push(Box::new(
+                move |t| r.with_entity(|e| e.message(t, body))))
         }
     }
 
     pub fn sync(&mut self, r: &Arc<Ref>, peer: Arc<Ref>) {
-        self.queue_for(r).push((Arc::clone(r), Event::Sync(Box::new(Sync { peer }))));
+        let r = Arc::clone(r);
+        self.queue_for(&r).push(Box::new(
+            move |t| r.with_entity(|e| e.sync(t, peer))))
     }
 
     fn queue_for(&mut self, r: &Arc<Ref>) -> &mut PendingEventQueue {
-        self.queues.entry(r.addr.mailbox.actor_id).or_default()
+        &mut self.queues.entry(r.addr.mailbox.actor_id)
+            .or_insert((r.addr.mailbox.tx.clone(), Vec::new())).1
     }
 
     fn deliver(&mut self) {
         if !self.immediate_self.is_empty() {
             panic!("Unprocessed immediate_self events remain at deliver() time");
         }
-        for (_actor_id, turn) in std::mem::take(&mut self.queues).into_iter() {
-            if turn.len() == 0 { continue; }
-            let first_ref = Arc::clone(&turn[0].0);
-            let target = &first_ref.addr.mailbox;
-            let _ = target.send(&self.debtor, turn);
+        for (_actor_id, (tx, turn)) in std::mem::take(&mut self.queues).into_iter() {
+            let _ = send_actions(&tx, &self.debtor, turn);
         }
     }
 }
@@ -357,13 +380,15 @@ impl<T> Drop for LoanedItem<T> {
     }
 }
 
-impl Mailbox {
-    #[must_use]
-    pub fn send(&self, debtor: &Arc<Debtor>, t: PendingEventQueue) -> ActorResult {
-        let token_count = t.len();
-        self.tx.send(SystemMessage::Turn(LoanedItem::new(debtor, token_count, t)))
-            .map_err(|_| error("Target actor not running", _Any::new(false)))
-    }
+#[must_use]
+fn send_actions(
+    tx: &UnboundedSender<SystemMessage>,
+    debtor: &Arc<Debtor>,
+    t: PendingEventQueue,
+) -> ActorResult {
+    let token_count = t.len();
+    tx.send(SystemMessage::Turn(LoanedItem::new(debtor, token_count, t)))
+        .map_err(|_| error("Target actor not running", _Any::new(false)))
 }
 
 impl std::fmt::Debug for Mailbox {
@@ -518,8 +543,7 @@ impl Actor {
             {
                 let mut t = Activation::new(&mut self, Debtor::new(crate::name!("shutdown")));
                 for r in std::mem::take(&mut t.actor.exit_hooks) {
-                    let mut e = r.addr.target.write().expect("unpoisoned");
-                    if let Err(err) = e.exit_hook(&mut t, &result) {
+                    if let Err(err) = r.with_entity(|e| e.exit_hook(&mut t, &result)) {
                         tracing::error!(err = debug(err),
                                         r = debug(&r),
                                         "error in exit hook");
@@ -574,32 +598,12 @@ impl Actor {
                 Ok(true)
             }
             SystemMessage::Turn(mut loaned_item) => {
-                let mut events = std::mem::take(&mut loaned_item.item);
+                let mut actions = std::mem::take(&mut loaned_item.item);
                 let mut t = Activation::new(self, Arc::clone(&loaned_item.debtor));
                 loop {
-                    for (r, event) in events.into_iter() {
-                        let mut e = r.addr.target.write().expect("unpoisoned");
-                        match event {
-                            Event::Assert(b) => {
-                                let Assert { assertion: Assertion(assertion), handle } = *b;
-                                e.assert(&mut t, assertion, handle)?
-                            }
-                            Event::Retract(b) => {
-                                let Retract { handle } = *b;
-                                e.retract(&mut t, handle)?
-                            }
-                            Event::Message(b) => {
-                                let Message { body: Assertion(body) } = *b;
-                                e.message(&mut t, body)?
-                            }
-                            Event::Sync(b) => {
-                                let Sync { peer } = *b;
-                                e.sync(&mut t, peer)?
-                            }
-                        }
-                    }
-                    events = std::mem::take(&mut t.immediate_self);
-                    if events.is_empty() { break; }
+                    for action in actions.into_iter() { action(&mut t)? }
+                    actions = std::mem::take(&mut t.immediate_self);
+                    if actions.is_empty() { break; }
                 }
                 Ok(false)
             }
@@ -662,9 +666,9 @@ impl Drop for Actor {
         let to_clear = std::mem::take(&mut self.outbound_assertions);
         {
             let mut t = Activation::new(self, Debtor::new(crate::name!("drop")));
-            for (handle, r) in to_clear.into_iter() {
-                tracing::trace!(h = debug(&handle), "retract on termination");
-                t.retract_known_ref(r, handle);
+            for (_handle, r) in to_clear.into_iter() {
+                tracing::trace!(h = debug(&_handle), "retract on termination");
+                t.retract_known_ref(r);
             }
         }
 
@@ -673,16 +677,20 @@ impl Drop for Actor {
 }
 
 #[must_use]
-pub async fn external_event(r: &Arc<Ref>, debtor: &Arc<Debtor>, event: Event) -> ActorResult {
-    r.addr.mailbox.send(debtor, vec![(r.clone(), event)])
+pub fn external_event(r: &Arc<Ref>, debtor: &Arc<Debtor>, action: Action) -> ActorResult {
+    send_actions(&r.addr.mailbox.tx, debtor, vec![action])
 }
 
 #[must_use]
-pub async fn external_events(r: &Arc<Ref>, debtor: &Arc<Debtor>, events: PendingEventQueue) -> ActorResult {
-    r.addr.mailbox.send(debtor, events)
+pub fn external_events(r: &Arc<Ref>, debtor: &Arc<Debtor>, events: PendingEventQueue) -> ActorResult {
+    send_actions(&r.addr.mailbox.tx, debtor, events)
 }
 
 impl Ref {
+    pub fn with_entity<R, F: FnOnce(&mut dyn Entity) -> R>(&self, f: F) -> R {
+        f(&mut **self.addr.target.write().expect("unpoisoned"))
+    }
+
     pub fn attenuate(&self, attenuation: &sturdy::Attenuation) -> Result<Arc<Self>, CaveatError> {
         let mut r = Ref {
             addr: Arc::clone(&self.addr),
@@ -692,14 +700,14 @@ impl Ref {
         Ok(Arc::new(r))
     }
 
-    pub fn rewrite(&self, mut a: _Any) -> Option<Assertion> {
+    pub fn rewrite(&self, mut a: _Any) -> Option<_Any> {
         for c in &self.attenuation {
             match c.rewrite(&a) {
                 Some(v) => a = v,
                 None => return None,
             }
         }
-        Some(Assertion(a))
+        Some(a)
     }
 }
 

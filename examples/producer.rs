@@ -1,8 +1,9 @@
+use std::sync::Arc;
+
 use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::relay;
-use syndicate::schemas::internal_protocol::*;
 use syndicate::sturdy;
 use syndicate::value::Value;
 
@@ -43,13 +44,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             t.actor.linked_task(syndicate::name!("sender"), async move {
                 loop {
                     debtor.ensure_clear_funds().await;
-                    let mut events = Vec::new();
+                    let mut events: PendingEventQueue = Vec::new();
                     for _ in 0..action_count {
-                        events.push((ds.clone(), Event::Message(Box::new(Message {
-                            body: Assertion(says(Value::from("producer").wrap(), padding.clone())),
-                        }))));
+                        let ds = Arc::clone(&ds);
+                        let padding = padding.clone();
+                        events.push(Box::new(move |t| ds.with_entity(
+                            |e| e.message(t, says(Value::from("producer").wrap(), padding)))));
                     }
-                    external_events(&ds, &debtor, events).await?;
+                    external_events(&ds, &debtor, events)?;
                 }
             });
             Ok(None)

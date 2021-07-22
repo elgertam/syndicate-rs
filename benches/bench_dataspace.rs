@@ -11,7 +11,6 @@ use syndicate::actor::*;
 use syndicate::dataspace::Dataspace;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::dataspace_patterns as p;
-use syndicate::schemas::internal_protocol::*;
 use syndicate::value::Map;
 use syndicate::value::NestedValue;
 use syndicate::value::Value;
@@ -63,14 +62,15 @@ pub fn bench_pub(c: &mut Criterion) {
                 let debtor = Debtor::new(syndicate::name!("sender-debtor"));
                 ac.linked_task(syndicate::name!("sender"), async move {
                     for _ in 0..iters {
-                        external_event(&ds, &debtor, Event::Message(Box::new(Message {
-                            body: Assertion(says(_Any::new("bench_pub"),
-                                                 Value::ByteString(vec![]).wrap())),
-                        }))).await?
+                        let ds = Arc::clone(&ds);
+                        external_event(&Arc::clone(&ds), &debtor, Box::new(
+                            move |t| ds.with_entity(
+                                |e| e.message(t, says(_Any::new("bench_pub"),
+                                                      Value::ByteString(vec![]).wrap())))))?
                     }
-                    external_event(&shutdown, &debtor, Event::Message(Box::new(Message {
-                        body: Assertion(_Any::new(true)),
-                    }))).await?;
+                    external_event(&Arc::clone(&shutdown), &debtor, Box::new(
+                        move |t| shutdown.with_entity(
+                            |e| e.message(t, _Any::new(true)))))?;
                     Ok(())
                 });
                 ac.start(syndicate::name!("dataspace")).await.unwrap().unwrap();
@@ -134,14 +134,18 @@ pub fn bench_pub(c: &mut Criterion) {
                         let debtor = t.debtor.clone();
                         t.actor.linked_task(syndicate::name!("sender"), async move {
                             for _ in 0..iters {
-                                external_event(&ds, &debtor, Event::Message(Box::new(Message {
-                                    body: Assertion(says(_Any::new("bench_pub"),
-                                                         Value::ByteString(vec![]).wrap())),
-                                }))).await?
+                                let ds = Arc::clone(&ds);
+                                external_event(&Arc::clone(&ds), &debtor, Box::new(
+                                    move |t| ds.with_entity(
+                                        |e| e.message(t, says(_Any::new("bench_pub"),
+                                                              Value::ByteString(vec![]).wrap())))))?
                             }
-                            external_event(&ds, &debtor, Event::Message(Box::new(Message {
-                                body: Assertion(_Any::new(true)),
-                            }))).await?;
+                            {
+                                let ds = Arc::clone(&ds);
+                                external_event(&Arc::clone(&ds), &debtor, Box::new(
+                                    move |t| ds.with_entity(
+                                        |e| e.message(t, _Any::new(true)))))?;
+                            }
                             Ok(())
                         });
                         Ok(())
