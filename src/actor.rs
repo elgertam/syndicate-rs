@@ -13,14 +13,16 @@ use preserves::value::Domain;
 use preserves::value::IOValue;
 use preserves::value::Map;
 use preserves::value::NestedValue;
+use preserves_schema::support::ParseError;
 
-use std::any::Any;
 use std::boxed::Box;
 use std::collections::hash_map::HashMap;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Weak;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use tokio::select;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
@@ -34,33 +36,33 @@ pub type Handle = u64;
 pub type ActorResult = Result<(), Error>;
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
-pub trait Entity: Send + std::marker::Sync {
-    fn as_any(&mut self) -> &mut dyn Any;
+pub struct Synced;
 
-    fn assert(&mut self, _t: &mut Activation, _a: _Any, _h: Handle) -> ActorResult {
+pub trait Entity<M>: Send + Sync {
+    fn assert(&mut self, _t: &mut Activation, _a: M, _h: Handle) -> ActorResult {
         Ok(())
     }
     fn retract(&mut self, _t: &mut Activation, _h: Handle) -> ActorResult {
         Ok(())
     }
-    fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
+    fn message(&mut self, _t: &mut Activation, _m: M) -> ActorResult {
         Ok(())
     }
-    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref>) -> ActorResult {
-        t.message(&peer, _Any::new(true));
+    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
+        t.message(&peer, Synced);
         Ok(())
     }
     fn turn_end(&mut self, _t: &mut Activation) -> ActorResult {
         Ok(())
     }
-    fn exit_hook(&mut self, _t: &mut Activation, _exit_status: &ActorResult) -> ActorResult {
+    fn exit_hook(&mut self, _t: &mut Activation, _exit_status: &Arc<ActorResult>) -> ActorResult {
         Ok(())
     }
 }
 
 enum Destination {
     ImmediateSelf(Action),
-    Remote(Arc<Ref>, Action),
+    Remote(Arc<Mailbox>, Action),
 }
 
 type OutboundAssertions = Map<Handle, Destination>;
@@ -98,63 +100,38 @@ enum SystemMessage {
 
 pub struct Mailbox {
     pub actor_id: ActorId,
-    pub mailbox_id: u64,
     tx: UnboundedSender<SystemMessage>,
-    mailbox_count: Arc<AtomicUsize>,
 }
 
 pub struct Actor {
     actor_id: ActorId,
     tx: UnboundedSender<SystemMessage>,
+    mailbox: Weak<Mailbox>,
     rx: Option<UnboundedReceiver<SystemMessage>>,
-    mailbox_count: Arc<AtomicUsize>,
     outbound_assertions: OutboundAssertions,
     next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
-    exit_hooks: Vec<Arc<Ref>>,
+    exit_hooks: Vec<Action>,
+    exit_status: Option<Arc<ActorResult>>,
 }
 
-pub struct ObjectAddress {
-    pub mailbox: Mailbox,
-    pub target: RwLock<Box<dyn Entity>>,
+pub struct Ref<M> {
+    pub mailbox: Arc<Mailbox>,
+    pub target: RwLock<Option<Box<dyn Entity<M>>>>,
 }
 
-impl ObjectAddress {
-    pub fn oid(&self) -> usize {
-        std::ptr::addr_of!(*self) as usize
-    }
-}
-
-impl PartialEq for ObjectAddress {
-    fn eq(&self, other: &Self) -> bool {
-        self.oid() == other.oid()
-    }
-}
-
-impl Eq for ObjectAddress {}
-
-impl std::hash::Hash for ObjectAddress {
-    fn hash<H>(&self, hash: &mut H) where H: std::hash::Hasher {
-        self.oid().hash(hash)
-    }
-}
-
-impl PartialOrd for ObjectAddress {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ObjectAddress {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.oid().cmp(&other.oid())
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Ref {
-    pub addr: Arc<ObjectAddress>,
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Cap {
+    pub underlying: Arc<Ref<_Any>>,
     pub attenuation: Vec<CheckedCaveat>,
+}
+
+pub struct Guard<M>
+where
+    for<'a> &'a M: Into<_Any>,
+    for<'a> M: TryFrom<&'a _Any>,
+{
+    underlying: Arc<Ref<M>>
 }
 
 //---------------------------------------------------------------------------
@@ -162,20 +139,6 @@ pub struct Ref {
 static NEXT_DEBTOR_ID: AtomicU64 = AtomicU64::new(4);
 
 preserves_schema::support::lazy_static! {
-    pub static ref INERT_REF: Arc<Ref> = {
-        struct InertEntity;
-        impl crate::actor::Entity for InertEntity {
-            fn as_any(&mut self) -> &mut dyn Any {
-                self
-            }
-        }
-        let mut ac = Actor::new();
-        let e = ac.create(InertEntity);
-        ac.boot(tracing::info_span!(parent: None, "INERT_REF"),
-                |t| Box::pin(ready(Ok(t.actor.shutdown()))));
-        e
-    };
-
     pub static ref SYNDICATE_CREDIT: i64 = {
         let credit =
             std::env::var("SYNDICATE_CREDIT").unwrap_or("100".to_owned())
@@ -204,6 +167,23 @@ pub fn start_debt_reporter() {
     }));
 }
 
+impl TryFrom<&_Any> for Synced {
+    type Error = ParseError;
+    fn try_from(value: &_Any) -> Result<Self, Self::Error> {
+        if let Some(true) = value.value().as_boolean() {
+            Ok(Synced)
+        } else {
+            Err(ParseError::conformance_error("Synced"))
+        }
+    }
+}
+
+impl From<&Synced> for _Any {
+    fn from(_value: &Synced) -> Self {
+        _Any::new(true)
+    }
+}
+
 impl<'activation> Activation<'activation> {
     pub fn new(actor: &'activation mut Actor, debtor: Arc<Debtor>) -> Self {
         Activation {
@@ -214,47 +194,43 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    fn immediate_oid(&self, r: &Arc<Ref>) {
-        if r.addr.mailbox.actor_id != self.actor.actor_id {
+    fn immediate_oid<M>(&self, r: &Arc<Ref<M>>) {
+        if r.mailbox.actor_id != self.actor.actor_id {
             panic!("Cannot use immediate_self to send to remote peers");
         }
     }
 
-    pub fn assert<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<_Any> {
+    pub fn assert<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         let handle = crate::next_handle();
-        if let Some(assertion) = r.rewrite(a.into()) {
-            {
-                let r = Arc::clone(r);
-                self.queue_for(&r).push(Box::new(
-                    move |t| r.with_entity(|e| e.assert(t, assertion, handle))));
-            }
-            {
-                let r = Arc::clone(r);
-                self.actor.outbound_assertions.insert(
-                    handle,
-                    Destination::Remote(Arc::clone(&r), Box::new(
-                        move |t| r.with_entity(|e| e.retract(t, handle)))));
-            }
+        {
+            let r = Arc::clone(r);
+            self.queue_for(&r).push(Box::new(
+                move |t| r.with_entity(|e| e.assert(t, a, handle))));
+        }
+        {
+            let r = Arc::clone(r);
+            self.actor.outbound_assertions.insert(
+                handle,
+                Destination::Remote(Arc::clone(&r.mailbox), Box::new(
+                    move |t| r.with_entity(|e| e.retract(t, handle)))));
         }
         handle
     }
 
-    pub fn assert_immediate_self<M>(&mut self, r: &Arc<Ref>, a: M) -> Handle where M: Into<_Any> {
+    pub fn assert_immediate_self<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         self.immediate_oid(r);
         let handle = crate::next_handle();
-        if let Some(assertion) = r.rewrite(a.into()) {
-            {
-                let r = Arc::clone(r);
-                self.immediate_self.push(Box::new(
-                    move |t| r.with_entity(|e| e.assert(t, assertion, handle))));
-            }
-            {
-                let r = Arc::clone(r);
-                self.actor.outbound_assertions.insert(
-                    handle,
-                    Destination::ImmediateSelf(Box::new(
-                        move |t| r.with_entity(|e| e.retract(t, handle)))));
-            }
+        {
+            let r = Arc::clone(r);
+            self.immediate_self.push(Box::new(
+                move |t| r.with_entity(|e| e.assert(t, a, handle))));
+        }
+        {
+            let r = Arc::clone(r);
+            self.actor.outbound_assertions.insert(
+                handle,
+                Destination::ImmediateSelf(Box::new(
+                    move |t| r.with_entity(|e| e.retract(t, handle)))));
         }
         handle
     }
@@ -267,39 +243,39 @@ impl<'activation> Activation<'activation> {
 
     fn retract_known_ref(&mut self, d: Destination) {
         match d {
-            Destination::Remote(r, action) =>
-                self.queue_for(&r).push(action),
+            Destination::Remote(mailbox, action) =>
+                self.queue_for_mailbox(&mailbox).push(action),
             Destination::ImmediateSelf(action) =>
                 self.immediate_self.push(action),
         }
     }
 
-    pub fn message<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<_Any> {
-        if let Some(body) = r.rewrite(m.into()) {
-            let r = Arc::clone(r);
-            self.queue_for(&r).push(Box::new(
-                move |t| r.with_entity(|e| e.message(t, body))))
-        }
+    pub fn message<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, m: M) {
+        let r = Arc::clone(r);
+        self.queue_for(&r).push(Box::new(
+            move |t| r.with_entity(|e| e.message(t, m))))
     }
 
-    pub fn message_immediate_self<M>(&mut self, r: &Arc<Ref>, m: M) where M: Into<_Any> {
+    pub fn message_immediate_self<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, m: M) {
         self.immediate_oid(r);
-        if let Some(body) = r.rewrite(m.into()) {
-            let r = Arc::clone(r);
-            self.immediate_self.push(Box::new(
-                move |t| r.with_entity(|e| e.message(t, body))))
-        }
+        let r = Arc::clone(r);
+        self.immediate_self.push(Box::new(
+            move |t| r.with_entity(|e| e.message(t, m))))
     }
 
-    pub fn sync(&mut self, r: &Arc<Ref>, peer: Arc<Ref>) {
+    pub fn sync<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
         let r = Arc::clone(r);
         self.queue_for(&r).push(Box::new(
             move |t| r.with_entity(|e| e.sync(t, peer))))
     }
 
-    fn queue_for(&mut self, r: &Arc<Ref>) -> &mut PendingEventQueue {
-        &mut self.queues.entry(r.addr.mailbox.actor_id)
-            .or_insert((r.addr.mailbox.tx.clone(), Vec::new())).1
+    fn queue_for<M>(&mut self, r: &Arc<Ref<M>>) -> &mut PendingEventQueue {
+        self.queue_for_mailbox(&r.mailbox)
+    }
+
+    fn queue_for_mailbox(&mut self, mailbox: &Arc<Mailbox>) -> &mut PendingEventQueue {
+        &mut self.queues.entry(mailbox.actor_id)
+            .or_insert((mailbox.tx.clone(), Vec::new())).1
     }
 
     fn deliver(&mut self) {
@@ -389,26 +365,26 @@ fn send_actions(
 
 impl std::fmt::Debug for Mailbox {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "#<Mailbox {}:{}>", self.actor_id, self.mailbox_id)
+        write!(f, "#<Mailbox {}>", self.actor_id)
     }
 }
 
 impl std::hash::Hash for Mailbox {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.mailbox_id.hash(state)
+        self.actor_id.hash(state)
     }
 }
 
 impl Eq for Mailbox {}
 impl PartialEq for Mailbox {
     fn eq(&self, other: &Mailbox) -> bool {
-        self.mailbox_id == other.mailbox_id
+        self.actor_id == other.actor_id
     }
 }
 
 impl Ord for Mailbox {
     fn cmp(&self, other: &Mailbox) -> std::cmp::Ordering {
-        return self.mailbox_id.cmp(&other.mailbox_id)
+        return self.actor_id.cmp(&other.actor_id)
     }
 }
 
@@ -418,33 +394,10 @@ impl PartialOrd for Mailbox {
     }
 }
 
-impl Clone for Mailbox {
-    fn clone(&self) -> Self {
-        let Mailbox { actor_id, tx, mailbox_count, .. } = self;
-        let _old_refcount = mailbox_count.fetch_add(1, Ordering::SeqCst);
-        let new_mailbox = Mailbox {
-            actor_id: *actor_id,
-            mailbox_id: crate::next_mailbox_id(),
-            tx: tx.clone(),
-            mailbox_count: Arc::clone(mailbox_count),
-        };
-        // tracing::trace!(old_mailbox = debug(&self),
-        //                 new_mailbox = debug(&new_mailbox),
-        //                 new_mailbox_refcount = debug(_old_refcount + 1));
-        new_mailbox
-    }
-}
-
 impl Drop for Mailbox {
     fn drop(&mut self) {
-        let old_mailbox_refcount = self.mailbox_count.fetch_sub(1, Ordering::SeqCst);
-        let new_mailbox_refcount = old_mailbox_refcount - 1;
-        // tracing::trace!(mailbox = debug(&self),
-        //                 new_mailbox_refcount);
-        if new_mailbox_refcount == 0 {
-            let _ = self.tx.send(SystemMessage::Release);
-            ()
-        }
+        let _ = self.tx.send(SystemMessage::Release);
+        ()
     }
 }
 
@@ -457,29 +410,27 @@ impl Actor {
             actor_id,
             tx,
             rx: Some(rx),
-            mailbox_count: Arc::new(AtomicUsize::new(0)),
+            mailbox: Weak::new(),
             outbound_assertions: Map::new(),
             next_task_id: 0,
             linked_tasks: Map::new(),
             exit_hooks: Vec::new(),
+            exit_status: None,
         }
     }
 
-    pub fn create_and_start<E: Entity + Send + std::marker::Sync + 'static>(
+    pub fn create_and_start<M, E: Entity<M> + Send + Sync + 'static>(
         name: tracing::Span,
         e: E,
-    ) -> Arc<Ref> {
-        Self::create_and_start_rec(name, e, |_, _, _| ())
+    ) -> Arc<Ref<M>> {
+        let r = Self::create_and_start_inert(name);
+        r.become_entity(e);
+        r
     }
 
-    pub fn create_and_start_rec<E: Entity + Send + std::marker::Sync + 'static,
-                                F: FnOnce(&mut Self, &mut E, &Arc<Ref>) -> ()>(
-        name: tracing::Span,
-        e: E,
-        f: F,
-    ) -> Arc<Ref> {
+    pub fn create_and_start_inert<M>(name: tracing::Span) -> Arc<Ref<M>> {
         let mut ac = Self::new();
-        let r = ac.create_rec(e, f);
+        let r = ac.create_inert();
         ac.start(name);
         r
     }
@@ -488,17 +439,18 @@ impl Actor {
         self.actor_id
     }
 
-    fn mailbox(&mut self) -> Mailbox {
-        let _old_refcount = self.mailbox_count.fetch_add(1, Ordering::SeqCst);
-        let new_mailbox = Mailbox {
-            actor_id: self.actor_id,
-            mailbox_id: crate::next_mailbox_id(),
-            tx: self.tx.clone(),
-            mailbox_count: Arc::clone(&self.mailbox_count),
-        };
-        // tracing::trace!(new_mailbox = debug(&new_mailbox),
-        //                 new_mailbox_refcount = debug(_old_refcount + 1));
-        new_mailbox
+    fn mailbox(&mut self) -> Arc<Mailbox> {
+        match self.mailbox.upgrade() {
+            None => {
+                let new_mailbox = Arc::new(Mailbox {
+                    actor_id: self.actor_id,
+                    tx: self.tx.clone(),
+                });
+                self.mailbox = Arc::downgrade(&new_mailbox);
+                new_mailbox
+            }
+            Some(m) => m
+        }
     }
 
     pub fn shutdown(&mut self) {
@@ -506,25 +458,17 @@ impl Actor {
         ()
     }
 
-    pub fn create<E: Entity + Send + std::marker::Sync + 'static>(&mut self, e: E) -> Arc<Ref> {
-        self.create_rec(e, |_, _, _| ())
+    pub fn create<M, E: Entity<M> + Send + Sync + 'static>(&mut self, e: E) -> Arc<Ref<M>> {
+        let r = self.create_inert();
+        r.become_entity(e);
+        r
     }
 
-    pub fn create_rec<E: Entity + Send + std::marker::Sync + 'static,
-                      F: FnOnce(&mut Self, &mut E, &Arc<Ref>) -> ()>(
-        &mut self,
-        e: E,
-        f: F,
-    ) -> Arc<Ref> {
-        let r = Arc::new(Ref {
-            addr: Arc::new(ObjectAddress {
-                mailbox: self.mailbox(),
-                target: RwLock::new(Box::new(e)),
-            }),
-            attenuation: Vec::new(),
-        });
-        f(self, r.addr.target.write().expect("unpoisoned").as_any().downcast_mut().unwrap(), &r);
-        r
+    pub fn create_inert<M>(&mut self) -> Arc<Ref<M>> {
+        Arc::new(Ref {
+            mailbox: self.mailbox(),
+            target: RwLock::new(None),
+        })
     }
 
     pub fn boot<F: 'static + Send + for<'a> FnOnce(&'a mut Activation) -> BoxFuture<'a, ActorResult>>(
@@ -536,13 +480,12 @@ impl Actor {
         tokio::spawn(async move {
             tracing::trace!("start");
             let result = self.run(boot).await;
+            self.exit_status = Some(Arc::new(result.clone()));
             {
                 let mut t = Activation::new(&mut self, Debtor::new(crate::name!("shutdown")));
-                for r in std::mem::take(&mut t.actor.exit_hooks) {
-                    if let Err(err) = r.with_entity(|e| e.exit_hook(&mut t, &result)) {
-                        tracing::error!(err = debug(err),
-                                        r = debug(&r),
-                                        "error in exit hook");
+                for action in std::mem::take(&mut t.actor.exit_hooks) {
+                    if let Err(err) = action(&mut t) {
+                        tracing::error!(err = debug(err), "error in exit hook");
                     }
                 }
             }
@@ -583,8 +526,12 @@ impl Actor {
         }
     }
 
-    pub fn add_exit_hook(&mut self, r: &Arc<Ref>) {
-        self.exit_hooks.push(Arc::clone(r))
+    pub fn add_exit_hook<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>) {
+        let r = Arc::clone(r);
+        self.exit_hooks.push(Box::new(move |t| {
+            let exit_status = Arc::clone(t.actor.exit_status.as_ref().expect("exited"));
+            r.with_entity(|e| e.exit_hook(t, &exit_status))
+        }))
     }
 
     async fn handle(&mut self, m: SystemMessage) -> Result<bool, Error> {
@@ -673,25 +620,89 @@ impl Drop for Actor {
 }
 
 #[must_use]
-pub fn external_event(r: &Arc<Ref>, debtor: &Arc<Debtor>, action: Action) -> ActorResult {
-    send_actions(&r.addr.mailbox.tx, debtor, vec![action])
+pub fn external_event(mailbox: &Arc<Mailbox>, debtor: &Arc<Debtor>, action: Action) -> ActorResult {
+    send_actions(&mailbox.tx, debtor, vec![action])
 }
 
 #[must_use]
-pub fn external_events(r: &Arc<Ref>, debtor: &Arc<Debtor>, events: PendingEventQueue) -> ActorResult {
-    send_actions(&r.addr.mailbox.tx, debtor, events)
+pub fn external_events(mailbox: &Arc<Mailbox>, debtor: &Arc<Debtor>, events: PendingEventQueue) -> ActorResult {
+    send_actions(&mailbox.tx, debtor, events)
 }
 
-impl Ref {
-    pub fn with_entity<R, F: FnOnce(&mut dyn Entity) -> R>(&self, f: F) -> R {
-        f(&mut **self.addr.target.write().expect("unpoisoned"))
+impl<M> Ref<M> {
+    pub fn become_entity<E: 'static + Entity<M>>(&self, e: E) {
+        let mut g = self.target.write().expect("unpoisoned");
+        if g.is_some() {
+            panic!("Double initialization of Ref");
+        }
+        *g = Some(Box::new(e));
+    }
+
+    pub fn with_entity<R, F: FnOnce(&mut dyn Entity<M>) -> R>(&self, f: F) -> R {
+        let mut g = self.target.write().expect("unpoisoned");
+        f(g.as_mut().expect("initialized").as_mut())
+    }
+}
+
+impl<M> Ref<M> {
+    pub fn oid(&self) -> usize {
+        std::ptr::addr_of!(*self) as usize
+    }
+}
+
+impl<M> PartialEq for Ref<M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.oid() == other.oid()
+    }
+}
+
+impl<M> Eq for Ref<M> {}
+
+impl<M> std::hash::Hash for Ref<M> {
+    fn hash<H>(&self, hash: &mut H) where H: std::hash::Hasher {
+        self.oid().hash(hash)
+    }
+}
+
+impl<M> PartialOrd for Ref<M> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<M> Ord for Ref<M> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.oid().cmp(&other.oid())
+    }
+}
+
+impl<M> std::fmt::Debug for Ref<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "⌜{}:{:016x}⌝", self.mailbox.actor_id, self.oid())
+    }
+}
+
+impl Cap {
+    pub fn guard<M: 'static + Send + Sync>(underlying: &Arc<Ref<M>>) -> Arc<Self>
+    where
+        for<'a> &'a M: Into<_Any>,
+        for<'a> M: TryFrom<&'a _Any>,
+    {
+        Self::new(&Arc::new(Ref {
+            mailbox: Arc::clone(&underlying.mailbox),
+            target: RwLock::new(Some(Box::new(Guard { underlying: underlying.clone() }))),
+        }))
+    }
+
+    pub fn new(underlying: &Arc<Ref<_Any>>) -> Arc<Self> {
+        Arc::new(Cap {
+            underlying: Arc::clone(underlying),
+            attenuation: Vec::new(),
+        })
     }
 
     pub fn attenuate(&self, attenuation: &sturdy::Attenuation) -> Result<Arc<Self>, CaveatError> {
-        let mut r = Ref {
-            addr: Arc::clone(&self.addr),
-            attenuation: self.attenuation.clone(),
-        };
+        let mut r = Cap { attenuation: self.attenuation.clone(), .. self.clone() };
         r.attenuation.extend(attenuation.check()?);
         Ok(Arc::new(r))
     }
@@ -705,30 +716,74 @@ impl Ref {
         }
         Some(a)
     }
-}
 
-impl std::fmt::Debug for Ref {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        if self.attenuation.is_empty() {
-            write!(f, "⌜{}:{:016x}⌝", self.addr.mailbox.actor_id, self.addr.oid())
-        } else {
-            write!(f, "⌜{}:{:016x}\\{:?}⌝", self.addr.mailbox.actor_id, self.addr.oid(), self.attenuation)
+    pub fn assert<M: Into<_Any>>(&self, t: &mut Activation, m: M) -> Option<Handle> {
+        self.rewrite(m.into()).map(|m| t.assert(&self.underlying, m))
+    }
+
+    pub fn message<M: Into<_Any>>(&self, t: &mut Activation, m: M) {
+        if let Some(m) = self.rewrite(m.into()) {
+            t.message(&self.underlying, m)
         }
     }
 }
 
-impl Domain for Ref {}
-
-impl std::convert::TryFrom<&IOValue> for Ref {
-    type Error = preserves_schema::support::ParseError;
-    fn try_from(_v: &IOValue) -> Result<Self, Self::Error> {
-        panic!("Attempted to serialize Ref via IOValue");
+impl std::fmt::Debug for Cap {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        if self.attenuation.is_empty() {
+            self.underlying.fmt(f)
+        } else {
+            write!(f, "⌜{}:{:016x}\\{:?}⌝",
+                   self.underlying.mailbox.actor_id,
+                   self.underlying.oid(),
+                   self.attenuation)
+        }
     }
 }
 
-impl std::convert::From<&Ref> for IOValue {
-    fn from(_v: &Ref) -> IOValue {
+impl Domain for Cap {}
+
+impl std::convert::TryFrom<&IOValue> for Cap {
+    type Error = preserves_schema::support::ParseError;
+    fn try_from(_v: &IOValue) -> Result<Self, Self::Error> {
+        panic!("Attempted to serialize Cap via IOValue");
+    }
+}
+
+impl std::convert::From<&Cap> for IOValue {
+    fn from(_v: &Cap) -> IOValue {
         panic!("Attempted to deserialize Ref via IOValue");
+    }
+}
+
+impl<M> Entity<_Any> for Guard<M>
+where
+    for<'a> &'a M: Into<_Any>,
+    for<'a> M: TryFrom<&'a _Any>,
+{
+    fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
+        match M::try_from(&a) {
+            Ok(a) => self.underlying.with_entity(|e| e.assert(t, a, h)),
+            Err(_) => Ok(()),
+        }
+    }
+    fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
+        self.underlying.with_entity(|e| e.retract(t, h))
+    }
+    fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
+        match M::try_from(&m) {
+            Ok(m) => self.underlying.with_entity(|e| e.message(t, m)),
+            Err(_) => Ok(()),
+        }
+    }
+    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
+        self.underlying.with_entity(|e| e.sync(t, peer))
+    }
+    fn turn_end(&mut self, t: &mut Activation) -> ActorResult {
+        self.underlying.with_entity(|e| e.turn_end(t))
+    }
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
+        self.underlying.with_entity(|e| e.exit_hook(t, exit_status))
     }
 }
 

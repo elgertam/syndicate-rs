@@ -60,10 +60,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     s.arrival_counter = 0;
                     s.departure_counter = 0;
                     Ok(())
-                }).create(t.actor)
+                }).create_cap(t.actor)
             };
 
-            t.assert(&ds, &Observe {
+            ds.assert(t, &Observe {
                 pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
                     ctor: Box::new(p::CRec {
                         label: Value::symbol("Present").wrap(),
@@ -84,9 +84,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     stats_timer.tick().await;
                     let consumer = Arc::clone(&consumer);
-                    external_event(&Arc::clone(&consumer),
+                    external_event(&Arc::clone(&consumer.underlying.mailbox),
                                    &Debtor::new(syndicate::name!("debtor")),
-                                   Box::new(move |t| consumer.with_entity(
+                                   Box::new(move |t| consumer.underlying.with_entity(
                                        |e| e.message(t, _Any::new(true)))))?;
                 }
             });

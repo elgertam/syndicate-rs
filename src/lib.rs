@@ -37,8 +37,3 @@ static NEXT_HANDLE: AtomicU64 = AtomicU64::new(3);
 pub fn next_handle() -> Handle {
     NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
-
-static NEXT_MAILBOX_ID: AtomicU64 = AtomicU64::new(4);
-pub fn next_mailbox_id() -> u64 {
-    NEXT_MAILBOX_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
-}

@@ -1,6 +1,6 @@
 use super::bag;
 
-use preserves::value::{Map, Set, Value, NestedValue};
+use preserves::value::{Map, NestedValue, Set, Value};
 use std::collections::btree_map::Entry;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::actor::_Any;
 use crate::actor::Activation;
 use crate::actor::Handle;
-use crate::actor::Ref;
+use crate::actor::Cap;
 use crate::schemas::dataspace_patterns as ds;
 use crate::pattern::{self, PathStep, Path, Paths};
 
@@ -58,7 +58,7 @@ struct Leaf { // aka Topic
 #[derive(Debug)]
 struct Endpoints {
     cached_captures: Bag<Captures>,
-    endpoints: Map<Arc<Ref>, Map<Captures, Handle>>,
+    endpoints: Map<Arc<Cap>, Map<Captures, Handle>>,
 }
 
 //---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ impl Index {
         &mut self,
         t: &mut Activation,
         pat: &ds::Pattern,
-        observer: &Arc<Ref>,
+        observer: &Arc<Cap>,
     ) {
         let analysis = pattern::PatternAnalysis::new(pat);
         self.root.extend(pat).add_observer(t, &analysis, observer);
@@ -87,7 +87,7 @@ impl Index {
         &mut self,
         t: &mut Activation,
         pat: ds::Pattern,
-        observer: &Arc<Ref>,
+        observer: &Arc<Cap>,
     ) {
         let analysis = pattern::PatternAnalysis::new(&pat);
         self.root.extend(&pat).remove_observer(t, analysis, observer);
@@ -106,7 +106,9 @@ impl Index {
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), 1) == bag::Net::AbsentToPresent {
                             for (observer, capture_map) in &mut es.endpoints {
-                                capture_map.insert(cs.clone(), t.assert(observer, cs.clone()));
+                                if let Some(h) = observer.assert(t, cs.clone()) {
+                                    capture_map.insert(cs.clone(), h);
+                                }
                             }
                         }
                     })
@@ -151,7 +153,7 @@ impl Index {
             |es, cs| {
                 *delivery_count += es.endpoints.len();
                 for observer in es.endpoints.keys() {
-                    t.message(observer, cs.clone());
+                    observer.message(t, cs.clone());
                 }
             }).perform(&mut self.root);
     }
@@ -389,7 +391,7 @@ impl Continuation {
         &mut self,
         t: &mut Activation,
         analysis: &pattern::PatternAnalysis,
-        observer: &Arc<Ref>,
+        observer: &Arc<Cap>,
     ) {
         let cached_assertions = &self.cached_assertions;
         let const_val_map =
@@ -418,7 +420,9 @@ impl Continuation {
         });
         let mut capture_map = Map::new();
         for cs in endpoints.cached_captures.keys() {
-            capture_map.insert(cs.clone(), t.assert(observer, cs.clone()));
+            if let Some(h) = observer.assert(t, cs.clone()) {
+                capture_map.insert(cs.clone(), h);
+            }
         }
         endpoints.endpoints.insert(observer.clone(), capture_map);
     }
@@ -427,7 +431,7 @@ impl Continuation {
         &mut self,
         t: &mut Activation,
         analysis: pattern::PatternAnalysis,
-        observer: &Arc<Ref>,
+        observer: &Arc<Cap>,
     ) {
         if let Entry::Occupied(mut const_val_map_entry)
             = self.leaf_map.entry(analysis.const_paths)

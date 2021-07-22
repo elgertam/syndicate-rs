@@ -114,58 +114,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut rtt_ns_samples: Vec<u64> = vec![0; report_latency_every];
                 let mut rtt_batch_count: usize = 0;
                 let mut current_reply = None;
-                syndicate::entity(Arc::clone(&*INERT_REF))
-                    .on_message(move |self_ref, t, m| {
-                        match m.value().as_boolean() {
-                            Some(true) => {
-                                tracing::info!("{:?} turns, {:?} events in the last second",
-                                               turn_counter,
-                                               event_counter);
-                                turn_counter = 0;
-                                event_counter = 0;
-                            }
-                            Some(false) => {
-                                current_reply = None;
-                            }
-                            None => {
-                                event_counter += 1;
-                                let bindings = m.value().to_sequence()?;
-                                let timestamp = &bindings[0];
-                                let padding = &bindings[1];
+                let self_ref = t.actor.create_inert();
+                self_ref.become_entity(
+                    syndicate::entity(Arc::clone(&self_ref))
+                        .on_message(move |self_ref, t, m: _Any| {
+                            match m.value().as_boolean() {
+                                Some(true) => {
+                                    tracing::info!("{:?} turns, {:?} events in the last second",
+                                                   turn_counter,
+                                                   event_counter);
+                                    turn_counter = 0;
+                                    event_counter = 0;
+                                }
+                                Some(false) => {
+                                    current_reply = None;
+                                }
+                                None => {
+                                    event_counter += 1;
+                                    let bindings = m.value().to_sequence()?;
+                                    let timestamp = &bindings[0];
+                                    let padding = &bindings[1];
 
-                                if should_echo || (report_latency_every == 0) {
-                                    t.message(&ds, simple_record2(&send_label,
-                                                                    timestamp.clone(),
-                                                                    padding.clone()));
-                                } else {
-                                    if let None = current_reply {
-                                        turn_counter += 1;
-                                        t.message_immediate_self(&self_ref, _Any::new(false));
-                                        let rtt_ns = now() - timestamp.value().to_u64()?;
-                                        rtt_ns_samples[rtt_batch_count] = rtt_ns;
-                                        rtt_batch_count += 1;
+                                    if should_echo || (report_latency_every == 0) {
+                                        ds.message(t, simple_record2(&send_label,
+                                                                     timestamp.clone(),
+                                                                     padding.clone()));
+                                    } else {
+                                        if let None = current_reply {
+                                            turn_counter += 1;
+                                            t.message_immediate_self(&self_ref, _Any::new(false));
+                                            let rtt_ns = now() - timestamp.value().to_u64()?;
+                                            rtt_ns_samples[rtt_batch_count] = rtt_ns;
+                                            rtt_batch_count += 1;
 
-                                        if rtt_batch_count == report_latency_every {
-                                            rtt_ns_samples.sort();
-                                            report_latencies(&rtt_ns_samples);
-                                            rtt_batch_count = 0;
+                                            if rtt_batch_count == report_latency_every {
+                                                rtt_ns_samples.sort();
+                                                report_latencies(&rtt_ns_samples);
+                                                rtt_batch_count = 0;
+                                            }
+
+                                            current_reply = Some(
+                                                simple_record2(&send_label,
+                                                               Value::from(now()).wrap(),
+                                                               padding.clone()));
                                         }
-
-                                        current_reply = Some(
-                                            simple_record2(&send_label,
-                                                           Value::from(now()).wrap(),
-                                                           padding.clone()));
+                                        ds.message(t, current_reply.as_ref().expect("some reply").clone());
                                     }
-                                    t.message(&ds, current_reply.as_ref().expect("some reply").clone());
                                 }
                             }
-                        }
-                        Ok(())
-                    })
-                    .create_rec(t.actor, |_ac, self_ref, e_ref| *self_ref = Arc::clone(e_ref))
+                            Ok(())
+                        }));
+                Cap::new(&self_ref)
             };
 
-            t.assert(&ds, &Observe {
+            ds.assert(t, &Observe {
                 pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
                     ctor: Box::new(p::CRec {
                         label: Value::symbol(recv_label).wrap(),
@@ -190,9 +192,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     stats_timer.tick().await;
                     let consumer = Arc::clone(&consumer);
-                    external_event(&Arc::clone(&consumer),
+                    external_event(&Arc::clone(&consumer.underlying.mailbox),
                                    &Debtor::new(syndicate::name!("debtor")),
-                                   Box::new(move |t| consumer.with_entity(
+                                   Box::new(move |t| consumer.underlying.with_entity(
                                        |e| e.message(t, _Any::new(true)))))?;
                 }
             });
@@ -211,10 +213,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         for _ in 0..action_count {
                             let ds = Arc::clone(&ds);
                             let current_rec = current_rec.clone();
-                            events.push(Box::new(move |t| ds.with_entity(
+                            events.push(Box::new(move |t| ds.underlying.with_entity(
                                 |e| e.message(t, current_rec))));
                         }
-                        external_events(&ds, &debtor, events)?
+                        external_events(&ds.underlying.mailbox, &debtor, events)?
                     }
                     Ok(())
                 });

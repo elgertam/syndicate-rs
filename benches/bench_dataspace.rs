@@ -1,6 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use std::any::Any;
 use std::iter::FromIterator;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -29,10 +28,7 @@ fn says(who: _Any, what: _Any) -> _Any {
 
 struct ShutdownEntity;
 
-impl Entity for ShutdownEntity {
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
+impl Entity<_Any> for ShutdownEntity {
     fn message(&mut self, t: &mut Activation, _m: _Any) -> ActorResult {
         t.actor.shutdown();
         Ok(())
@@ -63,12 +59,12 @@ pub fn bench_pub(c: &mut Criterion) {
                 ac.linked_task(syndicate::name!("sender"), async move {
                     for _ in 0..iters {
                         let ds = Arc::clone(&ds);
-                        external_event(&Arc::clone(&ds), &debtor, Box::new(
+                        external_event(&Arc::clone(&ds.mailbox), &debtor, Box::new(
                             move |t| ds.with_entity(
                                 |e| e.message(t, says(_Any::new("bench_pub"),
                                                       Value::ByteString(vec![]).wrap())))))?
                     }
-                    external_event(&Arc::clone(&shutdown), &debtor, Box::new(
+                    external_event(&Arc::clone(&shutdown.mailbox), &debtor, Box::new(
                         move |t| shutdown.with_entity(
                             |e| e.message(t, _Any::new(true)))))?;
                     Ok(())
@@ -83,14 +79,11 @@ pub fn bench_pub(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let start = Instant::now();
             rt.block_on(async move {
-                let ds = Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new());
+                let ds = Cap::new(&Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));
                 let turn_count = Arc::new(AtomicU64::new(0));
 
                 struct Receiver(Arc<AtomicU64>);
-                impl Entity for Receiver {
-                    fn as_any(&mut self) -> &mut dyn Any {
-                        self
-                    }
+                impl Entity<_Any> for Receiver {
                     fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
                         self.0.fetch_add(1, Ordering::Relaxed);
                         Ok(())
@@ -98,13 +91,13 @@ pub fn bench_pub(c: &mut Criterion) {
                 }
 
                 let mut ac = Actor::new();
-                let shutdown = ac.create(ShutdownEntity);
-                let receiver = ac.create(Receiver(Arc::clone(&turn_count)));
+                let shutdown = Cap::new(&ac.create(ShutdownEntity));
+                let receiver = Cap::new(&ac.create(Receiver(Arc::clone(&turn_count))));
 
                 {
                     let iters = iters.clone();
                     ac.boot(syndicate::name!("dataspace"), move |t| Box::pin(async move {
-                        t.assert(&ds, &Observe {
+                        ds.assert(t, &Observe {
                             pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
                                 ctor: Box::new(p::CRec {
                                     label: Value::symbol("Says").wrap(),
@@ -122,7 +115,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             })),
                             observer: receiver,
                         });
-                        t.assert(&ds, &Observe {
+                        ds.assert(t, &Observe {
                             pattern: p::Pattern::DBind(Box::new(p::DBind {
                                 name: "shutdownTrigger".to_owned(),
                                 pattern: p::Pattern::DLit(Box::new(p::DLit {
@@ -135,15 +128,15 @@ pub fn bench_pub(c: &mut Criterion) {
                         t.actor.linked_task(syndicate::name!("sender"), async move {
                             for _ in 0..iters {
                                 let ds = Arc::clone(&ds);
-                                external_event(&Arc::clone(&ds), &debtor, Box::new(
-                                    move |t| ds.with_entity(
+                                external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
+                                    move |t| ds.underlying.with_entity(
                                         |e| e.message(t, says(_Any::new("bench_pub"),
                                                               Value::ByteString(vec![]).wrap())))))?
                             }
                             {
                                 let ds = Arc::clone(&ds);
-                                external_event(&Arc::clone(&ds), &debtor, Box::new(
-                                    move |t| ds.with_entity(
+                                external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
+                                    move |t| ds.underlying.with_entity(
                                         |e| e.message(t, _Any::new(true)))))?;
                             }
                             Ok(())

@@ -16,7 +16,7 @@ impl std::fmt::Display for Error {
 pub fn error<Detail>(message: &str, detail: Detail) -> Error where _Any: From<Detail> {
     Error {
         message: message.to_owned(),
-        detail: detail.into(),
+        detail: _Any::from(detail),
     }
 }
 

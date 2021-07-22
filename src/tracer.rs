@@ -1,29 +1,32 @@
 use crate::actor::*;
 
-use preserves::value::NestedValue;
-
-use std::any::Any;
+use std::fmt::Debug;
 use std::sync::Arc;
 
 struct Tracer(tracing::Span);
 
-fn set_name_oid(_ac: &mut Actor, t: &mut Tracer, r: &Arc<Ref>) {
-    t.0.record("oid", &tracing::field::display(&r.addr.oid()));
+fn set_name_oid<M>(t: &mut Tracer, r: &Arc<Ref<M>>) {
+    t.0.record("oid", &tracing::field::display(&r.oid()));
 }
 
-pub fn tracer(ac: &mut Actor, name: tracing::Span) -> Arc<Ref> {
-    ac.create_rec(Tracer(name), set_name_oid)
+pub fn tracer<M: Debug>(ac: &mut Actor, name: tracing::Span) -> Arc<Ref<M>> {
+    let mut e = Tracer(name);
+    let r = ac.create_inert();
+    set_name_oid(&mut e, &r);
+    r.become_entity(e);
+    r
 }
 
-pub fn tracer_top(name: tracing::Span) -> Arc<Ref> {
-    Actor::create_and_start_rec(crate::name!(parent: None, "tracer"), Tracer(name), set_name_oid)
+pub fn tracer_top<M: Debug>(name: tracing::Span) -> Arc<Ref<M>> {
+    let mut e = Tracer(name);
+    let r = Actor::create_and_start_inert(crate::name!(parent: None, "tracer"));
+    set_name_oid(&mut e, &r);
+    r.become_entity(e);
+    r
 }
 
-impl Entity for Tracer {
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
-    fn assert(&mut self, _t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
+impl<M: Debug> Entity<M> for Tracer {
+    fn assert(&mut self, _t: &mut Activation, a: M, h: Handle) -> ActorResult {
         let _guard = self.0.enter();
         tracing::trace!(a = debug(&a), h = debug(&h), "assert");
         Ok(())
@@ -33,15 +36,15 @@ impl Entity for Tracer {
         tracing::trace!(h = debug(&h), "retract");
         Ok(())
     }
-    fn message(&mut self, _t: &mut Activation, m: _Any) -> ActorResult {
+    fn message(&mut self, _t: &mut Activation, m: M) -> ActorResult {
         let _guard = self.0.enter();
         tracing::trace!(m = debug(&m), "message");
         Ok(())
     }
-    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref>) -> ActorResult {
+    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
         let _guard = self.0.enter();
         tracing::trace!(peer = debug(&peer), "sync");
-        t.message(&peer, _Any::new(true));
+        t.message(&peer, Synced);
         Ok(())
     }
 }

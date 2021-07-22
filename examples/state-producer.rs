@@ -33,14 +33,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let ds = Arc::clone(&ds);
                     let presence = presence.clone();
                     let handle = handle.clone();
-                    external_event(&Arc::clone(&ds), &debtor, Box::new(
-                        move |t| ds.with_entity(|e| e.assert(t, presence, handle))))
+                    external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
+                        move |t| ds.underlying.with_entity(|e| e.assert(t, presence, handle))))
                 };
                 let retract_e = || {
                     let ds = Arc::clone(&ds);
                     let handle = handle.clone();
-                    external_event(&Arc::clone(&ds), &debtor, Box::new(
-                        move |t| ds.with_entity(|e| e.retract(t, handle))))
+                    external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
+                        move |t| ds.underlying.with_entity(|e| e.retract(t, handle))))
                 };
                 assert_e()?;
                 loop {

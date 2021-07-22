@@ -1,8 +1,0 @@
-version 1 .
-embeddedType EntityRef.Ref .
-
-RelayProtocol = Input / Output / SyncGc / =flush .
-
-Input = =eof / <packet @bs bytes> / <segment @bs bytes>.
-Output = <event @oid sturdy.Oid @event internalProtocol.Event>.
-SyncGc = <sync-gc @peer #!#t>.

@@ -5,8 +5,6 @@ use preserves::value::Map;
 use preserves::value::NestedValue;
 use preserves::value::Value;
 
-use std::any::Any;
-use std::convert::TryFrom;
 use std::future::ready;
 use std::iter::FromIterator;
 use std::sync::Arc;
@@ -21,6 +19,7 @@ use syndicate::error::error;
 use syndicate::config;
 use syndicate::relay;
 use syndicate::schemas::internal_protocol::_Any;
+use syndicate::schemas::gatekeeper;
 use syndicate::sturdy;
 
 use tokio::net::TcpListener;
@@ -72,10 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::trace!("startup");
 
-    let ds = Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new());
-    let gateway = Actor::create_and_start(
+    let ds = Cap::new(&Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));
+    let gateway = Cap::guard(&Actor::create_and_start(
         syndicate::name!("gateway"),
-        syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve));
+        syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve)));
     {
         let ds = Arc::clone(&ds);
         Actor::new().boot(syndicate::name!("rootcap"), |t| Box::pin(async move {
@@ -84,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let sr = sturdy::SturdyRef::mint(_Any::new("syndicate"), &key);
             tracing::info!(rootcap = debug(&_Any::from(&sr)));
             tracing::info!(rootcap = display(sr.to_hex()));
-            t.assert(&ds, &gatekeeper::Bind { oid: sr.oid.clone(), key, target: ds.clone() });
+            ds.assert(t, &gatekeeper::Bind { oid: sr.oid.clone(), key, target: ds.clone() });
             Ok(())
         }));
     }
@@ -131,7 +130,7 @@ fn extract_binary_packets(
 async fn run_connection(
     t: &mut Activation<'_>,
     stream: TcpStream,
-    gateway: Arc<Ref>,
+    gateway: Arc<Cap>,
     addr: std::net::SocketAddr,
     config: Arc<config::ServerConfig>,
 ) -> ActorResult {
@@ -158,11 +157,8 @@ async fn run_connection(
         _ => unreachable!()
     };
     struct ExitListener;
-    impl Entity for ExitListener {
-        fn as_any(&mut self) -> &mut dyn Any {
-            self
-        }
-        fn exit_hook(&mut self, _t: &mut Activation, exit_status: &ActorResult) -> ActorResult {
+    impl Entity<()> for ExitListener {
+        fn exit_hook(&mut self, _t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
             tracing::info!(exit_status = debug(exit_status), "disconnect");
             Ok(())
         }
@@ -174,7 +170,7 @@ async fn run_connection(
 }
 
 async fn run_listener(
-    gateway: Arc<Ref>,
+    gateway: Arc<Cap>,
     port: u16,
     config: Arc<config::ServerConfig>,
 ) -> ActorResult {
@@ -193,59 +189,65 @@ async fn run_listener(
 
 //---------------------------------------------------------------------------
 
-fn handle_resolve(ds: &mut Arc<Ref>, t: &mut Activation, a: _Any) -> DuringResult<Arc<Ref>> {
+fn handle_resolve(
+    ds: &mut Arc<Cap>,
+    t: &mut Activation,
+    a: gatekeeper::Resolve,
+) -> DuringResult<Arc<Cap>> {
     use syndicate::schemas::dataspace;
     use syndicate::schemas::dataspace_patterns as p;
-    use syndicate::schemas::gatekeeper;
-    match gatekeeper::Resolve::try_from(&a) {
-        Err(_) => Ok(None),
-        Ok(gatekeeper::Resolve { sturdyref, observer }) => {
-            let queried_oid = sturdyref.oid.clone();
-            let handler = syndicate::entity(observer)
-                .on_asserted(move |observer, t, a| {
-                    let bindings = a.value().to_sequence()?;
-                    let key = bindings[0].value().to_bytestring()?;
-                    let unattenuated_target = bindings[1].value().to_embedded()?;
-                    match sturdyref.validate_and_attenuate(key, unattenuated_target) {
-                        Err(e) => {
-                            tracing::warn!(sturdyref = debug(&_Any::from(&sturdyref)),
-                                           "sturdyref failed validation: {}", e);
-                            Ok(None)
-                        },
-                        Ok(target) => {
-                            tracing::trace!(sturdyref = debug(&_Any::from(&sturdyref)),
-                                            target = debug(&target),
-                                            "sturdyref resolved");
-                            let h = t.assert(observer, _Any::domain(target));
-                            Ok(Some(Box::new(move |_observer, t| Ok(t.retract(h)))))
-                        }
+
+    let gatekeeper::Resolve { sturdyref, observer } = a;
+    let queried_oid = sturdyref.oid.clone();
+    let handler = syndicate::entity(observer)
+        .on_asserted(move |observer, t, a: _Any| {
+            let bindings = a.value().to_sequence()?;
+            let key = bindings[0].value().to_bytestring()?;
+            let unattenuated_target = bindings[1].value().to_embedded()?;
+            match sturdyref.validate_and_attenuate(key, unattenuated_target) {
+                Err(e) => {
+                    tracing::warn!(sturdyref = debug(&_Any::from(&sturdyref)),
+                                   "sturdyref failed validation: {}", e);
+                    Ok(None)
+                },
+                Ok(target) => {
+                    tracing::trace!(sturdyref = debug(&_Any::from(&sturdyref)),
+                                    target = debug(&target),
+                                    "sturdyref resolved");
+                    if let Some(h) = observer.assert(t, _Any::domain(target)) {
+                        Ok(Some(Box::new(move |_observer, t| Ok(t.retract(h)))))
+                    } else {
+                        Ok(None)
                     }
-                })
-                .create(t.actor);
-            let oh = t.assert(ds, &dataspace::Observe {
-                // TODO: codegen plugin to generate pattern constructors
-                pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
-                    ctor: Box::new(p::CRec {
-                        label: Value::symbol("bind").wrap(),
-                        arity: 3.into(),
-                    }),
-                    members: Map::from_iter(vec![
-                        (0.into(), p::Pattern::DLit(Box::new(p::DLit {
-                            value: queried_oid,
-                        }))),
-                        (1.into(), p::Pattern::DBind(Box::new(p::DBind {
-                            name: "key".to_owned(),
-                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                        }))),
-                        (2.into(), p::Pattern::DBind(Box::new(p::DBind {
-                            name: "target".to_owned(),
-                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                        }))),
-                    ].into_iter())
-                })),
-                observer: handler,
-            });
-            Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))
-        }
+                }
+            }
+        })
+        .create_cap(t.actor);
+    if let Some(oh) = ds.assert(t, &dataspace::Observe {
+        // TODO: codegen plugin to generate pattern constructors
+        pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
+            ctor: Box::new(p::CRec {
+                label: Value::symbol("bind").wrap(),
+                arity: 3.into(),
+            }),
+            members: Map::from_iter(vec![
+                (0.into(), p::Pattern::DLit(Box::new(p::DLit {
+                    value: queried_oid,
+                }))),
+                (1.into(), p::Pattern::DBind(Box::new(p::DBind {
+                    name: "key".to_owned(),
+                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                }))),
+                (2.into(), p::Pattern::DBind(Box::new(p::DBind {
+                    name: "target".to_owned(),
+                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                }))),
+            ].into_iter())
+        })),
+        observer: handler,
+    }) {
+        Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))
+    } else {
+        Ok(None)
     }
 }

@@ -11,8 +11,7 @@ fn main() -> Result<(), Error> {
     let mut c = CompilerConfig::new(gen_dir, "crate::schemas".to_owned());
     c.module_aliases.insert(vec!["EntityRef".to_owned()], "crate::actor".to_owned());
 
-    let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned(),
-                                     "local-protocols/schema-bundle.bin".to_owned()])?;
+    let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
     c.load_schemas_and_bundles(&inputs)?;
     compile(&c)
 }

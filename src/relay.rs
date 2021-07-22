@@ -8,7 +8,6 @@ use crate::error::error;
 use crate::schemas::gatekeeper;
 use crate::schemas::internal_protocol as P;
 use crate::schemas::sturdy;
-use crate::schemas::tunnel_relay;
 
 use futures::Sink;
 use futures::SinkExt;
@@ -34,7 +33,6 @@ use preserves::value::signed_integer::SignedInteger;
 use preserves_schema::support::Deserialize;
 use preserves_schema::support::ParseError;
 
-use std::any::Any;
 use std::convert::TryFrom;
 use std::io;
 use std::pin::Pin;
@@ -49,15 +47,28 @@ use tokio::io::AsyncWriteExt;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
 
+enum RelayInput {
+    Eof,
+    Packet(Vec<u8>),
+    Segment(Vec<u8>),
+}
+
+enum RelayProtocol {
+    Input(RelayInput),
+    Output(sturdy::Oid, P::Event),
+    SyncGc(Arc<Cap>),
+    Flush,
+}
+
 struct WireSymbol {
     oid: sturdy::Oid,
-    obj: Arc<Ref>,
+    obj: Arc<Cap>,
     ref_count: AtomicUsize,
 }
 
 struct Membrane {
     oid_map: Map<sturdy::Oid, Arc<WireSymbol>>,
-    ref_map: Map<Arc<Ref>, Arc<WireSymbol>>,
+    ref_map: Map<Arc<Cap>, Arc<WireSymbol>>,
 }
 
 struct Membranes {
@@ -76,10 +87,12 @@ pub enum Output {
     Bytes(Pin<Box<dyn AsyncWrite + Send>>),
 }
 
+type TunnelRelayRef = Arc<Ref<RelayProtocol>>;
+
 // There are other kinds of relay. This one has exactly two participants connected to each other.
 pub struct TunnelRelay
 {
-    self_ref: Arc<Ref>,
+    self_ref: TunnelRelayRef,
     input_buffer: BytesMut,
     inbound_assertions: Map</* remote */ P::Handle, (/* local */ Handle, Vec<Arc<WireSymbol>>)>,
     outbound_assertions: Map<P::Handle, Vec<Arc<WireSymbol>>>,
@@ -89,7 +102,7 @@ pub struct TunnelRelay
 }
 
 struct RelayEntity {
-    relay_ref: Arc<Ref>,
+    relay_ref: TunnelRelayRef,
     oid: sturdy::Oid,
 }
 
@@ -113,7 +126,7 @@ impl Membrane {
         }
     }
 
-    fn insert(&mut self, oid: sturdy::Oid, obj: Arc<Ref>) -> Arc<WireSymbol> {
+    fn insert(&mut self, oid: sturdy::Oid, obj: Arc<Cap>) -> Arc<WireSymbol> {
         let ws = Arc::new(WireSymbol {
             oid: oid.clone(),
             obj: Arc::clone(&obj),
@@ -124,7 +137,7 @@ impl Membrane {
         ws
     }
 
-    fn acquire(&mut self, r: &Arc<Ref>) -> Arc<WireSymbol> {
+    fn acquire(&mut self, r: &Arc<Cap>) -> Arc<WireSymbol> {
         let ws = self.ref_map.get(r).expect("WireSymbol must be present at acquire() time");
         ws.acquire();
         Arc::clone(ws)
@@ -149,18 +162,18 @@ pub fn connect_stream<I, O, E, F>(
     I: 'static + Send + AsyncRead,
     O: 'static + Send + AsyncWrite,
     E: 'static + Send + std::marker::Sync,
-    F: 'static + Send + std::marker::Sync + FnMut(&mut E, &mut Activation, Arc<Ref>) -> during::DuringResult<E>
+    F: 'static + Send + std::marker::Sync + FnMut(&mut E, &mut Activation, Arc<Cap>) -> during::DuringResult<E>
 {
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
     let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into()))).unwrap();
-    let main_entity = t.actor.create(during::entity(initial_state).on_asserted(move |state, t, a| {
+    let main_entity = t.actor.create(during::entity(initial_state).on_asserted(move |state, t, a: _Any| {
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
-    t.assert(&gatekeeper, &gatekeeper::Resolve {
+    gatekeeper.assert(t, &gatekeeper::Resolve {
         sturdyref,
-        observer: main_entity,
+        observer: Cap::new(&main_entity),
     });
 }
 
@@ -169,12 +182,12 @@ impl TunnelRelay {
         t: &mut Activation,
         i: Input,
         o: Output,
-        initial_ref: Option<Arc<Ref>>,
+        initial_ref: Option<Arc<Cap>>,
         initial_oid: Option<sturdy::Oid>,
-    ) -> Option<Arc<Ref>> {
+    ) -> Option<Arc<Cap>> {
         let (output_tx, output_rx) = unbounded_channel();
         let mut tr = TunnelRelay {
-            self_ref: Arc::clone(&*INERT_REF), /* placeholder */
+            self_ref: t.actor.create_inert(),
             input_buffer: BytesMut::with_capacity(1024),
             output: output_tx,
             inbound_assertions: Map::new(),
@@ -189,13 +202,10 @@ impl TunnelRelay {
         if let Some(ir) = initial_ref {
             tr.membranes.export_ref(ir, true);
         }
-        let mut result = None;
-        let tr_ref = t.actor.create_rec(tr, |ac, tr, tr_ref| {
-            tr.self_ref = Arc::clone(tr_ref);
-            if let Some(io) = initial_oid {
-                result = Some(Arc::clone(&tr.membranes.import_oid(ac, tr_ref, io).obj));
-            }
-        });
+        let result = initial_oid.map(
+            |io| Arc::clone(&tr.membranes.import_oid(t.actor, &tr.self_ref, io).obj));
+        let tr_ref = Arc::clone(&tr.self_ref);
+        tr_ref.become_entity(tr);
         t.actor.add_exit_hook(&tr_ref);
         t.actor.linked_task(crate::name!("writer"), output_loop(o, output_rx));
         t.actor.linked_task(crate::name!("reader"), input_loop(i, tr_ref));
@@ -228,9 +238,10 @@ impl TunnelRelay {
                             a.foreach_embedded::<_, Error>(&mut |r| {
                                 Ok(imported.push(imported_membrane.acquire(r)))
                             })?;
-                            let local_handle = t.assert(target, a);
-                            if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, imported)) {
-                                return Err(error("Assertion with duplicate handle", _Any::new(false)));
+                            if let Some(local_handle) = target.assert(t, a) {
+                                if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, imported)) {
+                                    return Err(error("Assertion with duplicate handle", _Any::new(false)));
+                                }
                             }
                         }
                         P::Event::Retract(b) => {
@@ -254,26 +265,20 @@ impl TunnelRelay {
                                     _ => Ok(())
                                 }
                             })?;
-                            t.message(target, a);
+                            target.message(t, a);
                         }
                         P::Event::Sync(b) => {
                             let P::Sync { peer } = *b;
                             self.membranes.imported.acquire(&peer);
                             struct SyncPeer {
-                                tr: Arc<Ref>,
-                                peer: Arc<Ref>,
+                                tr: TunnelRelayRef,
+                                peer: Arc<Cap>,
                             }
-                            impl Entity for SyncPeer {
-                                fn as_any(&mut self) -> &mut dyn Any {
-                                    self
-                                }
-                                fn message(&mut self, t: &mut Activation, a: _Any) -> ActorResult {
-                                    if let Some(true) = a.value().as_boolean() {
-                                        t.message(&self.peer, _Any::new(true));
-                                        t.message(&self.tr, &tunnel_relay::SyncGc {
-                                            peer: Arc::clone(&self.peer)
-                                        });
-                                    }
+                            impl Entity<Synced> for SyncPeer {
+                                fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
+                                    self.peer.message(t, _Any::new(true));
+                                    t.message(&self.tr, RelayProtocol::SyncGc(
+                                        Arc::clone(&self.peer)));
                                     Ok(())
                                 }
                             }
@@ -281,7 +286,7 @@ impl TunnelRelay {
                                 tr: Arc::clone(&self.self_ref),
                                 peer: Arc::clone(&peer),
                             });
-                            t.sync(&peer, k);
+                            t.sync(&peer.underlying, k);
                         }
                     }
                 }
@@ -336,7 +341,7 @@ impl TunnelRelay {
 }
 
 impl Membranes {
-    fn export_ref(&mut self, obj: Arc<Ref>, and_acquire: bool) -> Arc<WireSymbol> {
+    fn export_ref(&mut self, obj: Arc<Cap>, and_acquire: bool) -> Arc<WireSymbol> {
         let ws = match self.exported.ref_map.get(&obj) {
             None => {
                 let oid = sturdy::Oid(SignedInteger::from(self.next_export_oid as u128));
@@ -354,17 +359,17 @@ impl Membranes {
     fn import_oid(
         &mut self,
         ac: &mut Actor,
-        relay_ref: &Arc<Ref>,
+        relay_ref: &TunnelRelayRef,
         oid: sturdy::Oid,
     ) -> Arc<WireSymbol> {
         let obj = ac.create(RelayEntity { relay_ref: Arc::clone(relay_ref), oid: oid.clone() });
-        self.imported.insert(oid, obj)
+        self.imported.insert(oid, Cap::new(&obj))
     }
 
     fn decode_embedded<'de, 'src, S: BinarySource<'de>>(
         &mut self,
         t: &mut Activation,
-        relay_ref: &Arc<Ref>,
+        relay_ref: &TunnelRelayRef,
         src: &'src mut S,
         _read_annotations: bool,
     ) -> io::Result<P::_Ptr> {
@@ -392,7 +397,7 @@ impl Membranes {
                                })?)
                         }
                     }
-                    None => Ok(Arc::clone(&*INERT_REF)),
+                    None => Ok(Cap::new(&t.actor.create_inert())),
                 }
             }
         }
@@ -400,7 +405,7 @@ impl Membranes {
 }
 
 struct ActivatedMembranes<'a, 'activation, 'm>(&'a mut Activation<'activation>,
-                                               &'m Arc<Ref>,
+                                               &'m TunnelRelayRef,
                                                &'m mut Membranes);
 
 impl<'a, 'activation, 'm> DomainDecode<P::_Ptr> for ActivatedMembranes<'a, 'activation, 'm> {
@@ -448,17 +453,20 @@ impl DomainEncode<P::_Ptr> for Membranes {
     }
 }
 
-pub async fn input_loop(
+async fn input_loop(
     i: Input,
-    relay: Arc<Ref>,
+    relay: TunnelRelayRef,
 ) -> ActorResult {
     #[must_use]
-    async fn s<M: Into<_Any>>(relay: &Arc<Ref>, debtor: &Arc<Debtor>, m: M) -> ActorResult {
+    async fn s(
+        relay: &TunnelRelayRef,
+        debtor: &Arc<Debtor>,
+        m: RelayInput,
+    ) -> ActorResult {
         debtor.ensure_clear_funds().await;
-        let m = m.into();
         let relay = Arc::clone(relay);
-        external_event(&Arc::clone(&relay), debtor, Box::new(
-            move |t| relay.with_entity(|e| e.message(t, m))))
+        external_event(&Arc::clone(&relay.mailbox), debtor, Box::new(
+            move |t| relay.with_entity(|e| e.message(t, RelayProtocol::Input(m)))))
     }
 
     let debtor = Debtor::new(crate::name!("input-loop"));
@@ -468,11 +476,11 @@ pub async fn input_loop(
             loop {
                 match src.next().await {
                     None => {
-                        s(&relay, &debtor, &tunnel_relay::Input::Eof).await?;
+                        s(&relay, &debtor, RelayInput::Eof).await?;
                         return Ok(());
                     }
                     Some(bs) => {
-                        s(&relay, &debtor, &tunnel_relay::Input::Packet { bs: bs? }).await?;
+                        s(&relay, &debtor, RelayInput::Packet(bs?)).await?;
                     }
                 }
             }
@@ -486,7 +494,7 @@ pub async fn input_loop(
                     Ok(n) => n,
                     Err(e) =>
                         if e.kind() == io::ErrorKind::ConnectionReset {
-                            s(&relay, &debtor, &tunnel_relay::Input::Eof).await?;
+                            s(&relay, &debtor, RelayInput::Eof).await?;
                             return Ok(());
                         } else {
                             return Err(e)?;
@@ -494,14 +502,14 @@ pub async fn input_loop(
                 };
                 match n {
                     0 => {
-                        s(&relay, &debtor, &tunnel_relay::Input::Eof).await?;
+                        s(&relay, &debtor, RelayInput::Eof).await?;
                         return Ok(());
                     }
                     _ => {
                         while buf.has_remaining() {
                             let bs = buf.chunk();
                             let n = bs.len();
-                            s(&relay, &debtor, &tunnel_relay::Input::Segment { bs: bs.to_vec() }).await?;
+                            s(&relay, &debtor, RelayInput::Segment(bs.to_vec())).await?;
                             buf.advance(n);
                         }
                     }
@@ -511,7 +519,7 @@ pub async fn input_loop(
     }
 }
 
-pub async fn output_loop(
+async fn output_loop(
     mut o: Output,
     mut output_rx: UnboundedReceiver<LoanedItem<Vec<u8>>>,
 ) -> ActorResult {
@@ -532,81 +540,69 @@ pub async fn output_loop(
     }
 }
 
-impl Entity for TunnelRelay {
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
-    fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
-        if let Ok(m) = tunnel_relay::RelayProtocol::try_from(&m) {
-            match m {
-                tunnel_relay::RelayProtocol::Input(b) => match *b {
-                    tunnel_relay::Input::Eof => {
-                        t.actor.shutdown();
-                    }
-                    tunnel_relay::Input::Packet { bs } => {
-                        let mut src = BytesBinarySource::new(&bs);
+impl Entity<RelayProtocol> for TunnelRelay {
+    fn message(&mut self, t: &mut Activation, m: RelayProtocol) -> ActorResult {
+        match m {
+            RelayProtocol::Input(RelayInput::Eof) => {
+                t.actor.shutdown();
+            }
+            RelayProtocol::Input(RelayInput::Packet(bs)) => {
+                let mut src = BytesBinarySource::new(&bs);
+                let mut dec = ActivatedMembranes(t, &self.self_ref, &mut self.membranes);
+                let mut r = src.packed::<_, _Any, _>(&mut dec);
+                let item = P::Packet::deserialize(&mut r)?;
+                self.handle_inbound_packet(t, item)?;
+            }
+            RelayProtocol::Input(RelayInput::Segment(bs)) => {
+                self.input_buffer.extend_from_slice(&bs);
+                loop {
+                    let (e, count) = {
+                        let mut src = BytesBinarySource::new(&self.input_buffer);
                         let mut dec = ActivatedMembranes(t, &self.self_ref, &mut self.membranes);
                         let mut r = src.packed::<_, _Any, _>(&mut dec);
-                        let item = P::Packet::deserialize(&mut r)?;
-                        self.handle_inbound_packet(t, item)?;
-                    }
-                    tunnel_relay::Input::Segment { bs } => {
-                        self.input_buffer.extend_from_slice(&bs);
-                        loop {
-                            let (e, count) = {
-                                let mut src = BytesBinarySource::new(&self.input_buffer);
-                                let mut dec = ActivatedMembranes(t, &self.self_ref, &mut self.membranes);
-                                let mut r = src.packed::<_, _Any, _>(&mut dec);
-                                let e = match P::Packet::deserialize(&mut r) {
-                                    Err(ParseError::Preserves(PreservesError::Io(e)))
-                                        if is_eof_io_error(&e) =>
-                                        None,
-                                    result => Some(result?),
-                                };
-                                (e, r.source.index)
-                            };
-                            match e {
-                                None => break,
-                                Some(item) => {
-                                    self.input_buffer.advance(count);
-                                    self.handle_inbound_packet(t, item)?;
-                                }
-                            }
-                        }
-                    }
-                }
-                tunnel_relay::RelayProtocol::Output(b) => match *b {
-                    tunnel_relay::Output { oid, event } => {
-                        if self.pending_outbound.is_empty() {
-                            t.message_immediate_self(
-                                &self.self_ref, &tunnel_relay::RelayProtocol::Flush);
-                        }
-                        let turn_event = P::TurnEvent {
-                            oid: P::Oid(oid.0),
-                            event: self.handle_outbound_event(t, event)?,
+                        let e = match P::Packet::deserialize(&mut r) {
+                            Err(ParseError::Preserves(PreservesError::Io(e)))
+                                if is_eof_io_error(&e) =>
+                                None,
+                            result => Some(result?),
                         };
-                        self.pending_outbound.push(turn_event);
-                    }
-                }
-                tunnel_relay::RelayProtocol::SyncGc(b) => match *b {
-                    tunnel_relay::SyncGc { peer } => {
-                        if let Some(ws) = self.membranes.imported.ref_map.get(&peer) {
-                            let ws = Arc::clone(ws); // cloned to release the borrow to permit the release
-                            self.membranes.imported.release(&ws);
+                        (e, r.source.index)
+                    };
+                    match e {
+                        None => break,
+                        Some(item) => {
+                            self.input_buffer.advance(count);
+                            self.handle_inbound_packet(t, item)?;
                         }
                     }
                 }
-                tunnel_relay::RelayProtocol::Flush => {
-                    let events = std::mem::take(&mut self.pending_outbound);
-                    self.send_packet(&t.debtor, events.len(), P::Packet::Turn(Box::new(P::Turn(events))))?
+            }
+            RelayProtocol::Output(oid, event) => {
+                if self.pending_outbound.is_empty() {
+                    t.message_immediate_self(&self.self_ref, RelayProtocol::Flush);
                 }
+                let turn_event = P::TurnEvent {
+                    oid: P::Oid(oid.0),
+                    event: self.handle_outbound_event(t, event)?,
+                };
+                self.pending_outbound.push(turn_event);
+            }
+            RelayProtocol::SyncGc(peer) => {
+                if let Some(ws) = self.membranes.imported.ref_map.get(&peer) {
+                    let ws = Arc::clone(ws); // cloned to release the borrow to permit the release
+                    self.membranes.imported.release(&ws);
+                }
+            }
+            RelayProtocol::Flush => {
+                let events = std::mem::take(&mut self.pending_outbound);
+                self.send_packet(&t.debtor, events.len(), P::Packet::Turn(Box::new(P::Turn(events))))?
             }
         }
         Ok(())
     }
 
-    fn exit_hook(&mut self, t: &mut Activation, exit_status: &ActorResult) -> ActorResult {
-        if let Err(e) = exit_status {
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
+        if let Err(e) = &**exit_status {
             let e = e.clone();
             self.send_packet(&t.debtor, 1, P::Packet::Error(Box::new(e)))?;
         }
@@ -614,37 +610,30 @@ impl Entity for TunnelRelay {
     }
 }
 
-impl Entity for RelayEntity {
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
+impl Entity<_Any> for RelayEntity {
     fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
-        Ok(t.message(&self.relay_ref, &tunnel_relay::Output {
-            oid: self.oid.clone(),
-            event: P::Event::Assert(Box::new(P::Assert {
+        Ok(t.message(&self.relay_ref, RelayProtocol::Output(
+            self.oid.clone(),
+            P::Event::Assert(Box::new(P::Assert {
                 assertion: P::Assertion(a),
                 handle: P::Handle(h.into()),
-            })),
-        }))
+            })))))
     }
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
-        Ok(t.message(&self.relay_ref, &tunnel_relay::Output {
-            oid: self.oid.clone(),
-            event: P::Event::Retract(Box::new(P::Retract {
+        Ok(t.message(&self.relay_ref, RelayProtocol::Output(
+            self.oid.clone(),
+            P::Event::Retract(Box::new(P::Retract {
                 handle: P::Handle(h.into()),
-            })),
-        }))
+            })))))
     }
     fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
-        Ok(t.message(&self.relay_ref, &tunnel_relay::Output {
-            oid: self.oid.clone(),
-            event: P::Event::Message(Box::new(P::Message { body: P::Assertion(m) })),
-        }))
+        Ok(t.message(&self.relay_ref, RelayProtocol::Output(
+            self.oid.clone(),
+            P::Event::Message(Box::new(P::Message { body: P::Assertion(m) })))))
     }
-    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref>) -> ActorResult {
-        Ok(t.message(&self.relay_ref, &tunnel_relay::Output {
-            oid: self.oid.clone(),
-            event: P::Event::Sync(Box::new(P::Sync { peer })),
-        }))
+    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
+        Ok(t.message(&self.relay_ref, RelayProtocol::Output(
+            self.oid.clone(),
+            P::Event::Sync(Box::new(P::Sync { peer: Cap::guard(&peer) })))))
     }
 }

@@ -48,10 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for _ in 0..action_count {
                         let ds = Arc::clone(&ds);
                         let padding = padding.clone();
-                        events.push(Box::new(move |t| ds.with_entity(
+                        events.push(Box::new(move |t| ds.underlying.with_entity(
                             |e| e.message(t, says(Value::from("producer").wrap(), padding)))));
                     }
-                    external_events(&ds, &debtor, events)?;
+                    external_events(&ds.underlying.mailbox, &debtor, events)?;
                 }
             });
             Ok(None)
