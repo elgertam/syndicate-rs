@@ -35,8 +35,7 @@ pub fn next_actor_id() -> ActorId {
 
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(3);
 pub fn next_handle() -> Handle {
-    Handle(value::signed_integer::SignedInteger::from(
-        NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed) as u128))
+    NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 
 static NEXT_MAILBOX_ID: AtomicU64 = AtomicU64::new(4);

@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::actor::_Any;
 use crate::actor::Activation;
+use crate::actor::Handle;
 use crate::actor::Ref;
-use crate::schemas::internal_protocol::Handle;
 use crate::schemas::dataspace_patterns as ds;
 use crate::pattern::{self, PathStep, Path, Paths};
 

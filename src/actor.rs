@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 pub use super::schemas::internal_protocol::_Any;
-pub use super::schemas::internal_protocol::Handle;
+pub type Handle = u64;
 
 pub type ActorResult = Result<(), Error>;
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
@@ -225,15 +225,13 @@ impl<'activation> Activation<'activation> {
         if let Some(assertion) = r.rewrite(a.into()) {
             {
                 let r = Arc::clone(r);
-                let handle = handle.clone();
                 self.queue_for(&r).push(Box::new(
                     move |t| r.with_entity(|e| e.assert(t, assertion, handle))));
             }
             {
                 let r = Arc::clone(r);
-                let handle = handle.clone();
                 self.actor.outbound_assertions.insert(
-                    handle.clone(),
+                    handle,
                     Destination::Remote(Arc::clone(&r), Box::new(
                         move |t| r.with_entity(|e| e.retract(t, handle)))));
             }
@@ -247,15 +245,13 @@ impl<'activation> Activation<'activation> {
         if let Some(assertion) = r.rewrite(a.into()) {
             {
                 let r = Arc::clone(r);
-                let handle = handle.clone();
                 self.immediate_self.push(Box::new(
                     move |t| r.with_entity(|e| e.assert(t, assertion, handle))));
             }
             {
                 let r = Arc::clone(r);
-                let handle = handle.clone();
                 self.actor.outbound_assertions.insert(
-                    handle.clone(),
+                    handle,
                     Destination::ImmediateSelf(Box::new(
                         move |t| r.with_entity(|e| e.retract(t, handle)))));
             }

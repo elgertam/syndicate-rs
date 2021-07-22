@@ -217,7 +217,7 @@ fn handle_resolve(ds: &mut Arc<Ref>, t: &mut Activation, a: _Any) -> DuringResul
                                             target = debug(&target),
                                             "sturdyref resolved");
                             let h = t.assert(observer, _Any::domain(target));
-                            Ok(Some(Box::new(|_observer, t| Ok(t.retract(h)))))
+                            Ok(Some(Box::new(move |_observer, t| Ok(t.retract(h)))))
                         }
                     }
                 })
@@ -245,7 +245,7 @@ fn handle_resolve(ds: &mut Arc<Ref>, t: &mut Activation, a: _Any) -> DuringResul
                 })),
                 observer: handler,
             });
-            Ok(Some(Box::new(|_ds, t| Ok(t.retract(oh)))))
+            Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))
         }
     }
 }
