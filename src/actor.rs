@@ -60,12 +60,12 @@ pub trait Entity<M>: Send + Sync {
     }
 }
 
-enum Destination {
+enum CleanupAction {
     ImmediateSelf(Action),
     Remote(Arc<Mailbox>, Action),
 }
 
-type OutboundAssertions = Map<Handle, Destination>;
+type CleanupActions = Map<Handle, CleanupAction>;
 pub type Action = Box<dyn Send + Sync + FnOnce(&mut Activation) -> ActorResult>;
 pub type PendingEventQueue = Vec<Action>;
 
@@ -108,7 +108,7 @@ pub struct Actor {
     tx: UnboundedSender<SystemMessage>,
     rx: UnboundedReceiver<SystemMessage>,
     mailbox: Weak<Mailbox>,
-    outbound_assertions: OutboundAssertions,
+    cleanup_actions: CleanupActions,
     next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
     exit_hooks: Vec<Action>,
@@ -209,9 +209,9 @@ impl<'activation> Activation<'activation> {
         }
         {
             let r = Arc::clone(r);
-            self.actor.outbound_assertions.insert(
+            self.actor.cleanup_actions.insert(
                 handle,
-                Destination::Remote(Arc::clone(&r.mailbox), Box::new(
+                CleanupAction::Remote(Arc::clone(&r.mailbox), Box::new(
                     move |t| r.with_entity(|e| e.retract(t, handle)))));
         }
         handle
@@ -227,25 +227,25 @@ impl<'activation> Activation<'activation> {
         }
         {
             let r = Arc::clone(r);
-            self.actor.outbound_assertions.insert(
+            self.actor.cleanup_actions.insert(
                 handle,
-                Destination::ImmediateSelf(Box::new(
+                CleanupAction::ImmediateSelf(Box::new(
                     move |t| r.with_entity(|e| e.retract(t, handle)))));
         }
         handle
     }
 
     pub fn retract(&mut self, handle: Handle) {
-        if let Some(d) = self.actor.outbound_assertions.remove(&handle) {
+        if let Some(d) = self.actor.cleanup_actions.remove(&handle) {
             self.retract_known_ref(d)
         }
     }
 
-    fn retract_known_ref(&mut self, d: Destination) {
+    fn retract_known_ref(&mut self, d: CleanupAction) {
         match d {
-            Destination::Remote(mailbox, action) =>
+            CleanupAction::Remote(mailbox, action) =>
                 self.queue_for_mailbox(&mailbox).push(action),
-            Destination::ImmediateSelf(action) =>
+            CleanupAction::ImmediateSelf(action) =>
                 self.immediate_self.push(action),
         }
     }
@@ -411,7 +411,7 @@ impl Actor {
             tx,
             rx,
             mailbox: Weak::new(),
-            outbound_assertions: Map::new(),
+            cleanup_actions: Map::new(),
             next_task_id: 0,
             linked_tasks: Map::new(),
             exit_hooks: Vec::new(),
@@ -605,7 +605,7 @@ impl Drop for Actor {
             token.cancel();
         }
 
-        let to_clear = std::mem::take(&mut self.outbound_assertions);
+        let to_clear = std::mem::take(&mut self.cleanup_actions);
         {
             let mut t = Activation::new(self, Debtor::new(crate::name!("drop")));
             for (_handle, r) in to_clear.into_iter() {
