@@ -106,8 +106,8 @@ pub struct Mailbox {
 pub struct Actor {
     actor_id: ActorId,
     tx: UnboundedSender<SystemMessage>,
+    rx: UnboundedReceiver<SystemMessage>,
     mailbox: Weak<Mailbox>,
-    rx: Option<UnboundedReceiver<SystemMessage>>,
     outbound_assertions: OutboundAssertions,
     next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
@@ -409,7 +409,7 @@ impl Actor {
         Actor {
             actor_id,
             tx,
-            rx: Some(rx),
+            rx,
             mailbox: Weak::new(),
             outbound_assertions: Map::new(),
             next_task_id: 0,
@@ -513,7 +513,7 @@ impl Actor {
         boot(&mut Activation::new(self, Debtor::new(crate::name!("boot")))).await?;
         // tracing::trace!(_id, "run");
         loop {
-            match self.rx.as_mut().expect("present rx channel half").recv().await {
+            match self.rx.recv().await {
                 None =>
                     Err(error("Unexpected channel close", _Any::new(false)))?,
                 Some(m) => {
@@ -599,8 +599,7 @@ impl Actor {
 
 impl Drop for Actor {
     fn drop(&mut self) {
-        let mut rx = self.rx.take().expect("present rx channel half during drop");
-        rx.close();
+        self.rx.close();
 
         for (_task_id, token) in std::mem::take(&mut self.linked_tasks).into_iter() {
             token.cancel();
