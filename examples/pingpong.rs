@@ -93,138 +93,144 @@ fn report_latencies(rtt_ns_samples: &Vec<u64>) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
 
-    Actor::new().boot(syndicate::name!("pingpong"), move |t| Box::pin(async move {
-        let config = Config::from_args();
-        let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
-        let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-        relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
+    Actor::new().boot(syndicate::name!("pingpong"), |t| {
+        let ac = t.actor.clone();
+        let boot_debtor = Arc::clone(t.debtor());
+        Ok(t.state.linked_task(tracing::Span::current(), async move {
+            let config = Config::from_args();
+            let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
+            let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
+            Activation::for_actor(&ac, boot_debtor, |t| {
+                relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
 
-            let (send_label, recv_label, report_latency_every, should_echo, bytes_padding) =
-                match config.mode {
-                    PingPongMode::Ping(ref c) =>
-                        ("Ping", "Pong", c.report_latency_every, false, c.bytes_padding),
-                    PingPongMode::Pong =>
-                        ("Pong", "Ping", 0, true, 0),
-                };
+                    let (send_label, recv_label, report_latency_every, should_echo, bytes_padding) =
+                        match config.mode {
+                            PingPongMode::Ping(ref c) =>
+                                ("Ping", "Pong", c.report_latency_every, false, c.bytes_padding),
+                            PingPongMode::Pong =>
+                                ("Pong", "Ping", 0, true, 0),
+                        };
 
-            let consumer = {
-                let ds = Arc::clone(&ds);
-                let mut turn_counter: u64 = 0;
-                let mut event_counter: u64 = 0;
-                let mut rtt_ns_samples: Vec<u64> = vec![0; report_latency_every];
-                let mut rtt_batch_count: usize = 0;
-                let mut current_reply = None;
-                let self_ref = t.actor.create_inert();
-                self_ref.become_entity(
-                    syndicate::entity(Arc::clone(&self_ref))
-                        .on_message(move |self_ref, t, m: _Any| {
-                            match m.value().as_boolean() {
-                                Some(true) => {
-                                    tracing::info!("{:?} turns, {:?} events in the last second",
-                                                   turn_counter,
-                                                   event_counter);
-                                    turn_counter = 0;
-                                    event_counter = 0;
-                                }
-                                Some(false) => {
-                                    current_reply = None;
-                                }
-                                None => {
-                                    event_counter += 1;
-                                    let bindings = m.value().to_sequence()?;
-                                    let timestamp = &bindings[0];
-                                    let padding = &bindings[1];
-
-                                    if should_echo || (report_latency_every == 0) {
-                                        ds.message(t, simple_record2(&send_label,
-                                                                     timestamp.clone(),
-                                                                     padding.clone()));
-                                    } else {
-                                        if let None = current_reply {
-                                            turn_counter += 1;
-                                            t.message_immediate_self(&self_ref, _Any::new(false));
-                                            let rtt_ns = now() - timestamp.value().to_u64()?;
-                                            rtt_ns_samples[rtt_batch_count] = rtt_ns;
-                                            rtt_batch_count += 1;
-
-                                            if rtt_batch_count == report_latency_every {
-                                                rtt_ns_samples.sort();
-                                                report_latencies(&rtt_ns_samples);
-                                                rtt_batch_count = 0;
-                                            }
-
-                                            current_reply = Some(
-                                                simple_record2(&send_label,
-                                                               Value::from(now()).wrap(),
-                                                               padding.clone()));
+                    let consumer = {
+                        let ds = Arc::clone(&ds);
+                        let mut turn_counter: u64 = 0;
+                        let mut event_counter: u64 = 0;
+                        let mut rtt_ns_samples: Vec<u64> = vec![0; report_latency_every];
+                        let mut rtt_batch_count: usize = 0;
+                        let mut current_reply = None;
+                        let self_ref = t.state.create_inert();
+                        self_ref.become_entity(
+                            syndicate::entity(Arc::clone(&self_ref))
+                                .on_message(move |self_ref, t, m: _Any| {
+                                    match m.value().as_boolean() {
+                                        Some(true) => {
+                                            tracing::info!("{:?} turns, {:?} events in the last second",
+                                                           turn_counter,
+                                                           event_counter);
+                                            turn_counter = 0;
+                                            event_counter = 0;
                                         }
-                                        ds.message(t, current_reply.as_ref().expect("some reply").clone());
+                                        Some(false) => {
+                                            current_reply = None;
+                                        }
+                                        None => {
+                                            event_counter += 1;
+                                            let bindings = m.value().to_sequence()?;
+                                            let timestamp = &bindings[0];
+                                            let padding = &bindings[1];
+
+                                            if should_echo || (report_latency_every == 0) {
+                                                ds.message(t, simple_record2(&send_label,
+                                                                             timestamp.clone(),
+                                                                             padding.clone()));
+                                            } else {
+                                                if let None = current_reply {
+                                                    turn_counter += 1;
+                                                    t.message_for_myself(&self_ref, _Any::new(false));
+                                                    let rtt_ns = now() - timestamp.value().to_u64()?;
+                                                    rtt_ns_samples[rtt_batch_count] = rtt_ns;
+                                                    rtt_batch_count += 1;
+
+                                                    if rtt_batch_count == report_latency_every {
+                                                        rtt_ns_samples.sort();
+                                                        report_latencies(&rtt_ns_samples);
+                                                        rtt_batch_count = 0;
+                                                    }
+
+                                                    current_reply = Some(
+                                                        simple_record2(&send_label,
+                                                                       Value::from(now()).wrap(),
+                                                                       padding.clone()));
+                                                }
+                                                ds.message(t, current_reply.as_ref().expect("some reply").clone());
+                                            }
+                                        }
                                     }
+                                    Ok(())
+                                }));
+                        Cap::new(&self_ref)
+                    };
+
+                    ds.assert(t, &Observe {
+                        pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
+                            ctor: Box::new(p::CRec {
+                                label: Value::symbol(recv_label).wrap(),
+                                arity: 2.into(),
+                            }),
+                            members: Map::from_iter(vec![
+                                (0.into(), p::Pattern::DBind(Box::new(p::DBind {
+                                    name: "timestamp".to_owned(),
+                                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                                }))),
+                                (1.into(), p::Pattern::DBind(Box::new(p::DBind {
+                                    name: "padding".to_owned(),
+                                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                                }))),
+                            ].into_iter()),
+                        })),
+                        observer: Arc::clone(&consumer),
+                    });
+
+                    t.state.linked_task(syndicate::name!("tick"), async move {
+                        let mut stats_timer = interval(Duration::from_secs(1));
+                        loop {
+                            stats_timer.tick().await;
+                            let consumer = Arc::clone(&consumer);
+                            external_event(&Arc::clone(&consumer.underlying.mailbox),
+                                           &Debtor::new(syndicate::name!("debtor")),
+                                           Box::new(move |t| consumer.underlying.with_entity(
+                                               |e| e.message(t, _Any::new(true)))))?;
+                        }
+                    });
+
+                    if let PingPongMode::Ping(c) = &config.mode {
+                        let turn_count = c.turn_count;
+                        let action_count = c.action_count;
+                        let debtor = Arc::clone(t.debtor());
+                        t.state.linked_task(syndicate::name!("boot-ping"), async move {
+                            let padding: _Any = Value::ByteString(vec![0; bytes_padding]).wrap();
+                            for _ in 0..turn_count {
+                                let mut events: PendingEventQueue = vec![];
+                                let current_rec = simple_record2(send_label,
+                                                                 Value::from(now()).wrap(),
+                                                                 padding.clone());
+                                for _ in 0..action_count {
+                                    let ds = Arc::clone(&ds);
+                                    let current_rec = current_rec.clone();
+                                    events.push(Box::new(move |t| ds.underlying.with_entity(
+                                        |e| e.message(t, current_rec))));
                                 }
+                                external_events(&ds.underlying.mailbox, &debtor, events)?
                             }
                             Ok(())
-                        }));
-                Cap::new(&self_ref)
-            };
-
-            ds.assert(t, &Observe {
-                pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
-                    ctor: Box::new(p::CRec {
-                        label: Value::symbol(recv_label).wrap(),
-                        arity: 2.into(),
-                    }),
-                    members: Map::from_iter(vec![
-                        (0.into(), p::Pattern::DBind(Box::new(p::DBind {
-                            name: "timestamp".to_owned(),
-                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                        }))),
-                        (1.into(), p::Pattern::DBind(Box::new(p::DBind {
-                            name: "padding".to_owned(),
-                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                        }))),
-                    ].into_iter()),
-                })),
-                observer: Arc::clone(&consumer),
-            });
-
-            t.actor.linked_task(syndicate::name!("tick"), async move {
-                let mut stats_timer = interval(Duration::from_secs(1));
-                loop {
-                    stats_timer.tick().await;
-                    let consumer = Arc::clone(&consumer);
-                    external_event(&Arc::clone(&consumer.underlying.mailbox),
-                                   &Debtor::new(syndicate::name!("debtor")),
-                                   Box::new(move |t| consumer.underlying.with_entity(
-                                       |e| e.message(t, _Any::new(true)))))?;
-                }
-            });
-
-            if let PingPongMode::Ping(c) = &config.mode {
-                let turn_count = c.turn_count;
-                let action_count = c.action_count;
-                let debtor = t.debtor.clone();
-                t.actor.linked_task(syndicate::name!("boot-ping"), async move {
-                    let padding: _Any = Value::ByteString(vec![0; bytes_padding]).wrap();
-                    for _ in 0..turn_count {
-                        let mut events: PendingEventQueue = vec![];
-                        let current_rec = simple_record2(send_label,
-                                                         Value::from(now()).wrap(),
-                                                         padding.clone());
-                        for _ in 0..action_count {
-                            let ds = Arc::clone(&ds);
-                            let current_rec = current_rec.clone();
-                            events.push(Box::new(move |t| ds.underlying.with_entity(
-                                |e| e.message(t, current_rec))));
-                        }
-                        external_events(&ds.underlying.mailbox, &debtor, events)?
+                        });
                     }
-                    Ok(())
-                });
-            }
 
-            Ok(None)
-        });
-        Ok(())
-    })).await??;
+                    Ok(None)
+                });
+                Ok(())
+            })
+        }))
+    }).await??;
     Ok(())
 }

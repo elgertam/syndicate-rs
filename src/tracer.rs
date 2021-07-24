@@ -9,7 +9,7 @@ fn set_name_oid<M>(t: &mut Tracer, r: &Arc<Ref<M>>) {
     t.0.record("oid", &tracing::field::display(&r.oid()));
 }
 
-pub fn tracer<M: Debug>(ac: &mut Actor, name: tracing::Span) -> Arc<Ref<M>> {
+pub fn tracer<M: Debug>(ac: &mut RunningActor, name: tracing::Span) -> Arc<Ref<M>> {
     let mut e = Tracer(name);
     let r = ac.create_inert();
     set_name_oid(&mut e, &r);

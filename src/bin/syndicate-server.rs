@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve)));
     {
         let ds = Arc::clone(&ds);
-        Actor::new().boot(syndicate::name!("rootcap"), |t| Box::pin(async move {
+        Actor::new().boot(syndicate::name!("rootcap"), move |t| {
             use syndicate::schemas::gatekeeper;
             let key = vec![0; 16];
             let sr = sturdy::SturdyRef::mint(_Any::new("syndicate"), &key);
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!(rootcap = display(sr.to_hex()));
             ds.assert(t, &gatekeeper::Bind { oid: sr.oid.clone(), key, target: ds.clone() });
             Ok(())
-        }));
+        });
     }
 
     for port in config.ports.clone() {
@@ -93,8 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config = Arc::clone(&config);
         daemons.push(Actor::new().boot(
             syndicate::name!("tcp", port),
-            move |t| Box::pin(ready(Ok(t.actor.linked_task(syndicate::name!("listener"),
-                                                           run_listener(gateway, port, config)))))));
+            move |t| Ok(t.state.linked_task(syndicate::name!("listener"),
+                                            run_listener(gateway, port, config)))));
     }
 
     futures::future::join_all(daemons).await;
@@ -128,7 +128,7 @@ fn extract_binary_packets(
 }
 
 async fn run_connection(
-    t: &mut Activation<'_>,
+    ac: ActorRef,
     stream: TcpStream,
     gateway: Arc<Cap>,
     addr: std::net::SocketAddr,
@@ -156,17 +156,19 @@ async fn run_connection(
         0 => Err(error("closed before starting", _Any::new(false)))?,
         _ => unreachable!()
     };
-    struct ExitListener;
-    impl Entity<()> for ExitListener {
-        fn exit_hook(&mut self, _t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
-            tracing::info!(exit_status = debug(exit_status), "disconnect");
-            Ok(())
+    Activation::for_actor(&ac, Debtor::new(syndicate::name!("start-session")), |t| {
+        struct ExitListener;
+        impl Entity<()> for ExitListener {
+            fn exit_hook(&mut self, _t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
+                tracing::info!(exit_status = debug(exit_status), "disconnect");
+                Ok(())
+            }
         }
-    }
-    let exit_listener = t.actor.create(ExitListener);
-    t.actor.add_exit_hook(&exit_listener);
-    relay::TunnelRelay::run(t, i, o, Some(gateway), None);
-    Ok(())
+        let exit_listener = t.state.create(ExitListener);
+        t.state.add_exit_hook(&exit_listener);
+        relay::TunnelRelay::run(t, i, o, Some(gateway), None);
+        Ok(())
+    })
 }
 
 async fn run_listener(
@@ -183,7 +185,9 @@ async fn run_listener(
         let config = Arc::clone(&config);
         let ac = Actor::new();
         ac.boot(syndicate::name!(parent: None, "connection"),
-                move |t| Box::pin(run_connection(t, stream, gateway, addr, config)));
+                move |t| Ok(t.state.linked_task(
+                    tracing::Span::current(),
+                    run_connection(t.actor.clone(), stream, gateway, addr, config))));
     }
 }
 
@@ -222,7 +226,7 @@ fn handle_resolve(
                 }
             }
         })
-        .create_cap(t.actor);
+        .create_cap(t.state);
     if let Some(oh) = ds.assert(t, &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
         pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {

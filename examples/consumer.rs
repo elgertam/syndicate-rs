@@ -26,57 +26,62 @@ pub struct Config {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
-    Actor::new().boot(syndicate::name!("consumer"), |t| Box::pin(async move {
-        let config = Config::from_args();
-        let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
-        let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-        relay::connect_stream(t, i, o, sturdyref, (), |_state, t, ds| {
-            let consumer = syndicate::entity(0)
-                .on_message(|message_count, _t, m: _Any| {
-                    if m.value().is_boolean() {
-                        tracing::info!("{:?} messages in the last second", message_count);
-                        *message_count = 0;
-                    } else {
-                        *message_count += 1;
-                    }
-                    Ok(())
-                })
-                .create_cap(t.actor);
+    Actor::new().boot(syndicate::name!("consumer"), |t| {
+        let ac = t.actor.clone();
+        let boot_debtor = Arc::clone(t.debtor());
+        Ok(t.state.linked_task(tracing::Span::current(), async move {
+            let config = Config::from_args();
+            let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
+            let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
+            Activation::for_actor(&ac, boot_debtor, |t| {
+                relay::connect_stream(t, i, o, sturdyref, (), |_state, t, ds| {
+                    let consumer = syndicate::entity(0)
+                        .on_message(|message_count, _t, m: _Any| {
+                            if m.value().is_boolean() {
+                                tracing::info!("{:?} messages in the last second", message_count);
+                                *message_count = 0;
+                            } else {
+                                *message_count += 1;
+                            }
+                            Ok(())
+                        })
+                        .create_cap(t.state);
+                    ds.assert(t, &Observe {
+                        pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
+                            ctor: Box::new(p::CRec {
+                                label: Value::symbol("Says").wrap(),
+                                arity: 2.into(),
+                            }),
+                            members: Map::from_iter(vec![
+                                (0.into(), p::Pattern::DBind(Box::new(p::DBind {
+                                    name: "who".to_owned(),
+                                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                                }))),
+                                (1.into(), p::Pattern::DBind(Box::new(p::DBind {
+                                    name: "what".to_owned(),
+                                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
+                                }))),
+                            ].into_iter()),
+                        })),
+                        observer: Arc::clone(&consumer),
+                    });
 
-            ds.assert(t, &Observe {
-                pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
-                    ctor: Box::new(p::CRec {
-                        label: Value::symbol("Says").wrap(),
-                        arity: 2.into(),
-                    }),
-                    members: Map::from_iter(vec![
-                        (0.into(), p::Pattern::DBind(Box::new(p::DBind {
-                            name: "who".to_owned(),
-                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                        }))),
-                        (1.into(), p::Pattern::DBind(Box::new(p::DBind {
-                            name: "what".to_owned(),
-                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                        }))),
-                    ].into_iter()),
-                })),
-                observer: Arc::clone(&consumer),
-            });
-
-            t.actor.linked_task(syndicate::name!("tick"), async move {
-                let mut stats_timer = interval(Duration::from_secs(1));
-                loop {
-                    stats_timer.tick().await;
-                    let consumer = Arc::clone(&consumer);
-                    external_event(&Arc::clone(&consumer.underlying.mailbox),
-                                   &Debtor::new(syndicate::name!("debtor")),
-                                   Box::new(move |t| consumer.underlying.with_entity(
-                                       |e| e.message(t, _Any::new(true)))))?;
-                }
-            });
-            Ok(None)
-        });
-        Ok(())
-    })).await??;
+                    t.state.linked_task(syndicate::name!("tick"), async move {
+                        let mut stats_timer = interval(Duration::from_secs(1));
+                        loop {
+                            stats_timer.tick().await;
+                            let consumer = Arc::clone(&consumer);
+                            external_event(&Arc::clone(&consumer.underlying.mailbox),
+                                           &Debtor::new(syndicate::name!("debtor")),
+                                           Box::new(move |t| consumer.underlying.with_entity(
+                                               |e| e.message(t, _Any::new(true)))))?;
+                        }
+                    });
+                    Ok(None)
+                });
+                Ok(())
+            })
+        }))
+    }).await??;
     Ok(())
 }

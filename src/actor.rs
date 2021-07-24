@@ -5,6 +5,7 @@ pub use std::future::ready;
 use super::ActorId;
 use super::schemas::sturdy;
 use super::error::Error;
+use super::error::encode_error;
 use super::error::error;
 use super::rewrite::CaveatError;
 use super::rewrite::CheckedCaveat;
@@ -60,9 +61,12 @@ pub trait Entity<M>: Send + Sync {
     }
 }
 
+pub struct InertEntity;
+impl<M> Entity<M> for InertEntity {}
+
 enum CleanupAction {
-    ImmediateSelf(Action),
-    Remote(Arc<Mailbox>, Action),
+    ForMyself(Action),
+    ForAnother(Arc<Mailbox>, Action),
 }
 
 type CleanupActions = Map<Handle, CleanupAction>;
@@ -72,10 +76,15 @@ pub type PendingEventQueue = Vec<Action>;
 // This is what other implementations call a "Turn", renamed here to
 // avoid conflicts with schemas::internal_protocol::Turn.
 pub struct Activation<'activation> {
-    pub actor: &'activation mut Actor,
+    pub actor: ActorRef,
+    pub state: &'activation mut RunningActor,
+    pending: EventBuffer,
+}
+
+struct EventBuffer {
     pub debtor: Arc<Debtor>,
     queues: HashMap<ActorId, (UnboundedSender<SystemMessage>, PendingEventQueue)>,
-    immediate_self: PendingEventQueue,
+    for_myself: PendingEventQueue,
 }
 
 #[derive(Debug)]
@@ -104,15 +113,31 @@ pub struct Mailbox {
 }
 
 pub struct Actor {
-    actor_id: ActorId,
-    tx: UnboundedSender<SystemMessage>,
     rx: UnboundedReceiver<SystemMessage>,
+    ac_ref: ActorRef,
+}
+
+#[derive(Clone)]
+pub struct ActorRef {
+    pub actor_id: ActorId,
+    state: Arc<RwLock<ActorState>>,
+}
+
+pub enum ActorState {
+    Running(RunningActor),
+    Terminated {
+        exit_status: Arc<ActorResult>,
+    },
+}
+
+pub struct RunningActor {
+    pub actor_id: ActorId,
+    tx: UnboundedSender<SystemMessage>,
     mailbox: Weak<Mailbox>,
     cleanup_actions: CleanupActions,
     next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
-    exit_hooks: Vec<Action>,
-    exit_status: Option<Arc<ActorResult>>,
+    exit_hooks: Vec<Box<dyn Send + Sync + FnOnce(&mut Activation, &Arc<ActorResult>) -> ActorResult>>,
 }
 
 pub struct Ref<M> {
@@ -152,8 +177,8 @@ preserves_schema::support::lazy_static! {
 }
 
 pub fn start_debt_reporter() {
-    Actor::new().boot(crate::name!("debt-reporter"), |t| Box::pin(async move {
-        t.actor.linked_task(crate::name!("tick"), async move {
+    Actor::new().boot(crate::name!("debt-reporter"), |t| {
+        t.state.linked_task(crate::name!("tick"), async {
             let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
             loop {
                 timer.tick().await;
@@ -164,7 +189,7 @@ pub fn start_debt_reporter() {
             }
         });
         Ok(())
-    }));
+    });
 }
 
 impl TryFrom<&_Any> for Synced {
@@ -185,18 +210,66 @@ impl From<&Synced> for _Any {
 }
 
 impl<'activation> Activation<'activation> {
-    pub fn new(actor: &'activation mut Actor, debtor: Arc<Debtor>) -> Self {
+    fn make(actor: &ActorRef, debtor: Arc<Debtor>, state: &'activation mut RunningActor) -> Self {
         Activation {
-            actor,
-            debtor,
-            queues: HashMap::new(),
-            immediate_self: Vec::new(),
+            actor: actor.clone(),
+            state,
+            pending: EventBuffer::new(debtor),
+        }
+    }
+
+    pub fn for_actor<F>(
+        actor: &ActorRef,
+        debtor: Arc<Debtor>,
+        f: F,
+    ) -> ActorResult where
+        F: FnOnce(&mut Activation) -> ActorResult,
+    {
+        match Self::for_actor_exit(actor, debtor, |t| match f(t) {
+            Ok(()) => None,
+            Err(e) => Some(Err(e)),
+        }) {
+            None => Ok(()),
+            Some(e) => Err(error("Could not activate terminated actor", encode_error(e))),
+        }
+    }
+
+    pub fn for_actor_exit<F>(
+        actor: &ActorRef,
+        debtor: Arc<Debtor>,
+        f: F,
+    ) -> Option<ActorResult> where
+        F: FnOnce(&mut Activation) -> Option<ActorResult>,
+    {
+        match actor.state.write() {
+            Err(_) => panicked_err(),
+            Ok(mut g) => match &mut *g {
+                ActorState::Terminated { exit_status } =>
+                    Some((**exit_status).clone()),
+                ActorState::Running(state) =>
+                    match f(&mut Activation::make(actor, debtor, state)) {
+                        None => None,
+                        Some(exit_status) => {
+                            let exit_status = Arc::new(exit_status);
+                            let mut t = Activation::make(actor, Debtor::new(crate::name!("shutdown")), state);
+                            for action in std::mem::take(&mut t.state.exit_hooks) {
+                                if let Err(err) = action(&mut t, &exit_status) {
+                                    tracing::error!(err = debug(err), "error in exit hook");
+                                }
+                            }
+                            *g = ActorState::Terminated {
+                                exit_status: Arc::clone(&exit_status),
+                            };
+                            Some((*exit_status).clone())
+                        }
+                    },
+            }
         }
     }
 
     fn immediate_oid<M>(&self, r: &Arc<Ref<M>>) {
         if r.mailbox.actor_id != self.actor.actor_id {
-            panic!("Cannot use immediate_self to send to remote peers");
+            panic!("Cannot use for_myself to send to remote peers");
         }
     }
 
@@ -204,69 +277,87 @@ impl<'activation> Activation<'activation> {
         let handle = crate::next_handle();
         {
             let r = Arc::clone(r);
-            self.queue_for(&r).push(Box::new(
+            self.pending.queue_for(&r).push(Box::new(
                 move |t| r.with_entity(|e| e.assert(t, a, handle))));
         }
         {
             let r = Arc::clone(r);
-            self.actor.cleanup_actions.insert(
+            self.state.cleanup_actions.insert(
                 handle,
-                CleanupAction::Remote(Arc::clone(&r.mailbox), Box::new(
+                CleanupAction::ForAnother(Arc::clone(&r.mailbox), Box::new(
                     move |t| r.with_entity(|e| e.retract(t, handle)))));
         }
         handle
     }
 
-    pub fn assert_immediate_self<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
+    pub fn assert_for_myself<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         self.immediate_oid(r);
         let handle = crate::next_handle();
         {
             let r = Arc::clone(r);
-            self.immediate_self.push(Box::new(
+            self.pending.for_myself.push(Box::new(
                 move |t| r.with_entity(|e| e.assert(t, a, handle))));
         }
         {
             let r = Arc::clone(r);
-            self.actor.cleanup_actions.insert(
+            self.state.cleanup_actions.insert(
                 handle,
-                CleanupAction::ImmediateSelf(Box::new(
+                CleanupAction::ForMyself(Box::new(
                     move |t| r.with_entity(|e| e.retract(t, handle)))));
         }
         handle
     }
 
     pub fn retract(&mut self, handle: Handle) {
-        if let Some(d) = self.actor.cleanup_actions.remove(&handle) {
-            self.retract_known_ref(d)
-        }
-    }
-
-    fn retract_known_ref(&mut self, d: CleanupAction) {
-        match d {
-            CleanupAction::Remote(mailbox, action) =>
-                self.queue_for_mailbox(&mailbox).push(action),
-            CleanupAction::ImmediateSelf(action) =>
-                self.immediate_self.push(action),
+        if let Some(d) = self.state.cleanup_actions.remove(&handle) {
+            self.pending.execute_cleanup_action(d)
         }
     }
 
     pub fn message<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, m: M) {
         let r = Arc::clone(r);
-        self.queue_for(&r).push(Box::new(
+        self.pending.queue_for(&r).push(Box::new(
             move |t| r.with_entity(|e| e.message(t, m))))
     }
 
-    pub fn message_immediate_self<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, m: M) {
+    pub fn message_for_myself<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, m: M) {
         self.immediate_oid(r);
         let r = Arc::clone(r);
-        self.immediate_self.push(Box::new(
+        self.pending.for_myself.push(Box::new(
             move |t| r.with_entity(|e| e.message(t, m))))
     }
 
     pub fn sync<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
         let r = Arc::clone(r);
-        self.queue_for(&r).push(Box::new(
+        self.pending.queue_for(&r).push(Box::new(
             move |t| r.with_entity(|e| e.sync(t, peer))))
+    }
+
+    pub fn debtor(&self) -> &Arc<Debtor> {
+        &self.pending.debtor
+    }
+
+    pub fn deliver(&mut self) {
+        self.pending.deliver();
+    }
+}
+
+impl EventBuffer {
+    fn new(debtor: Arc<Debtor>) -> Self {
+        EventBuffer {
+            debtor,
+            queues: HashMap::new(),
+            for_myself: Vec::new(),
+        }
+    }
+
+    fn execute_cleanup_action(&mut self, d: CleanupAction) {
+        match d {
+            CleanupAction::ForAnother(mailbox, action) =>
+                self.queue_for_mailbox(&mailbox).push(action),
+            CleanupAction::ForMyself(action) =>
+                self.for_myself.push(action),
+        }
     }
 
     fn queue_for<M>(&mut self, r: &Arc<Ref<M>>) -> &mut PendingEventQueue {
@@ -279,8 +370,8 @@ impl<'activation> Activation<'activation> {
     }
 
     fn deliver(&mut self) {
-        if !self.immediate_self.is_empty() {
-            panic!("Unprocessed immediate_self events remain at deliver() time");
+        if !self.for_myself.is_empty() {
+            panic!("Unprocessed for_myself events remain at deliver() time");
         }
         for (_actor_id, (tx, turn)) in std::mem::take(&mut self.queues).into_iter() {
             let _ = send_actions(&tx, &self.debtor, turn);
@@ -288,7 +379,7 @@ impl<'activation> Activation<'activation> {
     }
 }
 
-impl<'activation> Drop for Activation<'activation> {
+impl Drop for EventBuffer {
     fn drop(&mut self) {
         self.deliver()
     }
@@ -407,15 +498,19 @@ impl Actor {
         let actor_id = crate::next_actor_id();
         // tracing::trace!(id = actor_id, "Actor::new");
         Actor {
-            actor_id,
-            tx,
             rx,
-            mailbox: Weak::new(),
-            cleanup_actions: Map::new(),
-            next_task_id: 0,
-            linked_tasks: Map::new(),
-            exit_hooks: Vec::new(),
-            exit_status: None,
+            ac_ref: ActorRef {
+                actor_id,
+                state: Arc::new(RwLock::new(ActorState::Running(RunningActor {
+                    actor_id,
+                    tx,
+                    mailbox: Weak::new(),
+                    cleanup_actions: Map::new(),
+                    next_task_id: 0,
+                    linked_tasks: Map::new(),
+                    exit_hooks: Vec::new(),
+                }))),
+            },
         }
     }
 
@@ -429,14 +524,121 @@ impl Actor {
     }
 
     pub fn create_and_start_inert<M>(name: tracing::Span) -> Arc<Ref<M>> {
-        let mut ac = Self::new();
-        let r = ac.create_inert();
+        let ac = Self::new();
+        let r = ac.ac_ref.write(|s| s.unwrap().expect_running().create_inert());
         ac.start(name);
         r
     }
 
-    pub fn id(&self) -> ActorId {
-        self.actor_id
+    pub fn boot<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        mut self,
+        name: tracing::Span,
+        boot: F,
+    ) -> ActorHandle {
+        name.record("actor_id", &self.ac_ref.actor_id);
+        tokio::spawn(async move {
+            tracing::trace!("start");
+            self.run(boot).await;
+            let result = self.ac_ref.exit_status().expect("terminated");
+            match &result {
+                Ok(()) => tracing::trace!("normal stop"),
+                Err(e) => tracing::error!("error stop: {}", e),
+            }
+            result
+        }.instrument(name))
+    }
+
+    pub fn start(self, name: tracing::Span) -> ActorHandle {
+        self.boot(name, |_ac| Ok(()))
+    }
+
+    fn terminate(&mut self, result: ActorResult) {
+        let _ = Activation::for_actor_exit(
+            &self.ac_ref, Debtor::new(crate::name!("shutdown")), |_| Some(result));
+    }
+
+    async fn run<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        boot: F,
+    ) -> () {
+        if Activation::for_actor(&self.ac_ref, Debtor::new(crate::name!("boot")), boot).is_err() {
+            return;
+        }
+
+        loop {
+            match self.rx.recv().await {
+                None => {
+                    return self.terminate(Err(error("Unexpected channel close", _Any::new(false))));
+                }
+                Some(m) => match m {
+                    SystemMessage::Release => {
+                        tracing::trace!("SystemMessage::Release");
+                        return self.terminate(Ok(()));
+                    }
+                    SystemMessage::Turn(mut loaned_item) => {
+                        let mut actions = std::mem::take(&mut loaned_item.item);
+                        let r = Activation::for_actor(
+                            &self.ac_ref, Arc::clone(&loaned_item.debtor), |t| {
+                                loop {
+                                    for action in actions.into_iter() { action(t)? }
+                                    actions = std::mem::take(&mut t.pending.for_myself);
+                                    if actions.is_empty() { break; }
+                                }
+                                Ok(())
+                            });
+                        if r.is_err() { return; }
+                    }
+                    SystemMessage::Crash(e) => {
+                        tracing::trace!("SystemMessage::Crash({:?})", &e);
+                        return self.terminate(Err(e));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn panicked_err() -> Option<ActorResult> {
+    Some(Err(error("Actor panicked", _Any::new(false))))
+}
+
+impl ActorRef {
+    pub fn read<R, F: FnOnce(Option<&ActorState>) -> R>(&self, f: F) -> R {
+        match self.state.read() {
+            Err(_) => f(None),
+            Ok(g) => f(Some(&*g)),
+        }
+    }
+
+    pub fn write<R, F: FnOnce(Option<&mut ActorState>) -> R>(&self, f: F) -> R {
+        match self.state.write() {
+            Err(_) => f(None),
+            Ok(mut g) => f(Some(&mut *g)),
+        }
+    }
+
+    pub fn exit_status(&self) -> Option<ActorResult> {
+        self.read(|s| s.map_or_else(
+            panicked_err,
+            |state| match state {
+                ActorState::Running(_) => None,
+                ActorState::Terminated { exit_status } => Some((**exit_status).clone()),
+            }))
+    }
+}
+
+impl ActorState {
+    fn expect_running(&mut self) -> &mut RunningActor {
+        match self {
+            ActorState::Terminated { .. } => panic!("Expected a running actor"),
+            ActorState::Running(r) => r,
+        }
+    }
+}
+
+impl RunningActor {
+    pub fn shutdown(&self) {
+        let _ = self.tx.send(SystemMessage::Release);
     }
 
     fn mailbox(&mut self) -> Arc<Mailbox> {
@@ -453,9 +655,8 @@ impl Actor {
         }
     }
 
-    pub fn shutdown(&mut self) {
-        let _ = self.tx.send(SystemMessage::Release);
-        ()
+    pub fn inert_entity<M>(&mut self) -> Arc<Ref<M>> {
+        self.create(InertEntity)
     }
 
     pub fn create<M, E: Entity<M> + Send + Sync + 'static>(&mut self, e: E) -> Arc<Ref<M>> {
@@ -471,93 +672,14 @@ impl Actor {
         })
     }
 
-    pub fn boot<F: 'static + Send + for<'a> FnOnce(&'a mut Activation) -> BoxFuture<'a, ActorResult>>(
-        mut self,
-        name: tracing::Span,
-        boot: F,
-    ) -> ActorHandle {
-        name.record("actor_id", &self.id());
-        tokio::spawn(async move {
-            tracing::trace!("start");
-            let result = self.run(boot).await;
-            self.exit_status = Some(Arc::new(result.clone()));
-            {
-                let mut t = Activation::new(&mut self, Debtor::new(crate::name!("shutdown")));
-                for action in std::mem::take(&mut t.actor.exit_hooks) {
-                    if let Err(err) = action(&mut t) {
-                        tracing::error!(err = debug(err), "error in exit hook");
-                    }
-                }
-            }
-            match &result {
-                Ok(()) => {
-                    tracing::trace!("normal stop");
-                    ()
-                }
-                Err(e) => tracing::error!("error stop: {}", e),
-            }
-            result
-        }.instrument(name))
-    }
-
-    pub fn start(self, name: tracing::Span) -> ActorHandle {
-        self.boot(name, |_ac| Box::pin(ready(Ok(()))))
-    }
-
-    async fn run<F: 'static + Send + for<'a> FnOnce(&'a mut Activation) -> BoxFuture<'a, ActorResult>>(
-        &mut self,
-        boot: F,
-    ) -> ActorResult {
-        let _id = self.id();
-        // tracing::trace!(_id, "boot");
-        boot(&mut Activation::new(self, Debtor::new(crate::name!("boot")))).await?;
-        // tracing::trace!(_id, "run");
-        loop {
-            match self.rx.recv().await {
-                None =>
-                    Err(error("Unexpected channel close", _Any::new(false)))?,
-                Some(m) => {
-                    let should_stop = self.handle(m).await?;
-                    if should_stop {
-                        return Ok(());
-                    }
-                }
-            }
-        }
-    }
-
     pub fn add_exit_hook<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>) {
         let r = Arc::clone(r);
-        self.exit_hooks.push(Box::new(move |t| {
-            let exit_status = Arc::clone(t.actor.exit_status.as_ref().expect("exited"));
+        self.exit_hooks.push(Box::new(move |t, exit_status| {
             r.with_entity(|e| e.exit_hook(t, &exit_status))
         }))
     }
 
-    async fn handle(&mut self, m: SystemMessage) -> Result<bool, Error> {
-        match m {
-            SystemMessage::Release => {
-                tracing::trace!("SystemMessage::Release");
-                Ok(true)
-            }
-            SystemMessage::Turn(mut loaned_item) => {
-                let mut actions = std::mem::take(&mut loaned_item.item);
-                let mut t = Activation::new(self, Arc::clone(&loaned_item.debtor));
-                loop {
-                    for action in actions.into_iter() { action(&mut t)? }
-                    actions = std::mem::take(&mut t.immediate_self);
-                    if actions.is_empty() { break; }
-                }
-                Ok(false)
-            }
-            SystemMessage::Crash(e) => {
-                tracing::trace!("SystemMessage::Crash({:?})", &e);
-                Err(e)?
-            }
-        }
-    }
-
-    pub fn linked_task<F: futures::Future<Output = ActorResult> + Send + 'static>(
+    pub fn linked_task<F: 'static + Send + futures::Future<Output = ActorResult>>(
         &mut self,
         name: tracing::Span,
         boot: F,
@@ -600,17 +722,21 @@ impl Actor {
 impl Drop for Actor {
     fn drop(&mut self) {
         self.rx.close();
+    }
+}
 
+impl Drop for RunningActor {
+    fn drop(&mut self) {
         for (_task_id, token) in std::mem::take(&mut self.linked_tasks).into_iter() {
             token.cancel();
         }
 
         let to_clear = std::mem::take(&mut self.cleanup_actions);
         {
-            let mut t = Activation::new(self, Debtor::new(crate::name!("drop")));
+            let mut b = EventBuffer::new(Debtor::new(crate::name!("drop")));
             for (_handle, r) in to_clear.into_iter() {
                 tracing::trace!(h = debug(&_handle), "retract on termination");
-                t.retract_known_ref(r);
+                b.execute_cleanup_action(r);
             }
         }
 

@@ -3,6 +3,7 @@ pub use super::schemas::internal_protocol::_Ptr;
 pub use super::schemas::internal_protocol::Error;
 
 use preserves::value::NestedValue;
+use preserves::value::Value;
 use preserves_schema::support::ParseError;
 
 impl std::error::Error for Error {}
@@ -17,6 +18,21 @@ pub fn error<Detail>(message: &str, detail: Detail) -> Error where _Any: From<De
     Error {
         message: message.to_owned(),
         detail: _Any::from(detail),
+    }
+}
+
+pub fn encode_error(result: Result<(), Error>) -> _Any {
+    match result {
+        Ok(()) => {
+            let mut r = Value::record(Value::symbol("Ok").wrap(), 1);
+            r.fields_vec_mut().push(Value::record(Value::symbol("tuple").wrap(), 0).finish().wrap());
+            r.finish().wrap()
+        }
+        Err(e) => {
+            let mut r = Value::record(Value::symbol("Err").wrap(), 1);
+            r.fields_vec_mut().push((&e).into());
+            r.finish().wrap()
+        }
     }
 }
 

@@ -167,7 +167,7 @@ pub fn connect_stream<I, O, E, F>(
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
     let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into()))).unwrap();
-    let main_entity = t.actor.create(during::entity(initial_state).on_asserted(move |state, t, a: _Any| {
+    let main_entity = t.state.create(during::entity(initial_state).on_asserted(move |state, t, a: _Any| {
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
@@ -187,7 +187,7 @@ impl TunnelRelay {
     ) -> Option<Arc<Cap>> {
         let (output_tx, output_rx) = unbounded_channel();
         let mut tr = TunnelRelay {
-            self_ref: t.actor.create_inert(),
+            self_ref: t.state.create_inert(),
             input_buffer: BytesMut::with_capacity(1024),
             output: output_tx,
             inbound_assertions: Map::new(),
@@ -203,12 +203,12 @@ impl TunnelRelay {
             tr.membranes.export_ref(ir, true);
         }
         let result = initial_oid.map(
-            |io| Arc::clone(&tr.membranes.import_oid(t.actor, &tr.self_ref, io).obj));
+            |io| Arc::clone(&tr.membranes.import_oid(t.state, &tr.self_ref, io).obj));
         let tr_ref = Arc::clone(&tr.self_ref);
         tr_ref.become_entity(tr);
-        t.actor.add_exit_hook(&tr_ref);
-        t.actor.linked_task(crate::name!("writer"), output_loop(o, output_rx));
-        t.actor.linked_task(crate::name!("reader"), input_loop(i, tr_ref));
+        t.state.add_exit_hook(&tr_ref);
+        t.state.linked_task(crate::name!("writer"), output_loop(o, output_rx));
+        t.state.linked_task(crate::name!("reader"), input_loop(i, tr_ref));
         result
     }
 
@@ -222,7 +222,6 @@ impl TunnelRelay {
                 Err(*b)
             },
             P::Packet::Turn(b) => {
-                let t = &mut Activation::new(t.actor, Arc::clone(&t.debtor));
                 let P::Turn(events) = *b;
                 for P::TurnEvent { oid, event } in events {
                     let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.0.clone())) {
@@ -282,7 +281,7 @@ impl TunnelRelay {
                                     Ok(())
                                 }
                             }
-                            let k = t.actor.create(SyncPeer {
+                            let k = t.state.create(SyncPeer {
                                 tr: Arc::clone(&self.self_ref),
                                 peer: Arc::clone(&peer),
                             });
@@ -290,6 +289,7 @@ impl TunnelRelay {
                         }
                     }
                 }
+                t.deliver();
                 Ok(())
             }
         }
@@ -358,7 +358,7 @@ impl Membranes {
 
     fn import_oid(
         &mut self,
-        ac: &mut Actor,
+        ac: &mut RunningActor,
         relay_ref: &TunnelRelayRef,
         oid: sturdy::Oid,
     ) -> Arc<WireSymbol> {
@@ -379,7 +379,7 @@ impl Membranes {
                 let oid = *b;
                 match self.imported.oid_map.get(&oid) {
                     Some(ws) => Ok(Arc::clone(&ws.obj)),
-                    None => Ok(Arc::clone(&self.import_oid(t.actor, relay_ref, oid).obj)),
+                    None => Ok(Arc::clone(&self.import_oid(t.state, relay_ref, oid).obj)),
                 }
             }
             sturdy::WireRef::Yours { oid: b, attenuation } => {
@@ -397,7 +397,7 @@ impl Membranes {
                                })?)
                         }
                     }
-                    None => Ok(Cap::new(&t.actor.create_inert())),
+                    None => Ok(Cap::new(&t.state.inert_entity())),
                 }
             }
         }
@@ -544,7 +544,7 @@ impl Entity<RelayProtocol> for TunnelRelay {
     fn message(&mut self, t: &mut Activation, m: RelayProtocol) -> ActorResult {
         match m {
             RelayProtocol::Input(RelayInput::Eof) => {
-                t.actor.shutdown();
+                t.state.shutdown();
             }
             RelayProtocol::Input(RelayInput::Packet(bs)) => {
                 let mut src = BytesBinarySource::new(&bs);
@@ -579,7 +579,7 @@ impl Entity<RelayProtocol> for TunnelRelay {
             }
             RelayProtocol::Output(oid, event) => {
                 if self.pending_outbound.is_empty() {
-                    t.message_immediate_self(&self.self_ref, RelayProtocol::Flush);
+                    t.message_for_myself(&self.self_ref, RelayProtocol::Flush);
                 }
                 let turn_event = P::TurnEvent {
                     oid: P::Oid(oid.0),
@@ -595,7 +595,7 @@ impl Entity<RelayProtocol> for TunnelRelay {
             }
             RelayProtocol::Flush => {
                 let events = std::mem::take(&mut self.pending_outbound);
-                self.send_packet(&t.debtor, events.len(), P::Packet::Turn(Box::new(P::Turn(events))))?
+                self.send_packet(&t.debtor(), events.len(), P::Packet::Turn(Box::new(P::Turn(events))))?
             }
         }
         Ok(())
@@ -604,7 +604,7 @@ impl Entity<RelayProtocol> for TunnelRelay {
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
         if let Err(e) = &**exit_status {
             let e = e.clone();
-            self.send_packet(&t.debtor, 1, P::Packet::Error(Box::new(e)))?;
+            self.send_packet(&t.debtor(), 1, P::Packet::Error(Box::new(e)))?;
         }
         Ok(())
     }

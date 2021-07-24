@@ -33,30 +33,36 @@ fn says(who: _Any, what: _Any) -> _Any {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
     syndicate::actor::start_debt_reporter();
-    Actor::new().boot(syndicate::name!("producer"), |t| Box::pin(async move {
-        let config = Config::from_args();
-        let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
-        let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-        relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
-            let padding: _Any = Value::ByteString(vec![0; config.bytes_padding]).wrap();
-            let action_count = config.action_count;
-            let debtor = Debtor::new(syndicate::name!("debtor"));
-            t.actor.linked_task(syndicate::name!("sender"), async move {
-                loop {
-                    debtor.ensure_clear_funds().await;
-                    let mut events: PendingEventQueue = Vec::new();
-                    for _ in 0..action_count {
-                        let ds = Arc::clone(&ds);
-                        let padding = padding.clone();
-                        events.push(Box::new(move |t| ds.underlying.with_entity(
-                            |e| e.message(t, says(Value::from("producer").wrap(), padding)))));
-                    }
-                    external_events(&ds.underlying.mailbox, &debtor, events)?;
-                }
-            });
-            Ok(None)
-        });
-        Ok(())
-    })).await??;
+    Actor::new().boot(syndicate::name!("producer"), |t| {
+        let ac = t.actor.clone();
+        let boot_debtor = Arc::clone(t.debtor());
+        Ok(t.state.linked_task(tracing::Span::current(), async move {
+            let config = Config::from_args();
+            let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
+            let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
+            Activation::for_actor(&ac, boot_debtor, |t| {
+                relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
+                    let padding: _Any = Value::ByteString(vec![0; config.bytes_padding]).wrap();
+                    let action_count = config.action_count;
+                    let debtor = Debtor::new(syndicate::name!("debtor"));
+                    t.state.linked_task(syndicate::name!("sender"), async move {
+                        loop {
+                            debtor.ensure_clear_funds().await;
+                            let mut events: PendingEventQueue = Vec::new();
+                            for _ in 0..action_count {
+                                let ds = Arc::clone(&ds);
+                                let padding = padding.clone();
+                                events.push(Box::new(move |t| ds.underlying.with_entity(
+                                    |e| e.message(t, says(Value::from("producer").wrap(), padding)))));
+                            }
+                            external_events(&ds.underlying.mailbox, &debtor, events)?;
+                        }
+                    });
+                    Ok(None)
+                });
+                Ok(())
+            })
+        }))
+    }).await??;
     Ok(())
 }

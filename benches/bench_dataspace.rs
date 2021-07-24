@@ -30,7 +30,7 @@ struct ShutdownEntity;
 
 impl Entity<_Any> for ShutdownEntity {
     fn message(&mut self, t: &mut Activation, _m: _Any) -> ActorResult {
-        t.actor.shutdown();
+        t.state.shutdown();
         Ok(())
     }
 }
@@ -52,24 +52,25 @@ pub fn bench_pub(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let start = Instant::now();
             rt.block_on(async move {
-                let mut ac = Actor::new();
-                let ds = ac.create(Dataspace::new());
-                let shutdown = ac.create(ShutdownEntity);
-                let debtor = Debtor::new(syndicate::name!("sender-debtor"));
-                ac.linked_task(syndicate::name!("sender"), async move {
-                    for _ in 0..iters {
-                        let ds = Arc::clone(&ds);
-                        external_event(&Arc::clone(&ds.mailbox), &debtor, Box::new(
-                            move |t| ds.with_entity(
-                                |e| e.message(t, says(_Any::new("bench_pub"),
-                                                      Value::ByteString(vec![]).wrap())))))?
-                    }
-                    external_event(&Arc::clone(&shutdown.mailbox), &debtor, Box::new(
-                        move |t| shutdown.with_entity(
-                            |e| e.message(t, _Any::new(true)))))?;
+                Actor::new().boot(syndicate::name!("dataspace"), move |t| {
+                    let ds = t.state.create(Dataspace::new());
+                    let shutdown = t.state.create(ShutdownEntity);
+                    let debtor = Debtor::new(syndicate::name!("sender-debtor"));
+                    t.state.linked_task(syndicate::name!("sender"), async move {
+                        for _ in 0..iters {
+                            let ds = Arc::clone(&ds);
+                            external_event(&Arc::clone(&ds.mailbox), &debtor, Box::new(
+                                move |t| ds.with_entity(
+                                    |e| e.message(t, says(_Any::new("bench_pub"),
+                                                          Value::ByteString(vec![]).wrap())))))?
+                        }
+                        external_event(&Arc::clone(&shutdown.mailbox), &debtor, Box::new(
+                            move |t| shutdown.with_entity(
+                                |e| e.message(t, _Any::new(true)))))?;
+                        Ok(())
+                    });
                     Ok(())
-                });
-                ac.start(syndicate::name!("dataspace")).await.unwrap().unwrap();
+                }).await.unwrap().unwrap();
             });
             start.elapsed()
         })
@@ -79,24 +80,25 @@ pub fn bench_pub(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let start = Instant::now();
             rt.block_on(async move {
-                let ds = Cap::new(&Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));
+                let ds = Cap::new(
+                    &Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));
                 let turn_count = Arc::new(AtomicU64::new(0));
-
-                struct Receiver(Arc<AtomicU64>);
-                impl Entity<_Any> for Receiver {
-                    fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
-                        self.0.fetch_add(1, Ordering::Relaxed);
-                        Ok(())
-                    }
-                }
-
-                let mut ac = Actor::new();
-                let shutdown = Cap::new(&ac.create(ShutdownEntity));
-                let receiver = Cap::new(&ac.create(Receiver(Arc::clone(&turn_count))));
 
                 {
                     let iters = iters.clone();
-                    ac.boot(syndicate::name!("dataspace"), move |t| Box::pin(async move {
+                    let turn_count = Arc::clone(&turn_count);
+                    Actor::new().boot(syndicate::name!("consumer"), move |t| {
+                        struct Receiver(Arc<AtomicU64>);
+                        impl Entity<_Any> for Receiver {
+                            fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
+                                self.0.fetch_add(1, Ordering::Relaxed);
+                                Ok(())
+                            }
+                        }
+
+                        let shutdown = Cap::new(&t.state.create(ShutdownEntity));
+                        let receiver = Cap::new(&t.state.create(Receiver(Arc::clone(&turn_count))));
+
                         ds.assert(t, &Observe {
                             pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
                                 ctor: Box::new(p::CRec {
@@ -124,8 +126,8 @@ pub fn bench_pub(c: &mut Criterion) {
                             })),
                             observer: shutdown,
                         });
-                        let debtor = t.debtor.clone();
-                        t.actor.linked_task(syndicate::name!("sender"), async move {
+                        let debtor = Arc::clone(t.debtor());
+                        t.state.linked_task(syndicate::name!("sender"), async move {
                             for _ in 0..iters {
                                 let ds = Arc::clone(&ds);
                                 external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
@@ -142,8 +144,9 @@ pub fn bench_pub(c: &mut Criterion) {
                             Ok(())
                         });
                         Ok(())
-                    })).await.unwrap().unwrap();
+                    }).await.unwrap().unwrap();
                 }
+
                 let actual_turns = turn_count.load(Ordering::SeqCst);
                 if actual_turns != iters {
                     panic!("Expected {}, got {} messages", iters, actual_turns);
