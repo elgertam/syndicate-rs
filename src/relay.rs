@@ -37,7 +37,7 @@ use std::convert::TryFrom;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
@@ -75,7 +75,7 @@ pub enum Output {
     Bytes(Pin<Box<dyn AsyncWrite + Send>>),
 }
 
-type TunnelRelayRef = Arc<RwLock<Option<TunnelRelay>>>;
+type TunnelRelayRef = Arc<Mutex<Option<TunnelRelay>>>;
 
 // There are other kinds of relay. This one has exactly two participants connected to each other.
 pub struct TunnelRelay
@@ -178,7 +178,7 @@ impl TunnelRelay {
         initial_oid: Option<sturdy::Oid>,
     ) -> Option<Arc<Cap>> {
         let (output_tx, output_rx) = unbounded_channel();
-        let tr_ref = Arc::new(RwLock::new(None));
+        let tr_ref = Arc::new(Mutex::new(None));
         let self_entity = t.state.create(TunnelRefEntity {
             relay_ref: Arc::clone(&tr_ref),
         });
@@ -200,7 +200,7 @@ impl TunnelRelay {
         }
         let result = initial_oid.map(
             |io| Arc::clone(&tr.membranes.import_oid(t.state, &tr_ref, io).obj));
-        *tr_ref.write().unwrap() = Some(tr);
+        *tr_ref.lock().unwrap() = Some(tr);
         t.state.linked_task(crate::name!("writer"), output_loop(o, output_rx));
         t.state.linked_task(crate::name!("reader"), input_loop(t.actor.clone(), i, tr_ref));
         t.state.add_exit_hook(&self_entity);
@@ -303,7 +303,7 @@ impl TunnelRelay {
                             impl Entity<Synced> for SyncPeer {
                                 fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
                                     self.peer.message(t, _Any::new(true));
-                                    let mut g = self.relay_ref.write().expect("unpoisoned");
+                                    let mut g = self.relay_ref.lock().expect("unpoisoned");
                                     let tr = g.as_mut().expect("initialized");
                                     if let Some(ws) = tr.membranes.imported.ref_map.get(&self.peer) {
                                         let ws = Arc::clone(ws); // cloned to release the borrow to permit the release
@@ -511,7 +511,7 @@ async fn input_loop(
                         Ok(t.state.shutdown())
                     }),
                     Some(bs) => Activation::for_actor(&ac, Arc::clone(&debtor), |t| {
-                        let mut g = relay.write().expect("unpoisoned");
+                        let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_datagram(t, &bs?)
                     })?,
@@ -540,7 +540,7 @@ async fn input_loop(
                         Ok(t.state.shutdown())
                     }),
                     _ => Activation::for_actor(&ac, Arc::clone(&debtor), |t| {
-                        let mut g = relay.write().expect("unpoisoned");
+                        let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_stream(t, &mut buf)
                     })?,
@@ -573,7 +573,7 @@ async fn output_loop(
 
 impl Entity<()> for TunnelRefEntity {
     fn message(&mut self, t: &mut Activation, _m: ()) -> ActorResult {
-        let mut g = self.relay_ref.write().expect("unpoisoned");
+        let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         let events = std::mem::take(&mut tr.pending_outbound);
         tr.send_packet(&t.debtor(), events.len(), P::Packet::Turn(Box::new(P::Turn(events))))
@@ -582,7 +582,7 @@ impl Entity<()> for TunnelRefEntity {
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
         if let Err(e) = &**exit_status {
             let e = e.clone();
-            let mut g = self.relay_ref.write().expect("unpoisoned");
+            let mut g = self.relay_ref.lock().expect("unpoisoned");
             let tr = g.as_mut().expect("initialized");
             tr.send_packet(&t.debtor(), 1, P::Packet::Error(Box::new(e)))?;
         }
@@ -592,7 +592,7 @@ impl Entity<()> for TunnelRefEntity {
 
 impl Entity<_Any> for RelayEntity {
     fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
-        let mut g = self.relay_ref.write().expect("unpoisoned");
+        let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         tr.send_event(t, self.oid.clone(), P::Event::Assert(Box::new(P::Assert {
             assertion: P::Assertion(a),
@@ -600,21 +600,21 @@ impl Entity<_Any> for RelayEntity {
         })))
     }
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
-        let mut g = self.relay_ref.write().expect("unpoisoned");
+        let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         tr.send_event(t, self.oid.clone(), P::Event::Retract(Box::new(P::Retract {
             handle: P::Handle(h.into()),
         })))
     }
     fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
-        let mut g = self.relay_ref.write().expect("unpoisoned");
+        let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         tr.send_event(t, self.oid.clone(), P::Event::Message(Box::new(P::Message {
             body: P::Assertion(m)
         })))
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
-        let mut g = self.relay_ref.write().expect("unpoisoned");
+        let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         tr.send_event(t, self.oid.clone(), P::Event::Sync(Box::new(P::Sync {
             peer: Cap::guard(&peer)

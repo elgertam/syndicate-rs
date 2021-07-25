@@ -21,6 +21,7 @@ use std::collections::hash_map::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -120,7 +121,7 @@ pub struct Actor {
 #[derive(Clone)]
 pub struct ActorRef {
     pub actor_id: ActorId,
-    state: Arc<RwLock<ActorState>>,
+    state: Arc<Mutex<ActorState>>,
 }
 
 pub enum ActorState {
@@ -142,7 +143,7 @@ pub struct RunningActor {
 
 pub struct Ref<M> {
     pub mailbox: Arc<Mailbox>,
-    pub target: RwLock<Option<Box<dyn Entity<M>>>>,
+    pub target: Mutex<Option<Box<dyn Entity<M>>>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -241,7 +242,7 @@ impl<'activation> Activation<'activation> {
     ) -> Option<ActorResult> where
         F: FnOnce(&mut Activation) -> Option<ActorResult>,
     {
-        match actor.state.write() {
+        match actor.state.lock() {
             Err(_) => panicked_err(),
             Ok(mut g) => match &mut *g {
                 ActorState::Terminated { exit_status } =>
@@ -501,7 +502,7 @@ impl Actor {
             rx,
             ac_ref: ActorRef {
                 actor_id,
-                state: Arc::new(RwLock::new(ActorState::Running(RunningActor {
+                state: Arc::new(Mutex::new(ActorState::Running(RunningActor {
                     actor_id,
                     tx,
                     mailbox: Weak::new(),
@@ -525,7 +526,7 @@ impl Actor {
 
     pub fn create_and_start_inert<M>(name: tracing::Span) -> Arc<Ref<M>> {
         let ac = Self::new();
-        let r = ac.ac_ref.write(|s| s.unwrap().expect_running().create_inert());
+        let r = ac.ac_ref.access(|s| s.unwrap().expect_running().create_inert());
         ac.start(name);
         r
     }
@@ -603,22 +604,15 @@ fn panicked_err() -> Option<ActorResult> {
 }
 
 impl ActorRef {
-    pub fn read<R, F: FnOnce(Option<&ActorState>) -> R>(&self, f: F) -> R {
-        match self.state.read() {
-            Err(_) => f(None),
-            Ok(g) => f(Some(&*g)),
-        }
-    }
-
-    pub fn write<R, F: FnOnce(Option<&mut ActorState>) -> R>(&self, f: F) -> R {
-        match self.state.write() {
+    pub fn access<R, F: FnOnce(Option<&mut ActorState>) -> R>(&self, f: F) -> R {
+        match self.state.lock() {
             Err(_) => f(None),
             Ok(mut g) => f(Some(&mut *g)),
         }
     }
 
     pub fn exit_status(&self) -> Option<ActorResult> {
-        self.read(|s| s.map_or_else(
+        self.access(|s| s.map_or_else(
             panicked_err,
             |state| match state {
                 ActorState::Running(_) => None,
@@ -668,7 +662,7 @@ impl RunningActor {
     pub fn create_inert<M>(&mut self) -> Arc<Ref<M>> {
         Arc::new(Ref {
             mailbox: self.mailbox(),
-            target: RwLock::new(None),
+            target: Mutex::new(None),
         })
     }
 
@@ -756,7 +750,7 @@ pub fn external_events(mailbox: &Arc<Mailbox>, debtor: &Arc<Debtor>, events: Pen
 
 impl<M> Ref<M> {
     pub fn become_entity<E: 'static + Entity<M>>(&self, e: E) {
-        let mut g = self.target.write().expect("unpoisoned");
+        let mut g = self.target.lock().expect("unpoisoned");
         if g.is_some() {
             panic!("Double initialization of Ref");
         }
@@ -764,7 +758,7 @@ impl<M> Ref<M> {
     }
 
     pub fn with_entity<R, F: FnOnce(&mut dyn Entity<M>) -> R>(&self, f: F) -> R {
-        let mut g = self.target.write().expect("unpoisoned");
+        let mut g = self.target.lock().expect("unpoisoned");
         f(g.as_mut().expect("initialized").as_mut())
     }
 }
@@ -815,7 +809,7 @@ impl Cap {
     {
         Self::new(&Arc::new(Ref {
             mailbox: Arc::clone(&underlying.mailbox),
-            target: RwLock::new(Some(Box::new(Guard { underlying: underlying.clone() }))),
+            target: Mutex::new(Some(Box::new(Guard { underlying: underlying.clone() }))),
         }))
     }
 
