@@ -40,7 +40,7 @@ pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
 pub struct Synced;
 
-pub trait Entity<M>: Send + Sync {
+pub trait Entity<M>: Send {
     fn assert(&mut self, _t: &mut Activation, _a: M, _h: Handle) -> ActorResult {
         Ok(())
     }
@@ -71,7 +71,7 @@ enum CleanupAction {
 }
 
 type CleanupActions = Map<Handle, CleanupAction>;
-pub type Action = Box<dyn Send + Sync + FnOnce(&mut Activation) -> ActorResult>;
+pub type Action = Box<dyn Send + FnOnce(&mut Activation) -> ActorResult>;
 pub type PendingEventQueue = Vec<Action>;
 
 // This is what other implementations call a "Turn", renamed here to
@@ -138,7 +138,7 @@ pub struct RunningActor {
     cleanup_actions: CleanupActions,
     next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
-    exit_hooks: Vec<Box<dyn Send + Sync + FnOnce(&mut Activation, &Arc<ActorResult>) -> ActorResult>>,
+    exit_hooks: Vec<Box<dyn Send + FnOnce(&mut Activation, &Arc<ActorResult>) -> ActorResult>>,
 }
 
 pub struct Ref<M> {
@@ -274,7 +274,7 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    pub fn assert<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
+    pub fn assert<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         let handle = crate::next_handle();
         {
             let r = Arc::clone(r);
@@ -291,7 +291,7 @@ impl<'activation> Activation<'activation> {
         handle
     }
 
-    pub fn assert_for_myself<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
+    pub fn assert_for_myself<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         self.immediate_oid(r);
         let handle = crate::next_handle();
         {
@@ -315,20 +315,20 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    pub fn message<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, m: M) {
+    pub fn message<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, m: M) {
         let r = Arc::clone(r);
         self.pending.queue_for(&r).push(Box::new(
             move |t| r.with_entity(|e| e.message(t, m))))
     }
 
-    pub fn message_for_myself<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, m: M) {
+    pub fn message_for_myself<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, m: M) {
         self.immediate_oid(r);
         let r = Arc::clone(r);
         self.pending.for_myself.push(Box::new(
             move |t| r.with_entity(|e| e.message(t, m))))
     }
 
-    pub fn sync<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
+    pub fn sync<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
         let r = Arc::clone(r);
         self.pending.queue_for(&r).push(Box::new(
             move |t| r.with_entity(|e| e.sync(t, peer))))
@@ -515,7 +515,7 @@ impl Actor {
         }
     }
 
-    pub fn create_and_start<M, E: Entity<M> + Send + Sync + 'static>(
+    pub fn create_and_start<M, E: Entity<M> + Send + 'static>(
         name: tracing::Span,
         e: E,
     ) -> Arc<Ref<M>> {
@@ -653,7 +653,7 @@ impl RunningActor {
         self.create(InertEntity)
     }
 
-    pub fn create<M, E: Entity<M> + Send + Sync + 'static>(&mut self, e: E) -> Arc<Ref<M>> {
+    pub fn create<M, E: Entity<M> + Send + 'static>(&mut self, e: E) -> Arc<Ref<M>> {
         let r = self.create_inert();
         r.become_entity(e);
         r
@@ -666,7 +666,7 @@ impl RunningActor {
         })
     }
 
-    pub fn add_exit_hook<M: 'static + Send + Sync>(&mut self, r: &Arc<Ref<M>>) {
+    pub fn add_exit_hook<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>) {
         let r = Arc::clone(r);
         self.exit_hooks.push(Box::new(move |t, exit_status| {
             r.with_entity(|e| e.exit_hook(t, &exit_status))
@@ -802,7 +802,7 @@ impl<M> std::fmt::Debug for Ref<M> {
 }
 
 impl Cap {
-    pub fn guard<M: 'static + Send + Sync>(underlying: &Arc<Ref<M>>) -> Arc<Self>
+    pub fn guard<M: 'static + Send>(underlying: &Arc<Ref<M>>) -> Arc<Self>
     where
         for<'a> &'a M: Into<_Any>,
         for<'a> M: TryFrom<&'a _Any>,

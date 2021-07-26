@@ -7,15 +7,15 @@ use std::sync::Arc;
 use std::marker::PhantomData;
 
 pub struct During<T>(Map<Handle, DuringRetractionHandler<T>>);
-pub type DuringRetractionHandler<T> = Box<dyn Send + Sync + FnOnce(&mut T, &mut Activation) -> ActorResult>;
+pub type DuringRetractionHandler<T> = Box<dyn Send + FnOnce(&mut T, &mut Activation) -> ActorResult>;
 pub type DuringResult<E> = Result<Option<DuringRetractionHandler<E>>, Error>;
 
 pub struct DuringEntity<M, E, Fa, Fm>
 where
-    M: 'static + Send + Sync,
-    E: 'static + Send + Sync,
-    Fa: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
-    Fm: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> ActorResult,
+    M: 'static + Send,
+    E: 'static + Send,
+    Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
+    Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
 {
     state: E,
     assertion_handler: Option<Fa>,
@@ -29,7 +29,7 @@ impl<T> During<T> {
         During(Map::new())
     }
 
-    pub fn await_retraction<F: 'static + Send + Sync + FnOnce(&mut T, &mut Activation) -> ActorResult>(
+    pub fn await_retraction<F: 'static + Send + FnOnce(&mut T, &mut Activation) -> ActorResult>(
         &mut self,
         h: Handle,
         f: F,
@@ -43,24 +43,24 @@ impl<T> During<T> {
     }
 }
 
-pub fn entity<M: 'static + Send + Sync, E>(
+pub fn entity<M: 'static + Send, E>(
     state: E
 ) -> DuringEntity<M,
                   E,
                   fn (&mut E, &mut Activation, M) -> DuringResult<E>,
                   fn (&mut E, &mut Activation, M) -> ActorResult>
 where
-    E: 'static + Send + Sync,
+    E: 'static + Send,
 {
     DuringEntity::new(state, None, None)
 }
 
 impl<M, E, Fa, Fm> DuringEntity<M, E, Fa, Fm>
 where
-    M: 'static + Send + Sync,
-    E: 'static + Send + Sync,
-    Fa: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
-    Fm: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> ActorResult,
+    M: 'static + Send,
+    E: 'static + Send,
+    Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
+    Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
 {
     pub fn new(state: E, assertion_handler: Option<Fa>, message_handler: Option<Fm>) -> Self {
         DuringEntity {
@@ -74,7 +74,7 @@ where
 
     pub fn on_asserted<Fa1>(self, assertion_handler: Fa1) -> DuringEntity<M, E, Fa1, Fm>
     where
-        Fa1: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
+        Fa1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     {
         DuringEntity {
             state: self.state,
@@ -87,7 +87,7 @@ where
 
     pub fn on_message<Fm1>(self, message_handler: Fm1) -> DuringEntity<M, E, Fa, Fm1>
     where
-        Fm1: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> ActorResult,
+        Fm1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
     {
         DuringEntity {
             state: self.state,
@@ -105,9 +105,9 @@ where
 
 impl<E, Fa, Fm> DuringEntity<_Any, E, Fa, Fm>
 where
-    E: 'static + Send + Sync,
-    Fa: 'static + Send + Sync + FnMut(&mut E, &mut Activation, _Any) -> DuringResult<E>,
-    Fm: 'static + Send + Sync + FnMut(&mut E, &mut Activation, _Any) -> ActorResult,
+    E: 'static + Send,
+    Fa: 'static + Send + FnMut(&mut E, &mut Activation, _Any) -> DuringResult<E>,
+    Fm: 'static + Send + FnMut(&mut E, &mut Activation, _Any) -> ActorResult,
 {
     pub fn create_cap(self, ac: &mut RunningActor) -> Arc<Cap>
     {
@@ -117,10 +117,10 @@ where
 
 impl<M, E, Fa, Fm> Entity<M> for DuringEntity<M, E, Fa, Fm>
 where
-    M: Send + Sync,
-    E: 'static + Send + Sync,
-    Fa: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
-    Fm: 'static + Send + Sync + FnMut(&mut E, &mut Activation, M) -> ActorResult,
+    M: Send,
+    E: 'static + Send,
+    Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
+    Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
 {
     fn assert(&mut self, t: &mut Activation, a: M, h: Handle) -> ActorResult {
         match &mut self.assertion_handler {

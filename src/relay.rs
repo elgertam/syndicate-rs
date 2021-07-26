@@ -153,8 +153,8 @@ pub fn connect_stream<I, O, E, F>(
 ) where
     I: 'static + Send + AsyncRead,
     O: 'static + Send + AsyncWrite,
-    E: 'static + Send + std::marker::Sync,
-    F: 'static + Send + std::marker::Sync + FnMut(&mut E, &mut Activation, Arc<Cap>) -> during::DuringResult<E>
+    E: 'static + Send,
+    F: 'static + Send + FnMut(&mut E, &mut Activation, Arc<Cap>) -> during::DuringResult<E>
 {
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
