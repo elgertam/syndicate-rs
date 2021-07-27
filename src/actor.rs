@@ -27,6 +27,7 @@ use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use tokio::select;
+use tokio::sync::Notify;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
 use tokio_util::sync::CancellationToken;
 
@@ -92,7 +93,7 @@ struct EventBuffer {
 pub struct Debtor {
     id: u64,
     debt: Arc<AtomicI64>,
-    // notify: Notify,
+    notify: Notify,
 }
 
 #[derive(Debug)]
@@ -394,7 +395,7 @@ impl Debtor {
         Arc::new(Debtor {
             id,
             debt,
-            // notify: Notify::new(),
+            notify: Notify::new(),
         })
     }
 
@@ -410,17 +411,17 @@ impl Debtor {
     pub fn repay(&self, token_count: usize) {
         let token_count: i64 = token_count.try_into().expect("manageable token count");
         let _old_debt = self.debt.fetch_sub(token_count, Ordering::Relaxed);
-        // if _old_debt - token_count <= *SYNDICATE_CREDIT {
-        //     self.notify.notify_one();
-        // }
+        if _old_debt - token_count <= *SYNDICATE_CREDIT {
+            self.notify.notify_one();
+        }
     }
 
     pub async fn ensure_clear_funds(&self) {
         let limit = *SYNDICATE_CREDIT;
-        tokio::task::yield_now().await;
+        // tokio::task::yield_now().await;
         while self.balance() > limit {
-            tokio::task::yield_now().await;
-            // self.notify.notified().await;
+            // tokio::task::yield_now().await;
+            self.notify.notified().await;
         }
     }
 }
