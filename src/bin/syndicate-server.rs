@@ -137,7 +137,7 @@ async fn run_connection(
     let mut buf = [0; 1]; // peek at the first byte to see what kind of connection to expect
     let (i, o) = match stream.peek(&mut buf).await? {
         1 => match buf[0] {
-            71 /* ASCII 'G' for "GET" */ => {
+            b'G' /* ASCII 'G' for "GET" */ => {
                 tracing::info!(protocol = display("websocket"), peer = debug(addr));
                 let s = tokio_tungstenite::accept_async(stream).await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
