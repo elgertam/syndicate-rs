@@ -227,17 +227,21 @@ async fn run_unix_listener(
     tracing::info!("Listening on {:?}", path_str);
     let listener = bind_unix_listener(&path).await?;
     loop {
-        let (stream, addr) = listener.accept().await?;
+        let (stream, _addr) = listener.accept().await?;
+        let peer = stream.peer_cred()?;
         let gateway = Arc::clone(&gateway);
         let config = Arc::clone(&config);
         let ac = Actor::new();
-        ac.boot(syndicate::name!(parent: None, "unix"),
+        ac.boot(syndicate::name!(parent: None,
+                                 "unix",
+                                 pid = debug(peer.pid().unwrap_or(-1)),
+                                 uid = peer.uid()),
                 move |t| Ok(t.state.linked_task(
                     tracing::Span::current(),
                     {
                         let ac = t.actor.clone();
                         async move {
-                            tracing::info!(protocol = display("unix"), peer = debug(addr));
+                            tracing::info!(protocol = display("unix"));
                             let (i, o) = stream.into_split();
                             run_connection(ac,
                                            relay::Input::Bytes(Box::pin(i)),
