@@ -1,9 +1,14 @@
 use structopt::StructOpt;
 
+use std::path::PathBuf;
+
 #[derive(Clone, StructOpt)]
 pub struct ServerConfig {
     #[structopt(short = "p", long = "port", default_value = "8001")]
     pub ports: Vec<u16>,
+
+    #[structopt(short = "s", long = "socket")]
+    pub sockets: Vec<PathBuf>,
 
     #[structopt(long, default_value = "10000")]
     pub overload_threshold: usize,
