@@ -374,7 +374,9 @@ impl TunnelRelay {
         let item = _Any::from(&p);
         // tracing::trace!(packet = debug(&item), "<--");
         if self.output_text {
-            Ok(TextWriter::encode::<_, _Any, _>(&mut self.membranes, &item)?.into_bytes())
+            let mut s = TextWriter::encode::<_, _Any, _>(&mut self.membranes, &item)?;
+            s.push('\n');
+            Ok(s.into_bytes())
         } else {
             Ok(PackedWriter::encode::<_, _Any, _>(&mut self.membranes, &item)?)
         }
