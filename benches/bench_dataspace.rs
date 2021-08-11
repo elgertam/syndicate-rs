@@ -110,7 +110,6 @@ pub fn bench_pub(c: &mut Criterion) {
                                         value: _Any::new("bench_pub"),
                                     }))),
                                     (1.into(), p::Pattern::DBind(Box::new(p::DBind {
-                                        name: "what".to_owned(),
                                         pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
                                     }))),
                                 ].into_iter()),
@@ -119,7 +118,6 @@ pub fn bench_pub(c: &mut Criterion) {
                         });
                         ds.assert(t, &Observe {
                             pattern: p::Pattern::DBind(Box::new(p::DBind {
-                                name: "shutdownTrigger".to_owned(),
                                 pattern: p::Pattern::DLit(Box::new(p::DLit {
                                     value: _Any::new(true),
                                 })),

@@ -327,11 +327,9 @@ fn handle_resolve(
                     value: queried_oid,
                 }))),
                 (1.into(), p::Pattern::DBind(Box::new(p::DBind {
-                    name: "key".to_owned(),
                     pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
                 }))),
                 (2.into(), p::Pattern::DBind(Box::new(p::DBind {
-                    name: "target".to_owned(),
                     pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
                 }))),
             ].into_iter())

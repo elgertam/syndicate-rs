@@ -75,7 +75,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }),
                             members: Map::from_iter(vec![
                                 (0.into(), p::Pattern::DBind(Box::new(p::DBind {
-                                    name: "who".to_owned(),
                                     pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
                                 }))),
                             ].into_iter()),
