@@ -892,7 +892,7 @@ checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 
 [[package]]
 name = "preserves"
-version = "0.16.0"
+version = "0.17.2"
 dependencies = [
  "base64",
  "dtoa",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "preserves-schema"
-version = "0.3.0"
+version = "0.4.3"
 dependencies = [
  "convert_case",
  "glob",
