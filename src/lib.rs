@@ -8,7 +8,11 @@ pub mod error;
 pub mod pattern;
 pub mod relay;
 pub mod rewrite;
-pub mod schemas;
+
+pub mod schemas {
+    include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
+}
+
 pub mod skeleton;
 pub mod sturdy;
 pub mod tracer;
