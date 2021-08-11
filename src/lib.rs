@@ -2,7 +2,6 @@ pub use preserves::value;
 
 pub mod actor;
 pub mod bag;
-pub mod config;
 pub mod dataspace;
 pub mod during;
 pub mod error;

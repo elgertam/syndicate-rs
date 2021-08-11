@@ -11,14 +11,13 @@ use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use structopt::StructOpt; // for from_args in main
+use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::dataspace::*;
 use syndicate::during::DuringResult;
 use syndicate::error::Error;
 use syndicate::error::error;
-use syndicate::config;
 use syndicate::relay;
 use syndicate::schemas::internal_protocol::_Any;
 use syndicate::schemas::gatekeeper;
@@ -31,12 +30,21 @@ use tokio::net::UnixStream;
 
 use tungstenite::Message;
 
+#[derive(Clone, StructOpt)]
+struct ServerConfig {
+    #[structopt(short = "p", long = "port", default_value = "8001")]
+    ports: Vec<u16>,
+
+    #[structopt(short = "s", long = "socket")]
+    sockets: Vec<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
     syndicate::actor::start_debt_reporter();
 
-    let config = Arc::new(config::ServerConfig::from_args());
+    let config = Arc::new(ServerConfig::from_args());
 
     {
         const BRIGHT_GREEN: &str = "\x1b[92m";
@@ -94,20 +102,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for port in config.ports.clone() {
         let gateway = Arc::clone(&gateway);
-        let config = Arc::clone(&config);
         daemons.push(Actor::new().boot(
             syndicate::name!("tcp", port),
             move |t| Ok(t.state.linked_task(syndicate::name!("listener"),
-                                            run_tcp_listener(gateway, port, config)))));
+                                            run_tcp_listener(gateway, port)))));
     }
 
     for path in config.sockets.clone() {
         let gateway = Arc::clone(&gateway);
-        let config = Arc::clone(&config);
         daemons.push(Actor::new().boot(
             syndicate::name!("unix", socket = debug(path.to_str().expect("representable UnixListener path"))),
             move |t| Ok(t.state.linked_task(syndicate::name!("listener"),
-                                            run_unix_listener(gateway, path, config)))));
+                                            run_unix_listener(gateway, path)))));
     }
 
     futures::future::join_all(daemons).await;
@@ -154,7 +160,6 @@ fn run_connection(
     i: relay::Input,
     o: relay::Output,
     gateway: Arc<Cap>,
-    config: Arc<config::ServerConfig>,
 ) -> ActorResult {
     Activation::for_actor(&ac, Debtor::new(syndicate::name!("start-session")), |t| {
         let exit_listener = t.state.create(ExitListener);
@@ -169,7 +174,6 @@ async fn detect_protocol(
     stream: TcpStream,
     gateway: Arc<Cap>,
     addr: std::net::SocketAddr,
-    config: Arc<config::ServerConfig>,
 ) -> ActorResult {
     let (i, o) = {
         let mut buf = [0; 1]; // peek at the first byte to see what kind of connection to expect
@@ -195,13 +199,12 @@ async fn detect_protocol(
             _ => unreachable!()
         }
     };
-    run_connection(ac, i, o, gateway, config)
+    run_connection(ac, i, o, gateway)
 }
 
 async fn run_tcp_listener(
     gateway: Arc<Cap>,
     port: u16,
-    config: Arc<config::ServerConfig>,
 ) -> ActorResult {
     let listen_addr = format!("0.0.0.0:{}", port);
     tracing::info!("Listening on {}", listen_addr);
@@ -209,19 +212,17 @@ async fn run_tcp_listener(
     loop {
         let (stream, addr) = listener.accept().await?;
         let gateway = Arc::clone(&gateway);
-        let config = Arc::clone(&config);
         let ac = Actor::new();
         ac.boot(syndicate::name!(parent: None, "tcp"),
                 move |t| Ok(t.state.linked_task(
                     tracing::Span::current(),
-                    detect_protocol(t.actor.clone(), stream, gateway, addr, config))));
+                    detect_protocol(t.actor.clone(), stream, gateway, addr))));
     }
 }
 
 async fn run_unix_listener(
     gateway: Arc<Cap>,
     path: PathBuf,
-    config: Arc<config::ServerConfig>,
 ) -> ActorResult {
     let path_str = path.to_str().expect("representable UnixListener path");
     tracing::info!("Listening on {:?}", path_str);
@@ -230,7 +231,6 @@ async fn run_unix_listener(
         let (stream, _addr) = listener.accept().await?;
         let peer = stream.peer_cred()?;
         let gateway = Arc::clone(&gateway);
-        let config = Arc::clone(&config);
         let ac = Actor::new();
         ac.boot(syndicate::name!(parent: None,
                                  "unix",
@@ -246,8 +246,7 @@ async fn run_unix_listener(
                             run_connection(ac,
                                            relay::Input::Bytes(Box::pin(i)),
                                            relay::Output::Bytes(Box::pin(o)),
-                                           gateway,
-                                           config)
+                                           gateway)
                         }
                     })));
     }
