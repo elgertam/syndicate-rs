@@ -1,4 +1,3 @@
-use super::ActorId;
 use super::schemas::sturdy;
 use super::error::Error;
 use super::error::encode_error;
@@ -31,6 +30,7 @@ use tracing::Instrument;
 
 pub type AnyValue = super::schemas::internal_protocol::_Any;
 
+pub type ActorId = u64;
 pub type Handle = u64;
 
 pub type ActorResult = Result<(), Error>;
@@ -160,6 +160,18 @@ where
 
 //---------------------------------------------------------------------------
 
+const BUMP_AMOUNT: u8 = 10;
+
+static NEXT_ACTOR_ID: AtomicU64 = AtomicU64::new(1);
+fn next_actor_id() -> ActorId {
+    NEXT_ACTOR_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
+}
+
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(3);
+fn next_handle() -> Handle {
+    NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
+}
+
 static NEXT_DEBTOR_ID: AtomicU64 = AtomicU64::new(4);
 
 preserves_schema::support::lazy_static! {
@@ -273,7 +285,7 @@ impl<'activation> Activation<'activation> {
     }
 
     pub fn assert<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
-        let handle = crate::next_handle();
+        let handle = next_handle();
         {
             let r = Arc::clone(r);
             self.pending.queue_for(&r).push(Box::new(
@@ -291,7 +303,7 @@ impl<'activation> Activation<'activation> {
 
     pub fn assert_for_myself<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         self.immediate_oid(r);
-        let handle = crate::next_handle();
+        let handle = next_handle();
         {
             let r = Arc::clone(r);
             self.pending.for_myself.push(Box::new(
@@ -494,7 +506,7 @@ impl Drop for Mailbox {
 impl Actor {
     pub fn new() -> Self {
         let (tx, rx) = unbounded_channel();
-        let actor_id = crate::next_actor_id();
+        let actor_id = next_actor_id();
         // tracing::trace!(id = actor_id, "Actor::new");
         Actor {
             rx,
