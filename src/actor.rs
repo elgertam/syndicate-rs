@@ -1,7 +1,3 @@
-pub use futures::future::BoxFuture;
-
-pub use std::future::ready;
-
 use super::ActorId;
 use super::schemas::sturdy;
 use super::error::Error;
