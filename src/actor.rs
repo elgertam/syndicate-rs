@@ -916,6 +916,12 @@ where
     }
 }
 
+/// A convenient Syndicate-enhanced variation on
+/// [`tracing::info_span`].
+///
+/// Includes fields `actor_id`, `task_id` and `oid`, so that they show
+/// up in those circumstances where they happen to be defined as part
+/// of the operation of the [`crate::actor`] module.
 #[macro_export]
 macro_rules! name {
     () => {tracing::info_span!(actor_id = tracing::field::Empty,
