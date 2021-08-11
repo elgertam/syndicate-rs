@@ -1,9 +1,7 @@
 use preserves_schema::compiler::*;
 
-use std::io::Error;
-
-fn main() -> Result<(), Error> {
-    let buildroot = std::env::current_dir()?;
+fn main() -> std::io::Result<()> {
+    let buildroot = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
 
     let mut gen_dir = buildroot.clone();
     gen_dir.push("src/schemas");
