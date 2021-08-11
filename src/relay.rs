@@ -162,7 +162,7 @@ pub fn connect_stream<I, O, E, F>(
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
     let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into()))).unwrap();
-    let main_entity = t.state.create(during::entity(initial_state).on_asserted(move |state, t, a: _Any| {
+    let main_entity = t.state.create(during::entity(initial_state).on_asserted(move |state, t, a: AnyValue| {
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
@@ -217,13 +217,13 @@ impl TunnelRelay {
         match src.peek() {
             Ok(v) => if v >= 128 {
                 self.output_text = false;
-                let mut r = src.packed::<_, _Any, _>(&mut dec);
+                let mut r = src.packed::<_, AnyValue, _>(&mut dec);
                 let res = P::Packet::deserialize(&mut r);
                 (res, r.source.index)
             } else {
                 self.output_text = true;
                 let mut dec = ViaCodec::new(dec);
-                let mut r = src.text::<_, _Any, _>(&mut dec);
+                let mut r = src.text::<_, AnyValue, _>(&mut dec);
                 let res = P::Packet::deserialize(&mut r);
                 (res, r.source.index)
             },
@@ -266,7 +266,7 @@ impl TunnelRelay {
                     let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.0.clone())) {
                         Some(ws) => &ws.obj,
                         None => return Err(error("Cannot deliver event: nonexistent oid",
-                                                 _Any::from(&P::TurnEvent { oid, event }))),
+                                                 AnyValue::from(&P::TurnEvent { oid, event }))),
                     };
                     match event {
                         P::Event::Assert(b) => {
@@ -278,14 +278,14 @@ impl TunnelRelay {
                             })?;
                             if let Some(local_handle) = target.assert(t, a) {
                                 if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, imported)) {
-                                    return Err(error("Assertion with duplicate handle", _Any::new(false)));
+                                    return Err(error("Assertion with duplicate handle", AnyValue::new(false)));
                                 }
                             }
                         }
                         P::Event::Retract(b) => {
                             let P::Retract { handle: remote_handle } = *b;
                             let (local_handle, imported) = match self.inbound_assertions.remove(&remote_handle) {
-                                None => return Err(error("Retraction of nonexistent handle", _Any::from(&remote_handle))),
+                                None => return Err(error("Retraction of nonexistent handle", AnyValue::from(&remote_handle))),
                                 Some(wss) => wss,
                             };
                             for ws in imported.into_iter() {
@@ -299,7 +299,7 @@ impl TunnelRelay {
                             a.foreach_embedded(&mut |r| {
                                 let ws = imported_membrane.acquire(r);
                                 match ws.ref_count.load(Ordering::SeqCst) {
-                                    1 => Err(error("Cannot receive transient reference", _Any::new(false))),
+                                    1 => Err(error("Cannot receive transient reference", AnyValue::new(false))),
                                     _ => Ok(())
                                 }
                             })?;
@@ -314,7 +314,7 @@ impl TunnelRelay {
                             }
                             impl Entity<Synced> for SyncPeer {
                                 fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
-                                    self.peer.message(t, _Any::new(true));
+                                    self.peer.message(t, AnyValue::new(true));
                                     let mut g = self.relay_ref.lock().expect("unpoisoned");
                                     let tr = g.as_mut().expect("initialized");
                                     if let Some(ws) = tr.membranes.imported.ref_map.get(&self.peer) {
@@ -360,7 +360,7 @@ impl TunnelRelay {
                 a.foreach_embedded(&mut |r| {
                     let ws = self.membranes.export_ref(Arc::clone(r), false);
                     match ws.ref_count.load(Ordering::SeqCst) {
-                        0 => Err(error("Cannot send transient reference", _Any::new(false))),
+                        0 => Err(error("Cannot send transient reference", AnyValue::new(false))),
                         _ => Ok(())
                     }
                 })?;
@@ -371,14 +371,14 @@ impl TunnelRelay {
     }
 
     fn encode_packet(&mut self, p: P::Packet) -> Result<Vec<u8>, Error> {
-        let item = _Any::from(&p);
+        let item = AnyValue::from(&p);
         // tracing::trace!(packet = debug(&item), "<--");
         if self.output_text {
-            let mut s = TextWriter::encode::<_, _Any, _>(&mut self.membranes, &item)?;
+            let mut s = TextWriter::encode::<_, AnyValue, _>(&mut self.membranes, &item)?;
             s.push('\n');
             Ok(s.into_bytes())
         } else {
-            Ok(PackedWriter::encode::<_, _Any, _>(&mut self.membranes, &item)?)
+            Ok(PackedWriter::encode::<_, AnyValue, _>(&mut self.membranes, &item)?)
         }
     }
 
@@ -485,7 +485,7 @@ impl DomainEncode<P::_Ptr> for Membranes {
         w: &mut W,
         d: &P::_Ptr,
     ) -> io::Result<()> {
-        w.write(&mut NoEmbeddedDomainCodec, &_Any::from(&match self.exported.ref_map.get(d) {
+        w.write(&mut NoEmbeddedDomainCodec, &AnyValue::from(&match self.exported.ref_map.get(d) {
             Some(ws) => sturdy::WireRef::Mine {
                 oid: Box::new(ws.oid.clone()),
             },
@@ -608,8 +608,8 @@ impl Entity<()> for TunnelRefEntity {
     }
 }
 
-impl Entity<_Any> for RelayEntity {
-    fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
+impl Entity<AnyValue> for RelayEntity {
+    fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
         let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         tr.send_event(t, self.oid.clone(), P::Event::Assert(Box::new(P::Assert {
@@ -624,7 +624,7 @@ impl Entity<_Any> for RelayEntity {
             handle: P::Handle(h.into()),
         })))
     }
-    fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
+    fn message(&mut self, t: &mut Activation, m: AnyValue) -> ActorResult {
         let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         tr.send_event(t, self.oid.clone(), P::Event::Message(Box::new(P::Message {

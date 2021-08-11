@@ -19,7 +19,7 @@ use tokio::runtime::Runtime;
 use tracing::Level;
 
 #[inline]
-fn says(who: _Any, what: _Any) -> _Any {
+fn says(who: AnyValue, what: AnyValue) -> AnyValue {
     let mut r = Value::simple_record("Says", 2);
     r.fields_vec_mut().push(who);
     r.fields_vec_mut().push(what);
@@ -28,8 +28,8 @@ fn says(who: _Any, what: _Any) -> _Any {
 
 struct ShutdownEntity;
 
-impl Entity<_Any> for ShutdownEntity {
-    fn message(&mut self, t: &mut Activation, _m: _Any) -> ActorResult {
+impl Entity<AnyValue> for ShutdownEntity {
+    fn message(&mut self, t: &mut Activation, _m: AnyValue) -> ActorResult {
         t.state.shutdown();
         Ok(())
     }
@@ -61,12 +61,12 @@ pub fn bench_pub(c: &mut Criterion) {
                             let ds = Arc::clone(&ds);
                             external_event(&Arc::clone(&ds.mailbox), &debtor, Box::new(
                                 move |t| ds.with_entity(
-                                    |e| e.message(t, says(_Any::new("bench_pub"),
+                                    |e| e.message(t, says(AnyValue::new("bench_pub"),
                                                           Value::ByteString(vec![]).wrap())))))?
                         }
                         external_event(&Arc::clone(&shutdown.mailbox), &debtor, Box::new(
                             move |t| shutdown.with_entity(
-                                |e| e.message(t, _Any::new(true)))))?;
+                                |e| e.message(t, AnyValue::new(true)))))?;
                         Ok(())
                     });
                     Ok(())
@@ -89,8 +89,8 @@ pub fn bench_pub(c: &mut Criterion) {
                     let turn_count = Arc::clone(&turn_count);
                     Actor::new().boot(syndicate::name!("consumer"), move |t| {
                         struct Receiver(Arc<AtomicU64>);
-                        impl Entity<_Any> for Receiver {
-                            fn message(&mut self, _t: &mut Activation, _m: _Any) -> ActorResult {
+                        impl Entity<AnyValue> for Receiver {
+                            fn message(&mut self, _t: &mut Activation, _m: AnyValue) -> ActorResult {
                                 self.0.fetch_add(1, Ordering::Relaxed);
                                 Ok(())
                             }
@@ -107,7 +107,7 @@ pub fn bench_pub(c: &mut Criterion) {
                                 }),
                                 members: Map::from_iter(vec![
                                     (0.into(), p::Pattern::DLit(Box::new(p::DLit {
-                                        value: _Any::new("bench_pub"),
+                                        value: AnyValue::new("bench_pub"),
                                     }))),
                                     (1.into(), p::Pattern::DBind(Box::new(p::DBind {
                                         pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
@@ -119,7 +119,7 @@ pub fn bench_pub(c: &mut Criterion) {
                         ds.assert(t, &Observe {
                             pattern: p::Pattern::DBind(Box::new(p::DBind {
                                 pattern: p::Pattern::DLit(Box::new(p::DLit {
-                                    value: _Any::new(true),
+                                    value: AnyValue::new(true),
                                 })),
                             })),
                             observer: shutdown,
@@ -130,14 +130,14 @@ pub fn bench_pub(c: &mut Criterion) {
                                 let ds = Arc::clone(&ds);
                                 external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
                                     move |t| ds.underlying.with_entity(
-                                        |e| e.message(t, says(_Any::new("bench_pub"),
+                                        |e| e.message(t, says(AnyValue::new("bench_pub"),
                                                               Value::ByteString(vec![]).wrap())))))?
                             }
                             {
                                 let ds = Arc::clone(&ds);
                                 external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
                                     move |t| ds.underlying.with_entity(
-                                        |e| e.message(t, _Any::new(true)))))?;
+                                        |e| e.message(t, AnyValue::new(true)))))?;
                             }
                             Ok(())
                         });

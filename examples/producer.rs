@@ -22,7 +22,7 @@ pub struct Config {
 }
 
 #[inline]
-fn says(who: _Any, what: _Any) -> _Any {
+fn says(who: AnyValue, what: AnyValue) -> AnyValue {
     let mut r = Value::simple_record("Says", 2);
     r.fields_vec_mut().push(who);
     r.fields_vec_mut().push(what);
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
             Activation::for_actor(&ac, boot_debtor, |t| {
                 relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
-                    let padding: _Any = Value::ByteString(vec![0; config.bytes_padding]).wrap();
+                    let padding: AnyValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
                     let action_count = config.action_count;
                     let debtor = Debtor::new(syndicate::name!("debtor"));
                     t.state.linked_task(syndicate::name!("sender"), async move {

@@ -29,7 +29,8 @@ use tokio_util::sync::CancellationToken;
 
 use tracing::Instrument;
 
-pub use super::schemas::internal_protocol::_Any;
+pub type AnyValue = super::schemas::internal_protocol::_Any;
+
 pub type Handle = u64;
 
 pub type ActorResult = Result<(), Error>;
@@ -145,14 +146,14 @@ pub struct Ref<M> {
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Cap {
-    pub underlying: Arc<Ref<_Any>>,
+    pub underlying: Arc<Ref<AnyValue>>,
     pub attenuation: Vec<CheckedCaveat>,
 }
 
 pub struct Guard<M>
 where
-    for<'a> &'a M: Into<_Any>,
-    for<'a> M: TryFrom<&'a _Any>,
+    for<'a> &'a M: Into<AnyValue>,
+    for<'a> M: TryFrom<&'a AnyValue>,
 {
     underlying: Arc<Ref<M>>
 }
@@ -190,9 +191,9 @@ pub fn start_debt_reporter() {
     });
 }
 
-impl TryFrom<&_Any> for Synced {
+impl TryFrom<&AnyValue> for Synced {
     type Error = ParseError;
-    fn try_from(value: &_Any) -> Result<Self, Self::Error> {
+    fn try_from(value: &AnyValue) -> Result<Self, Self::Error> {
         if let Some(true) = value.value().as_boolean() {
             Ok(Synced)
         } else {
@@ -201,9 +202,9 @@ impl TryFrom<&_Any> for Synced {
     }
 }
 
-impl From<&Synced> for _Any {
+impl From<&Synced> for AnyValue {
     fn from(_value: &Synced) -> Self {
-        _Any::new(true)
+        AnyValue::new(true)
     }
 }
 
@@ -449,7 +450,7 @@ fn send_actions(
 ) -> ActorResult {
     let token_count = t.len();
     tx.send(SystemMessage::Turn(LoanedItem::new(debtor, token_count, t)))
-        .map_err(|_| error("Target actor not running", _Any::new(false)))
+        .map_err(|_| error("Target actor not running", AnyValue::new(false)))
 }
 
 impl std::fmt::Debug for Mailbox {
@@ -566,7 +567,7 @@ impl Actor {
         loop {
             match self.rx.recv().await {
                 None => {
-                    return self.terminate(Err(error("Unexpected channel close", _Any::new(false))));
+                    return self.terminate(Err(error("Unexpected channel close", AnyValue::new(false))));
                 }
                 Some(m) => match m {
                     SystemMessage::Release => {
@@ -597,7 +598,7 @@ impl Actor {
 }
 
 fn panicked_err() -> Option<ActorResult> {
-    Some(Err(error("Actor panicked", _Any::new(false))))
+    Some(Err(error("Actor panicked", AnyValue::new(false))))
 }
 
 impl ActorRef {
@@ -801,8 +802,8 @@ impl<M> std::fmt::Debug for Ref<M> {
 impl Cap {
     pub fn guard<M: 'static + Send>(underlying: &Arc<Ref<M>>) -> Arc<Self>
     where
-        for<'a> &'a M: Into<_Any>,
-        for<'a> M: TryFrom<&'a _Any>,
+        for<'a> &'a M: Into<AnyValue>,
+        for<'a> M: TryFrom<&'a AnyValue>,
     {
         Self::new(&Arc::new(Ref {
             mailbox: Arc::clone(&underlying.mailbox),
@@ -810,7 +811,7 @@ impl Cap {
         }))
     }
 
-    pub fn new(underlying: &Arc<Ref<_Any>>) -> Arc<Self> {
+    pub fn new(underlying: &Arc<Ref<AnyValue>>) -> Arc<Self> {
         Arc::new(Cap {
             underlying: Arc::clone(underlying),
             attenuation: Vec::new(),
@@ -823,7 +824,7 @@ impl Cap {
         Ok(Arc::new(r))
     }
 
-    pub fn rewrite(&self, mut a: _Any) -> Option<_Any> {
+    pub fn rewrite(&self, mut a: AnyValue) -> Option<AnyValue> {
         for c in &self.attenuation {
             match c.rewrite(&a) {
                 Some(v) => a = v,
@@ -833,11 +834,11 @@ impl Cap {
         Some(a)
     }
 
-    pub fn assert<M: Into<_Any>>(&self, t: &mut Activation, m: M) -> Option<Handle> {
+    pub fn assert<M: Into<AnyValue>>(&self, t: &mut Activation, m: M) -> Option<Handle> {
         self.rewrite(m.into()).map(|m| t.assert(&self.underlying, m))
     }
 
-    pub fn message<M: Into<_Any>>(&self, t: &mut Activation, m: M) {
+    pub fn message<M: Into<AnyValue>>(&self, t: &mut Activation, m: M) {
         if let Some(m) = self.rewrite(m.into()) {
             t.message(&self.underlying, m)
         }
@@ -872,12 +873,12 @@ impl std::convert::From<&Cap> for IOValue {
     }
 }
 
-impl<M> Entity<_Any> for Guard<M>
+impl<M> Entity<AnyValue> for Guard<M>
 where
-    for<'a> &'a M: Into<_Any>,
-    for<'a> M: TryFrom<&'a _Any>,
+    for<'a> &'a M: Into<AnyValue>,
+    for<'a> M: TryFrom<&'a AnyValue>,
 {
-    fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
+    fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
         match M::try_from(&a) {
             Ok(a) => self.underlying.with_entity(|e| e.assert(t, a, h)),
             Err(_) => Ok(()),
@@ -886,7 +887,7 @@ where
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
         self.underlying.with_entity(|e| e.retract(t, h))
     }
-    fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
+    fn message(&mut self, t: &mut Activation, m: AnyValue) -> ActorResult {
         match M::try_from(&m) {
             Ok(m) => self.underlying.with_entity(|e| e.message(t, m)),
             Err(_) => Ok(()),

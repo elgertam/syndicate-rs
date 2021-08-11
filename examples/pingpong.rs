@@ -52,7 +52,7 @@ fn now() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("time after epoch").as_nanos() as u64
 }
 
-fn simple_record2(label: &str, v1: _Any, v2: _Any) -> _Any {
+fn simple_record2(label: &str, v1: AnyValue, v2: AnyValue) -> AnyValue {
     let mut r = Value::simple_record(label, 2);
     r.fields_vec_mut().push(v1);
     r.fields_vec_mut().push(v2);
@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let self_ref = t.state.create_inert();
                         self_ref.become_entity(
                             syndicate::entity(Arc::clone(&self_ref))
-                                .on_message(move |self_ref, t, m: _Any| {
+                                .on_message(move |self_ref, t, m: AnyValue| {
                                     match m.value().as_boolean() {
                                         Some(true) => {
                                             tracing::info!("{:?} turns, {:?} events in the last second",
@@ -146,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             } else {
                                                 if let None = current_reply {
                                                     turn_counter += 1;
-                                                    t.message_for_myself(&self_ref, _Any::new(false));
+                                                    t.message_for_myself(&self_ref, AnyValue::new(false));
                                                     let rtt_ns = now() - timestamp.value().to_u64()?;
                                                     rtt_ns_samples[rtt_batch_count] = rtt_ns;
                                                     rtt_batch_count += 1;
@@ -197,7 +197,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             external_event(&Arc::clone(&consumer.underlying.mailbox),
                                            &Debtor::new(syndicate::name!("debtor")),
                                            Box::new(move |t| consumer.underlying.with_entity(
-                                               |e| e.message(t, _Any::new(true)))))?;
+                                               |e| e.message(t, AnyValue::new(true)))))?;
                         }
                     });
 
@@ -206,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let action_count = c.action_count;
                         let debtor = Arc::clone(t.debtor());
                         t.state.linked_task(syndicate::name!("boot-ping"), async move {
-                            let padding: _Any = Value::ByteString(vec![0; bytes_padding]).wrap();
+                            let padding: AnyValue = Value::ByteString(vec![0; bytes_padding]).wrap();
                             for _ in 0..turn_count {
                                 let mut events: PendingEventQueue = vec![];
                                 let current_rec = simple_record2(send_label,

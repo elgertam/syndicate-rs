@@ -103,11 +103,11 @@ where
     }
 }
 
-impl<E, Fa, Fm> DuringEntity<_Any, E, Fa, Fm>
+impl<E, Fa, Fm> DuringEntity<AnyValue, E, Fa, Fm>
 where
     E: 'static + Send,
-    Fa: 'static + Send + FnMut(&mut E, &mut Activation, _Any) -> DuringResult<E>,
-    Fm: 'static + Send + FnMut(&mut E, &mut Activation, _Any) -> ActorResult,
+    Fa: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> DuringResult<E>,
+    Fm: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> ActorResult,
 {
     pub fn create_cap(self, ac: &mut RunningActor) -> Arc<Cap>
     {

@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             external_event(&Arc::clone(&consumer.underlying.mailbox),
                                            &Debtor::new(syndicate::name!("debtor")),
                                            Box::new(move |t| consumer.underlying.with_entity(
-                                               |e| e.message(t, _Any::new(true)))))?;
+                                               |e| e.message(t, AnyValue::new(true)))))?;
                         }
                     });
                     Ok(None)

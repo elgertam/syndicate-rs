@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
                     let debtor = Debtor::new(syndicate::name!("debtor"));
                     t.state.linked_task(syndicate::name!("sender"), async move {
-                        let presence: _Any = Value::simple_record1(
+                        let presence: AnyValue = Value::simple_record1(
                             "Present",
                             Value::from(std::process::id()).wrap()).wrap();
                         let handle = syndicate::next_handle();

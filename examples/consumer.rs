@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Activation::for_actor(&ac, boot_debtor, |t| {
                 relay::connect_stream(t, i, o, sturdyref, (), |_state, t, ds| {
                     let consumer = syndicate::entity(0)
-                        .on_message(|message_count, _t, m: _Any| {
+                        .on_message(|message_count, _t, m: AnyValue| {
                             if m.value().is_boolean() {
                                 tracing::info!("{:?} messages in the last second", message_count);
                                 *message_count = 0;
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             external_event(&Arc::clone(&consumer.underlying.mailbox),
                                            &Debtor::new(syndicate::name!("debtor")),
                                            Box::new(move |t| consumer.underlying.with_entity(
-                                               |e| e.message(t, _Any::new(true)))))?;
+                                               |e| e.message(t, AnyValue::new(true)))))?;
                         }
                     });
                     Ok(None)
