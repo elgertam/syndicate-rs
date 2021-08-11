@@ -2,12 +2,22 @@
 
 A Rust implementation of:
 
+ - the Syndicated Actor model (partial; includes assertion-based
+   communication, failure-handling, capability-style security, and
+   dataspace entities, but not (yet) facets as a structuring
+   principle);
+
  - the Syndicate network protocol, including
- - a high-speed Dataspace indexing structure (see
-   [HOWITWORKS.md](https://git.syndicate-lang.org/syndicate-lang/syndicate-rkt/src/commit/90c4c60699069b496491b81ee63b5a45ffd638cb/syndicate/HOWITWORKS.md)
-   from `syndicate-rkt`),
- - a standalone Syndicate protocol *broker* service, and
- - a handful of [examples](examples/).
+
+   - a high-speed Dataspace indexing structure
+     ([`src/skeleton.rs`](src/skeleton.rs); see also
+     [HOWITWORKS.md](https://git.syndicate-lang.org/syndicate-lang/syndicate-rkt/src/commit/90c4c60699069b496491b81ee63b5a45ffd638cb/syndicate/HOWITWORKS.md)
+     from `syndicate-rkt`) and
+
+   - a standalone Syndicate protocol "broker" service (roughly
+     comparable in scope and intent to D-Bus); and
+
+ - a handful of [example programs](examples/).
 
 ![The Syndicate/rs server running.](syndicate-rs-server.png)  
 *The Syndicate/rs server running.*
