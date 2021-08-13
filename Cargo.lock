@@ -1314,7 +1314,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-server"
-version = "0.2.0"
+version = "0.8.0-alpha.0"
 dependencies = [
  "futures",
  "structopt",
