@@ -6,11 +6,8 @@ use structopt::StructOpt;
 use syndicate::actor::*;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
-use syndicate::schemas::dataspace_patterns as p;
 use syndicate::sturdy;
-use syndicate::value::Map;
 use syndicate::value::NestedValue;
-use syndicate::value::Value;
 
 use tokio::net::TcpStream;
 
@@ -68,17 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     ds.assert(t, &Observe {
-                        pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
-                            ctor: Box::new(p::CRec {
-                                label: Value::symbol("Present").wrap(),
-                                arity: 1.into(),
-                            }),
-                            members: Map::from_iter(vec![
-                                (0.into(), p::Pattern::DBind(Box::new(p::DBind {
-                                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                                }))),
-                            ].into_iter()),
-                        })),
+                        pattern: syndicate_macros::pattern!("<Present $>"),
                         observer: Arc::clone(&consumer),
                     });
 
