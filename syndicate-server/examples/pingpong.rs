@@ -7,9 +7,7 @@ use structopt::StructOpt;
 use syndicate::actor::*;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
-use syndicate::schemas::dataspace_patterns as p;
 use syndicate::sturdy;
-use syndicate::value::Map;
 use syndicate::value::NestedValue;
 use syndicate::value::Value;
 
@@ -172,20 +170,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     ds.assert(t, &Observe {
-                        pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
-                            ctor: Box::new(p::CRec {
-                                label: Value::symbol(recv_label).wrap(),
-                                arity: 2.into(),
-                            }),
-                            members: Map::from_iter(vec![
-                                (0.into(), p::Pattern::DBind(Box::new(p::DBind {
-                                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                                }))),
-                                (1.into(), p::Pattern::DBind(Box::new(p::DBind {
-                                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                                }))),
-                            ].into_iter()),
-                        })),
+                        pattern: {
+                            let recv_label = Value::symbol(recv_label).wrap();
+                            syndicate_macros::pattern!("<=recv_label $ $>")
+                        },
                         observer: Arc::clone(&consumer),
                     });
 

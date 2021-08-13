@@ -25,41 +25,39 @@ fn lit<T: ToTokens>(e: T) -> TokenStream {
 }
 
 fn compile_pattern(v: &IOValue) -> TokenStream {
+    #[allow(non_snake_case)]
+    let P_ = quote!(syndicate::schemas::dataspace_patterns);
+    #[allow(non_snake_case)]
+    let V_ = quote!(syndicate::value);
+
     match v.value() {
-        Value::Boolean(b) => lit(quote!(syndicate::value::Value::from(#b).wrap())),
+        Value::Boolean(b) => lit(quote!(#V_::Value::from(#b).wrap())),
         Value::Float(f) => {
             let f = f.0;
-            lit(quote!(syndicate::value::Value::from(#f).wrap()))
+            lit(quote!(#V_::Value::from(#f).wrap()))
         }
         Value::Double(d) => {
             let d = d.0;
-            lit(quote!(syndicate::value::Value::from(#d).wrap()))
+            lit(quote!(#V_::Value::from(#d).wrap()))
         }
         Value::SignedInteger(i) => {
             let i = i128::try_from(i).expect("Literal integer out-of-range");
-            lit(quote!(syndicate::value::Value::from(#i).wrap()))
+            lit(quote!(#V_::Value::from(#i).wrap()))
         }
-        Value::String(s) => lit(quote!(syndicate::value::Value::from(#s).wrap())),
+        Value::String(s) => lit(quote!(#V_::Value::from(#s).wrap())),
         Value::ByteString(bs) => {
             let bs = LitByteStr::new(bs, Span::call_site().into());
-            lit(quote!(syndicate::value::Value::from(#bs).wrap()))
+            lit(quote!(#V_::Value::from(#bs).wrap()))
         }
         Value::Symbol(s) => match s.as_str() {
-            "$" => quote!(
-                syndicate::schemas::dataspace_patterns::Pattern::DBind(Box::new(
-                    syndicate::schemas::dataspace_patterns::DBind {
-                        pattern: syndicate::schemas::dataspace_patterns::Pattern::DDiscard(Box::new(
-                            syndicate::schemas::dataspace_patterns::DDiscard))
-                    }))).into(),
-            "_" => quote!(
-                syndicate::schemas::dataspace_patterns::Pattern::DDiscard(Box::new(
-                    syndicate::schemas::dataspace_patterns::DDiscard))).into(),
+            "$" => quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
+                pattern: #P_::Pattern::DDiscard(Box::new(#P_::DDiscard))
+            }))).into(),
+            "_" => quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard))).into(),
             _ => if s.starts_with("=") {
-                let id = Ident::new(&s[1..], Span::call_site().into());
-                lit(quote!(#id))
+                lit(Ident::new(&s[1..], Span::call_site().into()))
             } else {
-                // let s = LitStr::new(s, Span::call_site().into());
-                lit(quote!(syndicate::value::Value::symbol(#s).wrap()))
+                lit(quote!(#V_::Value::symbol(#s).wrap()))
             },
         }
         Value::Record(r) => {
@@ -67,6 +65,12 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
             match r.label().value().as_symbol() {
                 None => panic!("Record labels in patterns must be symbols"),
                 Some(label) => {
+                    let label_stx = if label.starts_with("=") {
+                        let id = Ident::new(&label[1..], Span::call_site().into());
+                        quote!(#id)
+                    } else {
+                        quote!(#V_::Value::symbol(#label).wrap())
+                    };
                     let mut i = 0;
                     let members = r.fields().iter().map(
                         |f| {
@@ -76,13 +80,13 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                             result
                         }).collect::<Vec<_>>();
                     quote!(
-                        syndicate::schemas::dataspace_patterns::Pattern::DCompound(Box::new(
-                            syndicate::schemas::dataspace_patterns::DCompound::Rec {
-                                ctor: Box::new(syndicate::schemas::dataspace_patterns::CRec {
-                                    label: syndicate::value::Value::symbol(#label).wrap(),
+                        #P_::Pattern::DCompound(Box::new(
+                            #P_::DCompound::Rec {
+                                ctor: Box::new(#P_::CRec {
+                                    label: #label_stx,
                                     arity: #arity .into(),
                                 }),
-                                members: syndicate::value::Map::from_iter(vec![#(#members),*])
+                                members: #V_::Map::from_iter(vec![#(#members),*])
                             }))).into()
                 }
             }
