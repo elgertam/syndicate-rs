@@ -4,6 +4,11 @@ version = "0.2.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
+description = "Support macros for programming with the Syndicated Actor model and Dataspaces."
+homepage = "https://syndicate-lang.org/"
+repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
+license = "Apache-2.0"
+
 [lib]
 proc-macro = true
 
