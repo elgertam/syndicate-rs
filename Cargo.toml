@@ -19,11 +19,11 @@ debug = true
 name = "syndicate"
 
 [build-dependencies]
-preserves-schema = "0.4.1"
+preserves-schema = "0.5.0"
 
 [dependencies]
 preserves = "0.17.1"
-preserves-schema = "0.4.1"
+preserves-schema = "0.5.0"
 
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = "0.11"
