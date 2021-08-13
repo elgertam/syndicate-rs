@@ -4,8 +4,9 @@ use syndicate::value::Value;
 use syndicate::value::text::iovalue_from_str;
 
 extern crate proc_macro;
-use proc_macro::Span;
-use proc_macro::TokenStream;
+
+use proc_macro2::Span;
+use proc_macro2::TokenStream;
 
 use quote::ToTokens;
 use quote::quote;
@@ -21,7 +22,17 @@ use syn::LitByteStr;
 fn lit<T: ToTokens>(e: T) -> TokenStream {
     quote!(
         syndicate::schemas::dataspace_patterns::Pattern::DLit(Box::new(
-            syndicate::schemas::dataspace_patterns::DLit { value: #e }))).into()
+            syndicate::schemas::dataspace_patterns::DLit { value: #e })))
+}
+
+fn compile_sequence_members(vs: &[IOValue]) -> Vec<TokenStream> {
+    let mut i = 0;
+    vs.iter().map(|f| {
+        let p = compile_pattern(f);
+        let result = quote!((#i .into(), #p));
+        i += 1;
+        result
+    }).collect::<Vec<_>>()
 }
 
 fn compile_pattern(v: &IOValue) -> TokenStream {
@@ -46,16 +57,16 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
         }
         Value::String(s) => lit(quote!(#V_::Value::from(#s).wrap())),
         Value::ByteString(bs) => {
-            let bs = LitByteStr::new(bs, Span::call_site().into());
+            let bs = LitByteStr::new(bs, Span::call_site());
             lit(quote!(#V_::Value::from(#bs).wrap()))
         }
         Value::Symbol(s) => match s.as_str() {
             "$" => quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
                 pattern: #P_::Pattern::DDiscard(Box::new(#P_::DDiscard))
-            }))).into(),
-            "_" => quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard))).into(),
+            }))),
+            "_" => quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard))),
             _ => if s.starts_with("=") {
-                lit(Ident::new(&s[1..], Span::call_site().into()))
+                lit(Ident::new(&s[1..], Span::call_site()))
             } else {
                 lit(quote!(#V_::Value::symbol(#s).wrap()))
             },
@@ -66,33 +77,28 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                 None => panic!("Record labels in patterns must be symbols"),
                 Some(label) => {
                     let label_stx = if label.starts_with("=") {
-                        let id = Ident::new(&label[1..], Span::call_site().into());
+                        let id = Ident::new(&label[1..], Span::call_site());
                         quote!(#id)
                     } else {
                         quote!(#V_::Value::symbol(#label).wrap())
                     };
-                    let mut i = 0;
-                    let members = r.fields().iter().map(
-                        |f| {
-                            let p: proc_macro2::TokenStream = compile_pattern(f).into();
-                            let result = quote!((#i .into(), #p));
-                            i += 1;
-                            result
-                        }).collect::<Vec<_>>();
-                    quote!(
-                        #P_::Pattern::DCompound(Box::new(
-                            #P_::DCompound::Rec {
-                                ctor: Box::new(#P_::CRec {
-                                    label: #label_stx,
-                                    arity: #arity .into(),
-                                }),
-                                members: #V_::Map::from_iter(vec![#(#members),*])
-                            }))).into()
+                    let members = compile_sequence_members(r.fields());
+                    quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Rec {
+                        ctor: Box::new(#P_::CRec {
+                            label: #label_stx,
+                            arity: #arity .into(),
+                        }),
+                        members: #V_::Map::from_iter(vec![#(#members),*])
+                    })))
                 }
             }
         }
-        // Value::Sequence(vs) => ,
-        // Value::Set(_) => panic!("Cannot match sets in patterns"),
+        // Value::Sequence(vs) => {
+        //     let arity = vs.len() as u128;
+        //     let mut i = 0;
+        //     let members = compile_sequence_members(vs);
+        //     quote!(
+        Value::Set(_) => panic!("Cannot match sets in patterns"),
         // Value::Dictionary(d) => ,
         // Value::Embedded(e) => panic!("aiee"),
         _ => todo!(),
@@ -100,13 +106,13 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
 }
 
 #[proc_macro]
-pub fn pattern(src: TokenStream) -> TokenStream {
+pub fn pattern(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
     if let Lit::Str(s) = parse_macro_input!(src as ExprLit).lit {
         match iovalue_from_str(&s.value()) {
             Ok(v) => {
                 let e = compile_pattern(&v);
                 // println!("{:#}", &e);
-                return e;
+                return e.into();
             }
             Err(_) => (),
         }
