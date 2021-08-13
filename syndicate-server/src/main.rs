@@ -1,10 +1,6 @@
 use futures::SinkExt;
 use futures::StreamExt;
 
-use preserves::value::Map;
-use preserves::value::NestedValue;
-use preserves::value::Value;
-
 use std::future::ready;
 use std::io;
 use std::iter::FromIterator;
@@ -22,6 +18,10 @@ use syndicate::relay;
 use syndicate::schemas::internal_protocol::_Any;
 use syndicate::schemas::gatekeeper;
 use syndicate::sturdy;
+
+use syndicate::value::Map;
+use syndicate::value::NestedValue;
+use syndicate::value::Value;
 
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;

@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "syndicate",
+  "syndicate-server",
   ]
 
 [patch.crates-io]

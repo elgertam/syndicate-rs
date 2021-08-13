@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let presence: AnyValue = Value::simple_record1(
                             "Present",
                             Value::from(std::process::id()).wrap()).wrap();
-                        let handle = syndicate::next_handle();
+                        let handle = syndicate::actor::next_handle();
                         let assert_e = || {
                             let ds = Arc::clone(&ds);
                             let presence = presence.clone();

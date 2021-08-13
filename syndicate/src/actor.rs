@@ -163,12 +163,12 @@ where
 const BUMP_AMOUNT: u8 = 10;
 
 static NEXT_ACTOR_ID: AtomicU64 = AtomicU64::new(1);
-fn next_actor_id() -> ActorId {
+pub fn next_actor_id() -> ActorId {
     NEXT_ACTOR_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(3);
-fn next_handle() -> Handle {
+pub fn next_handle() -> Handle {
     NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 

@@ -1283,7 +1283,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "syndicate-rs"
+name = "syndicate"
 version = "0.2.0"
 dependencies = [
  "bytes",
@@ -1294,10 +1294,21 @@ dependencies = [
  "openssl",
  "preserves",
  "preserves-schema",
- "serde",
- "serde_bytes",
  "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-futures",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "syndicate-server"
+version = "0.2.0"
+dependencies = [
+ "futures",
  "structopt",
+ "syndicate",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",

@@ -10,14 +10,14 @@ A Rust implementation of:
  - the Syndicate network protocol, including
 
    - a high-speed Dataspace indexing structure
-     ([`src/skeleton.rs`](src/skeleton.rs); see also
+     ([`skeleton.rs`](syndicate/src/skeleton.rs); see also
      [HOWITWORKS.md](https://git.syndicate-lang.org/syndicate-lang/syndicate-rkt/src/commit/90c4c60699069b496491b81ee63b5a45ffd638cb/syndicate/HOWITWORKS.md)
      from `syndicate-rkt`) and
 
    - a standalone Syndicate protocol "broker" service (roughly
      comparable in scope and intent to D-Bus); and
 
- - a handful of [example programs](examples/).
+ - a handful of [example programs](syndicate-server/examples/).
 
 ![The Syndicate/rs server running.](syndicate-rs-server.png)  
 *The Syndicate/rs server running.*
