@@ -35,14 +35,13 @@ fn compile_sequence_members(vs: &[IOValue]) -> Vec<TokenStream> {
     }).collect::<Vec<_>>()
 }
 
-fn compile_pattern(v: &IOValue) -> TokenStream {
+fn compile_value(v: &IOValue) -> TokenStream {
     #[allow(non_snake_case)]
-    let P_ = quote!(syndicate::schemas::dataspace_patterns);
-    #[allow(non_snake_case)]
-    let V_ = quote!(syndicate::value);
+    let V_: TokenStream = quote!(syndicate::value);
 
     match v.value() {
-        Value::Boolean(b) => lit(quote!(#V_::Value::from(#b).wrap())),
+        Value::Boolean(b) =>
+            lit(quote!(#V_::Value::from(#b).wrap())),
         Value::Float(f) => {
             let f = f.0;
             lit(quote!(#V_::Value::from(#f).wrap()))
@@ -55,21 +54,73 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
             let i = i128::try_from(i).expect("Literal integer out-of-range");
             lit(quote!(#V_::Value::from(#i).wrap()))
         }
-        Value::String(s) => lit(quote!(#V_::Value::from(#s).wrap())),
+        Value::String(s) =>
+            lit(quote!(#V_::Value::from(#s).wrap())),
         Value::ByteString(bs) => {
             let bs = LitByteStr::new(bs, Span::call_site());
             lit(quote!(#V_::Value::from(#bs).wrap()))
         }
+        Value::Symbol(s) =>
+            lit(quote!(#V_::Value::symbol(#s).wrap())),
+        Value::Record(r) => {
+            let arity = r.arity();
+            let label = compile_value(r.label());
+            let fs: Vec<_> = r.fields().iter().map(compile_value).collect();
+            quote!({
+                let ___r = #V_::Value::record(#label, #arity);
+                #(___r.fields_vec_mut().push(#fs);)*
+                ___r.finish()
+            })
+        }
+        Value::Sequence(vs) => {
+            let vs: Vec<_> = vs.iter().map(compile_value).collect();
+            quote!(#V_::Value::from(vec![#(#vs),*]))
+        }
+        Value::Set(vs) => {
+            let vs: Vec<_> = vs.iter().map(compile_value).collect();
+            quote!({
+                let ___s = #V_::Set::new();
+                #(___s.insert(#vs);)*
+                #V_::Value::from(___s)
+            })
+        }
+        Value::Dictionary(d) => {
+            let members: Vec<_> = d.iter().map(|(k, v)| {
+                let k = compile_value(k);
+                let v = compile_pattern(v);
+                quote!(___d.insert(#k, #v))
+            }).collect();
+            quote!({
+                let ___d = #V_::Map::new();
+                #(#members;)*
+                #V_::Value::from(___d)
+            })
+        }
+        Value::Embedded(_) =>
+            panic!("Embedded values in patterns not (yet?) supported"),
+    }
+}
+
+fn compile_pattern(v: &IOValue) -> TokenStream {
+    #[allow(non_snake_case)]
+    let P_: TokenStream = quote!(syndicate::schemas::dataspace_patterns);
+    #[allow(non_snake_case)]
+    let V_: TokenStream = quote!(syndicate::value);
+
+    match v.value() {
         Value::Symbol(s) => match s.as_str() {
-            "$" => quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
-                pattern: #P_::Pattern::DDiscard(Box::new(#P_::DDiscard))
-            }))),
-            "_" => quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard))),
-            _ => if s.starts_with("=") {
-                lit(Ident::new(&s[1..], Span::call_site()))
-            } else {
-                lit(quote!(#V_::Value::symbol(#s).wrap()))
-            },
+            "$" =>
+                quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
+                    pattern: #P_::Pattern::DDiscard(Box::new(#P_::DDiscard))
+                }))),
+            "_" =>
+                quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard))),
+            _ =>
+                if s.starts_with("=") {
+                    lit(Ident::new(&s[1..], Span::call_site()))
+                } else {
+                    lit(compile_value(v))
+                },
         }
         Value::Record(r) => {
             let arity = r.arity() as u128;
@@ -93,15 +144,30 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                 }
             }
         }
-        // Value::Sequence(vs) => {
-        //     let arity = vs.len() as u128;
-        //     let mut i = 0;
-        //     let members = compile_sequence_members(vs);
-        //     quote!(
-        Value::Set(_) => panic!("Cannot match sets in patterns"),
-        // Value::Dictionary(d) => ,
-        // Value::Embedded(e) => panic!("aiee"),
-        _ => todo!(),
+        Value::Sequence(vs) => {
+            let arity = vs.len() as u128;
+            let members = compile_sequence_members(vs);
+            quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Arr {
+                ctor: Box::new(#P_::CArr {
+                    arity: #arity .into(),
+                }),
+                members: #V_::Map::from_iter(vec![#(#members),*])
+            })))
+        }
+        Value::Set(_) =>
+            panic!("Cannot match sets in patterns"),
+        Value::Dictionary(d) => {
+            let members = d.iter().map(|(k, v)| {
+                let k = compile_value(k);
+                let v = compile_pattern(v);
+                quote!((#k, #v))
+            }).collect::<Vec<_>>();
+            quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Dict {
+                ctor: Box::new(#P_::CDict),
+                members: #V_::Map::from_iter(vec![#(#members),*])
+            })))
+        }
+        _ => lit(compile_value(v)),
     }
 }
 
