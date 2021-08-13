@@ -19,9 +19,7 @@ use syndicate::schemas::internal_protocol::_Any;
 use syndicate::schemas::gatekeeper;
 use syndicate::sturdy;
 
-use syndicate::value::Map;
 use syndicate::value::NestedValue;
-use syndicate::value::Value;
 
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
@@ -286,7 +284,6 @@ fn handle_resolve(
     a: gatekeeper::Resolve,
 ) -> DuringResult<Arc<Cap>> {
     use syndicate::schemas::dataspace;
-    use syndicate::schemas::dataspace_patterns as p;
 
     let gatekeeper::Resolve { sturdyref, observer } = a;
     let queried_oid = sturdyref.oid.clone();
@@ -316,23 +313,7 @@ fn handle_resolve(
         .create_cap(t.state);
     if let Some(oh) = ds.assert(t, &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
-        pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
-            ctor: Box::new(p::CRec {
-                label: Value::symbol("bind").wrap(),
-                arity: 3.into(),
-            }),
-            members: Map::from_iter(vec![
-                (0.into(), p::Pattern::DLit(Box::new(p::DLit {
-                    value: queried_oid,
-                }))),
-                (1.into(), p::Pattern::DBind(Box::new(p::DBind {
-                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                }))),
-                (2.into(), p::Pattern::DBind(Box::new(p::DBind {
-                    pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                }))),
-            ].into_iter())
-        })),
+        pattern: syndicate_macros::pattern!("<bind =queried_oid $ $>"),
         observer: handler,
     }) {
         Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))

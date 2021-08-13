@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 syndicate = { path = "../syndicate", version = "^0.2.0" }
+syndicate-macros = { path = "../syndicate-macros", version = "^0.2.0" }
 
 futures = "0.3.5"
 
