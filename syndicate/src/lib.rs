@@ -1,3 +1,6 @@
+#![doc = include_str!("../README.md")]
+
+#[doc(inline)]
 pub use preserves::value;
 
 pub mod actor;
@@ -17,8 +20,14 @@ pub mod skeleton;
 pub mod sturdy;
 pub mod tracer;
 
+#[doc(inline)]
 pub use during::entity;
 
+#[doc(inline)]
 pub use tracer::tracer;
+
+#[doc(inline)]
 pub use tracer::tracer_top;
+
+#[doc(inline)]
 pub use tracer::convenient_logging;

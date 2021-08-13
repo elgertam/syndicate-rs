@@ -1,3 +1,9 @@
+#![doc = concat!(
+    include_str!("../doc/actor.md"),
+    include_str!("../doc/what-is-an-actor.md"),
+    include_str!("../doc/flow-control.md"),
+)]
+
 use super::schemas::sturdy;
 use super::error::Error;
 use super::error::encode_error;
@@ -28,38 +34,146 @@ use tokio_util::sync::CancellationToken;
 
 use tracing::Instrument;
 
+/// The type of messages and assertions that can be exchanged among
+/// distributed objects, including via [dataspace][crate::dataspace].
+///
+/// A Preserves value where embedded references are instances of
+/// [`Cap`].
+///
+/// While [`Ref<M>`] can be used within a process, where arbitrary
+/// `M`-values can be exchanged among objects, for distributed or
+/// polyglot systems a *lingua franca* has to be chosen. `AnyValue` is
+/// that language.
 pub type AnyValue = super::schemas::internal_protocol::_Any;
 
+/// The type of process-unique actor IDs.
 pub type ActorId = u64;
+
+/// The type of process-unique assertion handles.
+///
+/// Used both as a reference to [retract][Entity::retract]
+/// previously-asserted assertions and as an indexing key to associate
+/// local state with some incoming assertion in an entity.
 pub type Handle = u64;
 
+/// Responses to events must have type `ActorResult`.
 pub type ActorResult = Result<(), Error>;
+
+/// When integrating actors with [tokio], an `ActorHandle` represents
+/// an actor mainloop task.
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
+/// A small protocol for indicating successful synchronisation with
+/// some peer; see [Entity::sync].
 pub struct Synced;
 
+/// The core metaprotocol implemented by every object.
+///
+/// Entities communicate with each other by asserting and retracting
+/// values and by sending messages (which can be understood very
+/// approximately as "infinitesimally brief" assertions of the message
+/// body).
+///
+/// Every assertion placed at a receiving entity *R* from some sending
+/// entity *S* lives so long as *S*'s actor survives, *R*'s actor
+/// survives, and *S* does not retract the assertion. Messages, by
+/// contrast, are transient.
+///
+/// Implementors of [`Entity`] accept assertions from peers in method
+/// [`assert`][Entity::assert]; notification of retraction of a
+/// previously-asserted value happens in method
+/// [`retract`][Entity::retract]; and notification of a message in
+/// method [`message`][Entity::message].
+///
+/// In addition, entities may *synchronise* with each other: the
+/// [`sync`][Entity::sync] method responds to a synchronisation
+/// request.
+///
+/// Finally, the Rust implementation of the Syndicated Actor model
+/// offers a hook for running some code at the end of an Entity's
+/// containing [`Actor`]'s lifetime
+/// ([`exit_hook`][Entity::exit_hook]).
+///
+/// # What to implement
+///
+/// The default implementations of the methods here generally do
+/// nothing; override them to add actual behaviour to your entity.
+///
+#[allow(unused_variables)]
 pub trait Entity<M>: Send {
-    fn assert(&mut self, _t: &mut Activation, _a: M, _h: Handle) -> ActorResult {
+    /// Receive notification of a new assertion from a peer.
+    ///
+    /// The `turn` parameter represents the current
+    /// [activation][Activation]; `assertion` is the value (of type
+    /// `M`) asserted; and `handle` is the process-unique name for
+    /// this particular assertion instance that will be used later
+    /// when it is [retracted][Entity::retract].
+    ///
+    /// The default implementation does nothing.
+    fn assert(&mut self, turn: &mut Activation, assertion: M, handle: Handle) -> ActorResult {
         Ok(())
     }
-    fn retract(&mut self, _t: &mut Activation, _h: Handle) -> ActorResult {
+
+    /// Receive notification of retraction of a previous assertion from a peer.
+    ///
+    /// This happens either when the asserting peer explicitly
+    /// retracts an assertion, or when its animating [`Actor`]
+    /// terminates.
+    ///
+    /// The `turn` parameter represents the current
+    /// [activation][Activation], and `handle` is the process-unique
+    /// name for this particular assertion instance being retracted.
+    ///
+    /// Note that no `assertion` value is provided: entities needing
+    /// to know the value that was previously asserted must remember
+    /// it themselves (perhaps in a [`Map`] keyed by `handle`).
+    ///
+    /// The default implementation does nothing.
+    fn retract(&mut self, turn: &mut Activation, handle: Handle) -> ActorResult {
         Ok(())
     }
-    fn message(&mut self, _t: &mut Activation, _m: M) -> ActorResult {
+
+    /// Receive notification of a message from a peer.
+    ///
+    /// The `turn` parameter represents the current
+    /// [activation][Activation], and `message` is the body of the
+    /// message sent.
+    ///
+    /// The default implementation does nothing.
+    fn message(&mut self, turn: &mut Activation, message: M) -> ActorResult {
         Ok(())
     }
-    fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
-        t.message(&peer, Synced);
+
+    /// Respond to a synchronisation request from a peer.
+    ///
+    /// Implementors of [`Entity`] will seldom override this. The
+    /// default implementation fulfils the synchronisation protocol by
+    /// responding to `peer` with a `Synced` message.
+    ///
+    /// In special cases, for example when an entity is a proxy for
+    /// some remote entity, the right thing to do is to forward the
+    /// synchronisation request on to another entity; in those cases,
+    /// overriding the default behaviour is appropriate.
+    fn sync(&mut self, turn: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
+        turn.message(&peer, Synced);
         Ok(())
     }
-    fn turn_end(&mut self, _t: &mut Activation) -> ActorResult {
-        Ok(())
-    }
-    fn exit_hook(&mut self, _t: &mut Activation, _exit_status: &Arc<ActorResult>) -> ActorResult {
+
+    /// Optional callback for running cleanup actions when the
+    /// entity's animating [Actor] terminates.
+    ///
+    /// Programs register an entity's exit hook with
+    /// [RunningActor::add_exit_hook].
+    ///
+    /// The default implementation does nothing.
+    fn exit_hook(&mut self, turn: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
         Ok(())
     }
 }
 
+/// An "inert" entity, that does nothing in response to any event delivered to it.
+///
+/// Useful as a placeholder or dummy in various situations.
 pub struct InertEntity;
 impl<M> Entity<M> for InertEntity {}
 
@@ -69,34 +183,58 @@ enum CleanupAction {
 }
 
 type CleanupActions = Map<Handle, CleanupAction>;
-pub type Action = Box<dyn Send + FnOnce(&mut Activation) -> ActorResult>;
-pub type PendingEventQueue = Vec<Action>;
 
-// This is what other implementations call a "Turn", renamed here to
-// avoid conflicts with schemas::internal_protocol::Turn.
+type Action = Box<dyn Send + FnOnce(&mut Activation) -> ActorResult>;
+type PendingEventQueue = Vec<Action>;
+
+/// The main API for programming Syndicated Actor objects.
+///
+/// Through `Activation`s, programs can access the state of their
+/// animating [`RunningActor`].
+///
+/// Many actions that an entity can perform are methods directly on
+/// `Activation`, but methods on the [`RunningActor`] and [`ActorRef`]
+/// values contained in an `Activation` are also sometimes useful.
+///
+/// This is what other implementations call a "Turn", renamed here to
+/// avoid conflicts with [`crate::schemas::internal_protocol::Turn`].
 pub struct Activation<'activation> {
+    /// A reference to the implementation-side of the currently active [`Actor`].
     pub actor: ActorRef,
+    /// A reference to the current state of the active [`Actor`].
     pub state: &'activation mut RunningActor,
     pending: EventBuffer,
 }
 
 struct EventBuffer {
-    pub debtor: Arc<Debtor>,
+    pub account: Arc<Account>,
     queues: HashMap<ActorId, (UnboundedSender<SystemMessage>, PendingEventQueue)>,
     for_myself: PendingEventQueue,
 }
 
+/// An `Account` records a "debt" in terms of outstanding work items.
+///
+/// It is part of the flow control mechanism - see [the module-level
+/// documentation][crate::actor#flow-control] for more.
 #[derive(Debug)]
-pub struct Debtor {
+pub struct Account {
     id: u64,
     debt: Arc<AtomicI64>,
     notify: Notify,
 }
 
+/// A `LoanedItem<T>` is a `T` with an associated `cost` recorded
+/// against it in the ledger of a given [`Account`].
+///
+/// It is part of the flow control mechanism - see [the module-level
+/// documentation][crate::actor#flow-control] for more.
 #[derive(Debug)]
 pub struct LoanedItem<T> {
-    pub debtor: Arc<Debtor>,
+    /// The account against which this loan is recorded.
+    pub account: Arc<Account>,
+    /// The cost of this particular `T`.
     pub cost: usize,
+    /// The underlying item itself.
     pub item: T,
 }
 
@@ -106,25 +244,38 @@ enum SystemMessage {
     Crash(Error),
 }
 
+/// The mechanism by which events are delivered to a given [`Actor`].
 pub struct Mailbox {
+    /// The ID of the actor this mailbox corresponds to.
     pub actor_id: ActorId,
     tx: UnboundedSender<SystemMessage>,
 }
 
+/// Each actor owns an instance of this structure.
+///
+/// It holds the receive-half of the actor's mailbox, plus a reference
+/// to the actor's private state.
 pub struct Actor {
     rx: UnboundedReceiver<SystemMessage>,
     ac_ref: ActorRef,
 }
 
+/// A reference to an actor's private [`ActorState`].
 #[derive(Clone)]
 pub struct ActorRef {
+    /// The ID of the referenced actor.
     pub actor_id: ActorId,
     state: Arc<Mutex<ActorState>>,
 }
 
+/// The state of an actor: either `Running` or `Terminated`.
 pub enum ActorState {
+    /// A non-terminated actor has an associated [`RunningActor`] state record.
     Running(RunningActor),
+    /// A terminated actor has an [`ActorResult`] as its `exit_status`.
     Terminated {
+        /// The exit status of the actor: `Ok(())` for normal
+        /// termination, `Err(_)` for abnormal termination.
         exit_status: Arc<ActorResult>,
     },
 }
@@ -139,17 +290,41 @@ pub struct RunningActor {
     exit_hooks: Vec<Box<dyn Send + FnOnce(&mut Activation, &Arc<ActorResult>) -> ActorResult>>,
 }
 
+/// A reference to an object that expects messages/assertions of type
+/// `M`.
+///
+/// The object can be in the same actor, in a different local
+/// (in-process) actor, or accessible across a network link.
 pub struct Ref<M> {
     pub mailbox: Arc<Mailbox>,
     pub target: Mutex<Option<Box<dyn Entity<M>>>>,
 }
 
+/// Specialization of `Ref<M>` for messages/assertions of type
+/// [`AnyValue`].
+///
+/// All polyglot and network communication is done in terms of `Cap`s.
+///
+/// `Cap`s can also be *attenuated* ([Hardy 2017]; [Miller 2006]) to
+/// reduce (or otherwise transform) the range of assertions and
+/// messages they can be used to send to their referent. The
+/// Syndicated Actor model uses
+/// [Macaroon](https://syndicate-lang.org/doc/capabilities/)-style
+/// capability attenuation.
+///
+/// [Hardy 2017]: http://cap-lore.com/CapTheory/Patterns/Attenuation.html
+/// [Miller 2006]: http://www.erights.org/talks/thesis/markm-thesis.pdf
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Cap {
     pub underlying: Arc<Ref<AnyValue>>,
     pub attenuation: Vec<CheckedCaveat>,
 }
 
+/// Adapter for converting an underlying [`Ref<M>`] to a [`Cap`].
+///
+/// The [`Entity`] implementation for `Guard` decodes `AnyValue`
+/// assertions/messages to type `M` before passing them on to the
+/// underlying entity.
 pub struct Guard<M>
 where
     for<'a> &'a M: Into<AnyValue>,
@@ -172,7 +347,7 @@ pub fn next_handle() -> Handle {
     NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 
-static NEXT_DEBTOR_ID: AtomicU64 = AtomicU64::new(4);
+static NEXT_ACCOUNT_ID: AtomicU64 = AtomicU64::new(4);
 
 preserves_schema::support::lazy_static! {
     pub static ref SYNDICATE_CREDIT: i64 = {
@@ -183,7 +358,7 @@ preserves_schema::support::lazy_static! {
         credit
     };
 
-    pub static ref DEBTORS: RwLock<Map<u64, (tracing::Span, Arc<AtomicI64>)>> =
+    pub static ref ACCOUNTS: RwLock<Map<u64, (tracing::Span, Arc<AtomicI64>)>> =
         RwLock::new(Map::new());
 }
 
@@ -193,7 +368,7 @@ pub fn start_debt_reporter() {
             let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
             loop {
                 timer.tick().await;
-                for (id, (name, debt)) in DEBTORS.read().unwrap().iter() {
+                for (id, (name, debt)) in ACCOUNTS.read().unwrap().iter() {
                     let _enter = name.enter();
                     tracing::info!(id, debt = debug(debt.load(Ordering::Relaxed)));
                 }
@@ -221,22 +396,22 @@ impl From<&Synced> for AnyValue {
 }
 
 impl<'activation> Activation<'activation> {
-    fn make(actor: &ActorRef, debtor: Arc<Debtor>, state: &'activation mut RunningActor) -> Self {
+    fn make(actor: &ActorRef, account: Arc<Account>, state: &'activation mut RunningActor) -> Self {
         Activation {
             actor: actor.clone(),
             state,
-            pending: EventBuffer::new(debtor),
+            pending: EventBuffer::new(account),
         }
     }
 
     pub fn for_actor<F>(
         actor: &ActorRef,
-        debtor: Arc<Debtor>,
+        account: Arc<Account>,
         f: F,
     ) -> ActorResult where
         F: FnOnce(&mut Activation) -> ActorResult,
     {
-        match Self::for_actor_exit(actor, debtor, |t| match f(t) {
+        match Self::for_actor_exit(actor, account, |t| match f(t) {
             Ok(()) => None,
             Err(e) => Some(Err(e)),
         }) {
@@ -247,7 +422,7 @@ impl<'activation> Activation<'activation> {
 
     pub fn for_actor_exit<F>(
         actor: &ActorRef,
-        debtor: Arc<Debtor>,
+        account: Arc<Account>,
         f: F,
     ) -> Option<ActorResult> where
         F: FnOnce(&mut Activation) -> Option<ActorResult>,
@@ -258,11 +433,11 @@ impl<'activation> Activation<'activation> {
                 ActorState::Terminated { exit_status } =>
                     Some((**exit_status).clone()),
                 ActorState::Running(state) =>
-                    match f(&mut Activation::make(actor, debtor, state)) {
+                    match f(&mut Activation::make(actor, account, state)) {
                         None => None,
                         Some(exit_status) => {
                             let exit_status = Arc::new(exit_status);
-                            let mut t = Activation::make(actor, Debtor::new(crate::name!("shutdown")), state);
+                            let mut t = Activation::make(actor, Account::new(crate::name!("shutdown")), state);
                             for action in std::mem::take(&mut t.state.exit_hooks) {
                                 if let Err(err) = action(&mut t, &exit_status) {
                                     tracing::error!(err = debug(err), "error in exit hook");
@@ -344,8 +519,8 @@ impl<'activation> Activation<'activation> {
             move |t| r.with_entity(|e| e.sync(t, peer))))
     }
 
-    pub fn debtor(&self) -> &Arc<Debtor> {
-        &self.pending.debtor
+    pub fn account(&self) -> &Arc<Account> {
+        &self.pending.account
     }
 
     pub fn deliver(&mut self) {
@@ -354,9 +529,9 @@ impl<'activation> Activation<'activation> {
 }
 
 impl EventBuffer {
-    fn new(debtor: Arc<Debtor>) -> Self {
+    fn new(account: Arc<Account>) -> Self {
         EventBuffer {
-            debtor,
+            account,
             queues: HashMap::new(),
             for_myself: Vec::new(),
         }
@@ -385,7 +560,7 @@ impl EventBuffer {
             panic!("Unprocessed for_myself events remain at deliver() time");
         }
         for (_actor_id, (tx, turn)) in std::mem::take(&mut self.queues).into_iter() {
-            let _ = send_actions(&tx, &self.debtor, turn);
+            let _ = send_actions(&tx, &self.account, turn);
         }
     }
 }
@@ -396,12 +571,12 @@ impl Drop for EventBuffer {
     }
 }
 
-impl Debtor {
+impl Account {
     pub fn new(name: tracing::Span) -> Arc<Self> {
-        let id = NEXT_DEBTOR_ID.fetch_add(1, Ordering::Relaxed);
+        let id = NEXT_ACCOUNT_ID.fetch_add(1, Ordering::Relaxed);
         let debt = Arc::new(AtomicI64::new(0));
-        DEBTORS.write().unwrap().insert(id, (name, Arc::clone(&debt)));
-        Arc::new(Debtor {
+        ACCOUNTS.write().unwrap().insert(id, (name, Arc::clone(&debt)));
+        Arc::new(Account {
             id,
             debt,
             notify: Notify::new(),
@@ -435,33 +610,33 @@ impl Debtor {
     }
 }
 
-impl Drop for Debtor {
+impl Drop for Account {
     fn drop(&mut self) {
-        DEBTORS.write().unwrap().remove(&self.id);
+        ACCOUNTS.write().unwrap().remove(&self.id);
     }
 }
 
 impl<T> LoanedItem<T> {
-    pub fn new(debtor: &Arc<Debtor>, cost: usize, item: T) -> Self {
-        debtor.borrow(cost);
-        LoanedItem { debtor: Arc::clone(debtor), cost, item }
+    pub fn new(account: &Arc<Account>, cost: usize, item: T) -> Self {
+        account.borrow(cost);
+        LoanedItem { account: Arc::clone(account), cost, item }
     }
 }
 
 impl<T> Drop for LoanedItem<T> {
     fn drop(&mut self) {
-        self.debtor.repay(self.cost);
+        self.account.repay(self.cost);
     }
 }
 
 #[must_use]
 fn send_actions(
     tx: &UnboundedSender<SystemMessage>,
-    debtor: &Arc<Debtor>,
+    account: &Arc<Account>,
     t: PendingEventQueue,
 ) -> ActorResult {
     let token_count = t.len();
-    tx.send(SystemMessage::Turn(LoanedItem::new(debtor, token_count, t)))
+    tx.send(SystemMessage::Turn(LoanedItem::new(account, token_count, t)))
         .map_err(|_| error("Target actor not running", AnyValue::new(false)))
 }
 
@@ -565,14 +740,14 @@ impl Actor {
 
     fn terminate(&mut self, result: ActorResult) {
         let _ = Activation::for_actor_exit(
-            &self.ac_ref, Debtor::new(crate::name!("shutdown")), |_| Some(result));
+            &self.ac_ref, Account::new(crate::name!("shutdown")), |_| Some(result));
     }
 
     async fn run<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
         boot: F,
     ) -> () {
-        if Activation::for_actor(&self.ac_ref, Debtor::new(crate::name!("boot")), boot).is_err() {
+        if Activation::for_actor(&self.ac_ref, Account::new(crate::name!("boot")), boot).is_err() {
             return;
         }
 
@@ -589,7 +764,7 @@ impl Actor {
                     SystemMessage::Turn(mut loaned_item) => {
                         let mut actions = std::mem::take(&mut loaned_item.item);
                         let r = Activation::for_actor(
-                            &self.ac_ref, Arc::clone(&loaned_item.debtor), |t| {
+                            &self.ac_ref, Arc::clone(&loaned_item.account), |t| {
                                 loop {
                                     for action in actions.into_iter() { action(t)? }
                                     actions = std::mem::take(&mut t.pending.for_myself);
@@ -737,7 +912,7 @@ impl Drop for RunningActor {
 
         let to_clear = std::mem::take(&mut self.cleanup_actions);
         {
-            let mut b = EventBuffer::new(Debtor::new(crate::name!("drop")));
+            let mut b = EventBuffer::new(Account::new(crate::name!("drop")));
             for (_handle, r) in to_clear.into_iter() {
                 tracing::trace!(h = debug(&_handle), "retract on termination");
                 b.execute_cleanup_action(r);
@@ -749,13 +924,13 @@ impl Drop for RunningActor {
 }
 
 #[must_use]
-pub fn external_event(mailbox: &Arc<Mailbox>, debtor: &Arc<Debtor>, action: Action) -> ActorResult {
-    send_actions(&mailbox.tx, debtor, vec![action])
+pub fn external_event(mailbox: &Arc<Mailbox>, account: &Arc<Account>, action: Action) -> ActorResult {
+    send_actions(&mailbox.tx, account, vec![action])
 }
 
 #[must_use]
-pub fn external_events(mailbox: &Arc<Mailbox>, debtor: &Arc<Debtor>, events: PendingEventQueue) -> ActorResult {
-    send_actions(&mailbox.tx, debtor, events)
+pub fn external_events(mailbox: &Arc<Mailbox>, account: &Arc<Account>, events: PendingEventQueue) -> ActorResult {
+    send_actions(&mailbox.tx, account, events)
 }
 
 impl<M> Ref<M> {
@@ -907,9 +1082,6 @@ where
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
         self.underlying.with_entity(|e| e.sync(t, peer))
-    }
-    fn turn_end(&mut self, t: &mut Activation) -> ActorResult {
-        self.underlying.with_entity(|e| e.turn_end(t))
     }
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
         self.underlying.with_entity(|e| e.exit_hook(t, exit_status))

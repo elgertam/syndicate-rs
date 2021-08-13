@@ -144,6 +144,7 @@ fn extract_binary_packets(
     }
 }
 
+#[doc(hidden)]
 struct ExitListener;
 
 impl Entity<()> for ExitListener {
@@ -159,7 +160,7 @@ fn run_connection(
     o: relay::Output,
     gateway: Arc<Cap>,
 ) -> ActorResult {
-    Activation::for_actor(&ac, Debtor::new(syndicate::name!("start-session")), |t| {
+    Activation::for_actor(&ac, Account::new(syndicate::name!("start-session")), |t| {
         let exit_listener = t.state.create(ExitListener);
         t.state.add_exit_hook(&exit_listener);
         relay::TunnelRelay::run(t, i, o, Some(gateway), None);

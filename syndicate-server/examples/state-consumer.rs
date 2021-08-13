@@ -25,12 +25,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
     Actor::new().boot(syndicate::name!("state-consumer"), |t| {
         let ac = t.actor.clone();
-        let boot_debtor = Arc::clone(t.debtor());
+        let boot_account = Arc::clone(t.account());
         Ok(t.state.linked_task(tracing::Span::current(), async move {
             let config = Config::from_args();
             let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
             let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-            Activation::for_actor(&ac, boot_debtor, |t| {
+            Activation::for_actor(&ac, boot_account, |t| {
                 relay::connect_stream(t, i, o, sturdyref, (), |_state, t, ds| {
                     let consumer = {
                         #[derive(Default)]
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             stats_timer.tick().await;
                             let consumer = Arc::clone(&consumer);
                             external_event(&Arc::clone(&consumer.underlying.mailbox),
-                                           &Debtor::new(syndicate::name!("debtor")),
+                                           &Account::new(syndicate::name!("account")),
                                            Box::new(move |t| consumer.underlying.with_entity(
                                                |e| e.message(t, AnyValue::new(true)))))?;
                         }

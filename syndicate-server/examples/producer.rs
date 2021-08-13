@@ -35,19 +35,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::actor::start_debt_reporter();
     Actor::new().boot(syndicate::name!("producer"), |t| {
         let ac = t.actor.clone();
-        let boot_debtor = Arc::clone(t.debtor());
+        let boot_account = Arc::clone(t.account());
         Ok(t.state.linked_task(tracing::Span::current(), async move {
             let config = Config::from_args();
             let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
             let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-            Activation::for_actor(&ac, boot_debtor, |t| {
+            Activation::for_actor(&ac, boot_account, |t| {
                 relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
                     let padding: AnyValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
                     let action_count = config.action_count;
-                    let debtor = Debtor::new(syndicate::name!("debtor"));
+                    let account = Account::new(syndicate::name!("account"));
                     t.state.linked_task(syndicate::name!("sender"), async move {
                         loop {
-                            debtor.ensure_clear_funds().await;
+                            account.ensure_clear_funds().await;
                             let mut events: PendingEventQueue = Vec::new();
                             for _ in 0..action_count {
                                 let ds = Arc::clone(&ds);
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 events.push(Box::new(move |t| ds.underlying.with_entity(
                                     |e| e.message(t, says(Value::from("producer").wrap(), padding)))));
                             }
-                            external_events(&ds.underlying.mailbox, &debtor, events)?;
+                            external_events(&ds.underlying.mailbox, &account, events)?;
                         }
                     });
                     Ok(None)

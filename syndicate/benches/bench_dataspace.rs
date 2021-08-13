@@ -55,16 +55,16 @@ pub fn bench_pub(c: &mut Criterion) {
                 Actor::new().boot(syndicate::name!("dataspace"), move |t| {
                     let ds = t.state.create(Dataspace::new());
                     let shutdown = t.state.create(ShutdownEntity);
-                    let debtor = Debtor::new(syndicate::name!("sender-debtor"));
+                    let account = Account::new(syndicate::name!("sender-account"));
                     t.state.linked_task(syndicate::name!("sender"), async move {
                         for _ in 0..iters {
                             let ds = Arc::clone(&ds);
-                            external_event(&Arc::clone(&ds.mailbox), &debtor, Box::new(
+                            external_event(&Arc::clone(&ds.mailbox), &account, Box::new(
                                 move |t| ds.with_entity(
                                     |e| e.message(t, says(AnyValue::new("bench_pub"),
                                                           Value::ByteString(vec![]).wrap())))))?
                         }
-                        external_event(&Arc::clone(&shutdown.mailbox), &debtor, Box::new(
+                        external_event(&Arc::clone(&shutdown.mailbox), &account, Box::new(
                             move |t| shutdown.with_entity(
                                 |e| e.message(t, AnyValue::new(true)))))?;
                         Ok(())
@@ -124,18 +124,18 @@ pub fn bench_pub(c: &mut Criterion) {
                             })),
                             observer: shutdown,
                         });
-                        let debtor = Arc::clone(t.debtor());
+                        let account = Arc::clone(t.account());
                         t.state.linked_task(syndicate::name!("sender"), async move {
                             for _ in 0..iters {
                                 let ds = Arc::clone(&ds);
-                                external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
+                                external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
                                     move |t| ds.underlying.with_entity(
                                         |e| e.message(t, says(AnyValue::new("bench_pub"),
                                                               Value::ByteString(vec![]).wrap())))))?
                             }
                             {
                                 let ds = Arc::clone(&ds);
-                                external_event(&Arc::clone(&ds.underlying.mailbox), &debtor, Box::new(
+                                external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
                                     move |t| ds.underlying.with_entity(
                                         |e| e.message(t, AnyValue::new(true)))))?;
                             }

@@ -93,12 +93,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Actor::new().boot(syndicate::name!("pingpong"), |t| {
         let ac = t.actor.clone();
-        let boot_debtor = Arc::clone(t.debtor());
+        let boot_account = Arc::clone(t.account());
         Ok(t.state.linked_task(tracing::Span::current(), async move {
             let config = Config::from_args();
             let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
             let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-            Activation::for_actor(&ac, boot_debtor, |t| {
+            Activation::for_actor(&ac, boot_account, |t| {
                 relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
 
                     let (send_label, recv_label, report_latency_every, should_echo, bytes_padding) =
@@ -183,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             stats_timer.tick().await;
                             let consumer = Arc::clone(&consumer);
                             external_event(&Arc::clone(&consumer.underlying.mailbox),
-                                           &Debtor::new(syndicate::name!("debtor")),
+                                           &Account::new(syndicate::name!("account")),
                                            Box::new(move |t| consumer.underlying.with_entity(
                                                |e| e.message(t, AnyValue::new(true)))))?;
                         }
@@ -192,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let PingPongMode::Ping(c) = &config.mode {
                         let turn_count = c.turn_count;
                         let action_count = c.action_count;
-                        let debtor = Arc::clone(t.debtor());
+                        let account = Arc::clone(t.account());
                         t.state.linked_task(syndicate::name!("boot-ping"), async move {
                             let padding: AnyValue = Value::ByteString(vec![0; bytes_padding]).wrap();
                             for _ in 0..turn_count {
@@ -206,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     events.push(Box::new(move |t| ds.underlying.with_entity(
                                         |e| e.message(t, current_rec))));
                                 }
-                                external_events(&ds.underlying.mailbox, &debtor, events)?
+                                external_events(&ds.underlying.mailbox, &account, events)?
                             }
                             Ok(())
                         });

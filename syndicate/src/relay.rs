@@ -382,9 +382,9 @@ impl TunnelRelay {
         }
     }
 
-    pub fn send_packet(&mut self, debtor: &Arc<Debtor>, cost: usize, p: P::Packet) -> ActorResult {
+    pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet) -> ActorResult {
         let bs = self.encode_packet(p)?;
-        let _ = self.output.send(LoanedItem::new(debtor, cost, bs));
+        let _ = self.output.send(LoanedItem::new(account, cost, bs));
         Ok(())
     }
 
@@ -519,16 +519,16 @@ async fn input_loop(
     i: Input,
     relay: TunnelRelayRef,
 ) -> ActorResult {
-    let debtor = Debtor::new(crate::name!("input-loop"));
+    let account = Account::new(crate::name!("input-loop"));
     match i {
         Input::Packets(mut src) => {
             loop {
-                debtor.ensure_clear_funds().await;
+                account.ensure_clear_funds().await;
                 match src.next().await {
-                    None => return Activation::for_actor(&ac, Arc::clone(&debtor), |t| {
+                    None => return Activation::for_actor(&ac, Arc::clone(&account), |t| {
                         Ok(t.state.shutdown())
                     }),
-                    Some(bs) => Activation::for_actor(&ac, Arc::clone(&debtor), |t| {
+                    Some(bs) => Activation::for_actor(&ac, Arc::clone(&account), |t| {
                         let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_datagram(t, &bs?)
@@ -540,13 +540,13 @@ async fn input_loop(
             const BUFSIZE: usize = 65536;
             let mut buf = BytesMut::with_capacity(BUFSIZE);
             loop {
-                debtor.ensure_clear_funds().await;
+                account.ensure_clear_funds().await;
                 buf.reserve(BUFSIZE);
                 let n = match r.read_buf(&mut buf).await {
                     Ok(n) => n,
                     Err(e) =>
                         if e.kind() == io::ErrorKind::ConnectionReset {
-                            return Activation::for_actor(&ac, Arc::clone(&debtor), |t| {
+                            return Activation::for_actor(&ac, Arc::clone(&account), |t| {
                                 Ok(t.state.shutdown())
                             });
                         } else {
@@ -554,10 +554,10 @@ async fn input_loop(
                         },
                 };
                 match n {
-                    0 => return Activation::for_actor(&ac, Arc::clone(&debtor), |t| {
+                    0 => return Activation::for_actor(&ac, Arc::clone(&account), |t| {
                         Ok(t.state.shutdown())
                     }),
-                    _ => Activation::for_actor(&ac, Arc::clone(&debtor), |t| {
+                    _ => Activation::for_actor(&ac, Arc::clone(&account), |t| {
                         let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_stream(t, &mut buf)
@@ -594,7 +594,7 @@ impl Entity<()> for TunnelRefEntity {
         let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         let events = std::mem::take(&mut tr.pending_outbound);
-        tr.send_packet(&t.debtor(), events.len(), P::Packet::Turn(Box::new(P::Turn(events))))
+        tr.send_packet(&t.account(), events.len(), P::Packet::Turn(Box::new(P::Turn(events))))
     }
 
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
@@ -602,7 +602,7 @@ impl Entity<()> for TunnelRefEntity {
             let e = e.clone();
             let mut g = self.relay_ref.lock().expect("unpoisoned");
             let tr = g.as_mut().expect("initialized");
-            tr.send_packet(&t.debtor(), 1, P::Packet::Error(Box::new(e)))?;
+            tr.send_packet(&t.account(), 1, P::Packet::Error(Box::new(e)))?;
         }
         Ok(())
     }

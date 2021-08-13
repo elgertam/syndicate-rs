@@ -1,3 +1,7 @@
+//! A "bag" data structure (based on
+//! [`BTreeMap`][std::collections::BTreeMap]), used in
+//! [dataspace][super::dataspace] indexing.
+
 use std::collections::BTreeMap;
 use std::collections::btree_map::{Iter, Keys, Entry};
 use std::iter::{FromIterator, IntoIterator};
