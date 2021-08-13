@@ -1,0 +1,2 @@
+#!/bin/sh
+while true; do ../target/release/examples/state-consumer "$@"; sleep 2; done

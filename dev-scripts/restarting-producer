@@ -1,0 +1,2 @@
+#!/bin/sh
+while true; do ../target/release/examples/producer "$@"; sleep 2; done
