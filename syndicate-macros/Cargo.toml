@@ -1,0 +1,15 @@
+[package]
+name = "syndicate-macros"
+version = "0.2.0"
+authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syndicate = { path = "../syndicate", version = "^0.2.0" }
+
+proc-macro2 = "^1.0"
+quote = "^1.0"
+syn = "^1.0"
