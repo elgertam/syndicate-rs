@@ -188,7 +188,7 @@ impl TunnelRelay {
         let mut tr = TunnelRelay {
             self_ref: Arc::clone(&tr_ref),
             output: output_tx,
-            output_text: true,
+            output_text: false,
             inbound_assertions: Map::new(),
             outbound_assertions: Map::new(),
             membranes: Membranes {
