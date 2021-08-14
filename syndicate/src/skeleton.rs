@@ -1,3 +1,10 @@
+//! High-speed index over a set of assertions and a set of
+//! [`Observe`rs][crate::schemas::dataspace::Observe] of those
+//! assertions.
+//!
+//! Generally speaking, you will not need to use this module; instead,
+//! create [`Dataspace`][crate::dataspace::Dataspace] entities.
+
 use super::bag;
 
 use preserves::value::{Map, NestedValue, Set, Value};
@@ -18,12 +25,17 @@ type Bag<A> = bag::BTreeBag<A>;
 type Captures = AnyValue;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Guard {
+enum Guard {
     Rec(AnyValue, usize),
     Seq(usize),
     Map,
 }
 
+/// Index of assertions and [`Observe`rs][crate::schemas::dataspace::Observe].
+///
+/// Generally speaking, you will not need to use this structure;
+/// instead, create [`Dataspace`][crate::dataspace::Dataspace]
+/// entities.
 #[derive(Debug)]
 pub struct Index {
     all_assertions: Bag<AnyValue>,
@@ -64,6 +76,7 @@ struct Endpoints {
 //---------------------------------------------------------------------------
 
 impl Index {
+    /// Construct a new `Index`.
     pub fn new() -> Self {
         Index {
             all_assertions: Bag::new(),
@@ -72,6 +85,11 @@ impl Index {
         }
     }
 
+    /// Adds a new observer. If any existing assertions in the index
+    /// match `pat`, establishes corresponding assertions at
+    /// `observer`. Once the observer is registered, subsequent
+    /// arriving assertions will be matched against `pat` and
+    /// delivered to `observer` if they match.
     pub fn add_observer(
         &mut self,
         t: &mut Activation,
@@ -83,6 +101,7 @@ impl Index {
         self.observer_count += 1;
     }
 
+    /// Removes an existing observer.
     pub fn remove_observer(
         &mut self,
         t: &mut Activation,
@@ -94,6 +113,7 @@ impl Index {
         self.observer_count -= 1;
     }
 
+    /// Inserts an assertion into the index, notifying matching observers.
     pub fn insert(&mut self, t: &mut Activation, outer_value: &AnyValue) {
         let net = self.all_assertions.change(outer_value.clone(), 1);
         match net {
@@ -119,6 +139,7 @@ impl Index {
         }
     }
 
+    /// Removes an assertion from the index, notifying matching observers.
     pub fn remove(&mut self, t: &mut Activation, outer_value: &AnyValue) {
         let net = self.all_assertions.change(outer_value.clone(), -1);
         match net {
@@ -144,6 +165,7 @@ impl Index {
         }
     }
 
+    /// Routes a message using the index, notifying matching observers.
     pub fn send(&mut self, t: &mut Activation, outer_value: &AnyValue) {
         Modification::new(
             false,
@@ -158,14 +180,18 @@ impl Index {
             }).perform(&mut self.root);
     }
 
+    /// Retrieves the current count of distinct assertions in the index.
     pub fn assertion_count(&self) -> usize {
         return self.all_assertions.len()
     }
 
+    /// Retrieves the current count of assertions in the index,
+    /// including duplicates.
     pub fn endpoint_count(&self) -> isize {
         return self.all_assertions.total()
     }
 
+    /// Retrieves the current count of observers of the index.
     pub fn observer_count(&self) -> usize {
         return self.observer_count
     }
@@ -234,7 +260,7 @@ impl Node {
 }
 
 #[derive(Debug)]
-pub enum Stack<'a, T> {
+enum Stack<'a, T> {
     Empty,
     Item(T, &'a Stack<'a, T>)
 }
@@ -387,7 +413,7 @@ impl Continuation {
         Continuation { cached_assertions, leaf_map: Map::new() }
     }
 
-    pub fn add_observer(
+    fn add_observer(
         &mut self,
         t: &mut Activation,
         analysis: &pattern::PatternAnalysis,
@@ -427,7 +453,7 @@ impl Continuation {
         endpoints.endpoints.insert(observer.clone(), capture_map);
     }
 
-    pub fn remove_observer(
+    fn remove_observer(
         &mut self,
         t: &mut Activation,
         analysis: pattern::PatternAnalysis,

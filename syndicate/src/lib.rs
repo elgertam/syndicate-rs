@@ -8,11 +8,14 @@ pub mod bag;
 pub mod dataspace;
 pub mod during;
 pub mod error;
+#[doc(hidden)]
 pub mod pattern;
 pub mod relay;
 pub mod rewrite;
 
 pub mod schemas {
+    //! Auto-generated codecs for [Syndicate protocol
+    //! schemas](https://git.syndicate-lang.org/syndicate-lang/syndicate-protocols/src/branch/main/schemas).
     include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
 }
 

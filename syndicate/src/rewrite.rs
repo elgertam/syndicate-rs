@@ -1,3 +1,6 @@
+//! The implementation of [capability attenuation][crate::actor::Cap]:
+//! filtering and rewriting of assertions and messages.
+
 use preserves::value::Map;
 use preserves::value::NestedValue;
 use preserves::value::Value;
@@ -6,33 +9,50 @@ use std::convert::TryFrom;
 
 use super::schemas::sturdy::*;
 
+/// A triple of (1) the count of bindings captured by (2) a checked
+/// `Pattern`, plus (3) a checked `Template`.
 pub type CheckedRewrite = (usize, Pattern, Template);
 
+/// A safety-checked [`Caveat`]: none of the errors enumerated in
+/// `CaveatError` apply.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CheckedCaveat { alts: Vec<CheckedRewrite> }
 
+/// Represents any detected error in a [`Caveat`]; that is, in a
+/// [`Pattern`] or a [`Template`].
 #[derive(Debug)]
 pub enum CaveatError {
+    /// A template refers to a binding not present in the corresponding pattern.
     UnboundRef,
+    /// A pattern includes a negation of a subpattern that includes a binding.
     BindingUnderNegation,
+    /// A constructor specification includes an arity that exceeds the range of a [`usize`].
     LudicrousArity,
+    /// A member index in a compound pattern exceeds the arity limit of the constructor.
     IndexOutOfBounds,
+    /// A member index for a sequence-like compound is not an integer.
     InvalidIndex,
+    /// A compound template does not specify a subtemplate for each of
+    /// the slots of the compound value being constructed.
     IncompleteTemplate,
 }
 
 impl Attenuation {
+    /// Yields `Ok(())` iff `self` has no [`CaveatError`].
     pub fn validate(&self) -> Result<(), CaveatError> {
         for c in &self.0 { c.validate()? }
         Ok(())
     }
 
+    /// Yields a vector of [`CheckedCaveat`s][CheckedCaveat] iff
+    /// `self` has no [`CaveatError`].
     pub fn check(&self) -> Result<Vec<CheckedCaveat>, CaveatError> {
         self.0.iter().map(Caveat::check).collect()
     }
 }
 
 impl Caveat {
+    /// Yields `Ok(())` iff `self` has no [`CaveatError`].
     pub fn validate(&self) -> Result<(), CaveatError> {
         match self {
             Caveat::Rewrite(b) => (&**b).validate(),
@@ -40,6 +60,7 @@ impl Caveat {
         }
     }
 
+    /// Yields a [`CheckedCaveat`] iff `self` has no [`CaveatError`].
     pub fn check(&self) -> Result<CheckedCaveat, CaveatError> {
         match self {
             Caveat::Rewrite(b) =>
@@ -313,6 +334,7 @@ impl Rewrite {
 }
 
 impl CheckedCaveat {
+    /// Rewrites `a` using the patterns/templates contained in `self`.
     pub fn rewrite(&self, a: &_Any) -> Option<_Any> {
         for (n, p, t) in &self.alts {
             let mut bindings = Vec::with_capacity(*n);

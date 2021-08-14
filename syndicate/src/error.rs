@@ -1,5 +1,8 @@
-pub use super::schemas::internal_protocol::_Any;
-pub use super::schemas::internal_protocol::_Ptr;
+//! Actor errors.
+
+use super::schemas::internal_protocol::_Any;
+
+#[doc(inline)]
 pub use super::schemas::internal_protocol::Error;
 
 use preserves::value::NestedValue;
@@ -14,6 +17,9 @@ impl std::fmt::Display for Error {
     }
 }
 
+/// Construct an [`Error`] with the given `message` and `detail`.
+///
+/// When no relevant detail exists, convention is to set `detail` to `false`.
 pub fn error<Detail>(message: &str, detail: Detail) -> Error where _Any: From<Detail> {
     Error {
         message: message.to_owned(),
@@ -21,6 +27,12 @@ pub fn error<Detail>(message: &str, detail: Detail) -> Error where _Any: From<De
     }
 }
 
+/// Encodes an [`ActorResult`][crate::actor::ActorResult] as an
+/// [`AnyValue`][crate::actor::AnyValue].
+///
+/// Used primarily when attempting to perform an
+/// [`Activation`][crate::actor::Activation] on an already-terminated
+/// actor.
 pub fn encode_error(result: Result<(), Error>) -> _Any {
     match result {
         Ok(()) => {

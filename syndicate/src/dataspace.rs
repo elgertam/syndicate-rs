@@ -1,4 +1,5 @@
-//! Implements a [*dataspace*](#GarnockJones2017) entity.
+//! Implements a [*dataspace*][crate::dataspace#GarnockJones2017]
+//! entity.
 //!
 //! **References.**
 //!
