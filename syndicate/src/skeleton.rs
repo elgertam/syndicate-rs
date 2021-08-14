@@ -144,14 +144,14 @@ impl Index {
         }
     }
 
-    pub fn send(&mut self, t: &mut Activation, outer_value: &AnyValue, delivery_count: &mut usize) {
+    pub fn send(&mut self, t: &mut Activation, outer_value: &AnyValue) {
         Modification::new(
             false,
             &outer_value,
             |_c, _v| (),
             |_l, _v| (),
             |es, cs| {
-                *delivery_count += es.endpoints.len();
+                // *delivery_count += es.endpoints.len();
                 for observer in es.endpoints.keys() {
                     observer.message(t, cs.clone());
                 }
