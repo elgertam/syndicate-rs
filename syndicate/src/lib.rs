@@ -27,10 +27,4 @@ pub mod tracer;
 pub use during::entity;
 
 #[doc(inline)]
-pub use tracer::tracer;
-
-#[doc(inline)]
-pub use tracer::tracer_top;
-
-#[doc(inline)]
 pub use tracer::convenient_logging;
