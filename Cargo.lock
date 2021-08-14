@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate"
-version = "0.8.0-alpha.1"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "criterion",
