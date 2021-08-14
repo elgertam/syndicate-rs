@@ -49,6 +49,9 @@ impl<M: Debug> Entity<M> for Tracer {
     }
 }
 
+/// Sets up [`tracing`] logging in a reasonable way.
+///
+/// Useful at the top of `main` functions.
 pub fn convenient_logging() -> Result<(), Box<dyn std::error::Error>> {
     let filter = match std::env::var(tracing_subscriber::filter::EnvFilter::DEFAULT_ENV) {
         Err(std::env::VarError::NotPresent) =>
