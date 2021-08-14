@@ -60,8 +60,8 @@ pub type Handle = u64;
 /// Responses to events must have type `ActorResult`.
 pub type ActorResult = Result<(), Error>;
 
-/// When integrating actors with [tokio], an `ActorHandle` represents
-/// an actor mainloop task.
+/// Methods [`Actor::boot`] and [`Actor::start`] return an
+/// `ActorHandle`, representing the actor's mainloop task.
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
 /// A small protocol for indicating successful synchronisation with
