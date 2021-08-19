@@ -138,7 +138,7 @@ fn extract_binary_packets(
             Message::Pong(_) =>
                 Ok(None), // unsolicited pongs are to be ignored
             Message::Close(_) =>
-                Err("EOF")?,
+                Ok(None), // we're about to see the end of the stream, so ignore this
         },
         Err(e) => Err(message_error(e)),
     }
