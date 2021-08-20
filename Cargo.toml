@@ -1,3 +1,5 @@
+cargo-features = ["strip"]
+
 [workspace]
 members = [
   "syndicate",
@@ -10,5 +12,6 @@ preserves = { path = "/home/tonyg/src/preserves/implementations/rust/preserves" 
 preserves-schema = { path = "/home/tonyg/src/preserves/implementations/rust/preserves-schema" }
 
 [profile.release]
-debug = true
+strip = true
+# debug = true
 # lto = true
