@@ -1,6 +1,7 @@
 use crate::actor::*;
 
 use std::fmt::Debug;
+use std::io;
 use std::sync::Arc;
 
 struct Tracer(tracing::Span);
@@ -64,6 +65,7 @@ pub fn convenient_logging() -> Result<(), Box<dyn std::error::Error>> {
         .with_ansi(true)
         .with_max_level(tracing::Level::TRACE)
         .with_env_filter(filter)
+        .with_writer(io::stderr)
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Could not set tracing global subscriber");
