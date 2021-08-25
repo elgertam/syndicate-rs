@@ -35,12 +35,14 @@ struct ServerConfig {
 
     #[structopt(short = "s", long = "socket")]
     sockets: Vec<PathBuf>,
+
+    #[structopt(long)]
+    debt_reporter: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
-    syndicate::actor::start_debt_reporter();
 
     let config = Arc::new(ServerConfig::from_args());
 
@@ -80,6 +82,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut daemons = Vec::new();
 
     tracing::trace!("startup");
+
+    if config.debt_reporter {
+        syndicate::actor::start_debt_reporter();
+    }
 
     let ds = Cap::new(&Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));
     let gateway = Cap::guard(&Actor::create_and_start(
