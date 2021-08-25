@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!(r"");
     }
 
-    let mut daemons = Vec::new();
+    let mut non_daemons = Vec::new();
 
     tracing::trace!("startup");
 
@@ -94,11 +94,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if config.inferior {
         let ds = Arc::clone(&ds);
-        Actor::new().boot(syndicate::name!("parent"),
-                          |t| run_io_relay(t,
-                                           relay::Input::Bytes(Box::pin(tokio::io::stdin())),
-                                           relay::Output::Bytes(Box::pin(tokio::io::stdout())),
-                                           ds));
+        non_daemons.push(
+            Actor::new().boot(syndicate::name!("parent"), move |t| run_io_relay(
+                t,
+                relay::Input::Bytes(Box::pin(tokio::io::stdin())),
+                relay::Output::Bytes(Box::pin(tokio::io::stdout())),
+                ds)));
     }
 
     let gateway = Cap::guard(&Actor::create_and_start(
@@ -119,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for port in config.ports.clone() {
         let gateway = Arc::clone(&gateway);
-        daemons.push(Actor::new().boot(
+        non_daemons.push(Actor::new().boot(
             syndicate::name!("tcp", port),
             move |t| Ok(t.state.linked_task(syndicate::name!("listener"),
                                             run_tcp_listener(gateway, port)))));
@@ -127,13 +128,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for path in config.sockets.clone() {
         let gateway = Arc::clone(&gateway);
-        daemons.push(Actor::new().boot(
+        non_daemons.push(Actor::new().boot(
             syndicate::name!("unix", socket = debug(path.to_str().expect("representable UnixListener path"))),
             move |t| Ok(t.state.linked_task(syndicate::name!("listener"),
                                             run_unix_listener(gateway, path)))));
     }
 
-    futures::future::join_all(daemons).await;
+    futures::future::join_all(non_daemons).await;
     Ok(())
 }
 
