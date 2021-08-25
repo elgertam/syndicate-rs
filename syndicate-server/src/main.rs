@@ -37,6 +37,9 @@ struct ServerConfig {
     sockets: Vec<PathBuf>,
 
     #[structopt(long)]
+    inferior: bool,
+
+    #[structopt(long)]
     debt_reporter: bool,
 }
 
@@ -88,6 +91,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ds = Cap::new(&Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));
+
+    if config.inferior {
+        let ds = Arc::clone(&ds);
+        Actor::new().boot(syndicate::name!("parent"),
+                          |t| run_io_relay(t,
+                                           relay::Input::Bytes(Box::pin(tokio::io::stdin())),
+                                           relay::Output::Bytes(Box::pin(tokio::io::stdout())),
+                                           ds));
+    }
+
     let gateway = Cap::guard(&Actor::create_and_start(
         syndicate::name!("gateway"),
         syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve)));
@@ -160,18 +173,26 @@ impl Entity<()> for ExitListener {
     }
 }
 
+fn run_io_relay(
+    t: &mut Activation,
+    i: relay::Input,
+    o: relay::Output,
+    initial_ref: Arc<Cap>,
+) -> ActorResult {
+    let exit_listener = t.state.create(ExitListener);
+    t.state.add_exit_hook(&exit_listener);
+    relay::TunnelRelay::run(t, i, o, Some(initial_ref), None);
+    Ok(())
+}
+
 fn run_connection(
     ac: ActorRef,
     i: relay::Input,
     o: relay::Output,
-    gateway: Arc<Cap>,
+    initial_ref: Arc<Cap>,
 ) -> ActorResult {
-    Activation::for_actor(&ac, Account::new(syndicate::name!("start-session")), |t| {
-        let exit_listener = t.state.create(ExitListener);
-        t.state.add_exit_hook(&exit_listener);
-        relay::TunnelRelay::run(t, i, o, Some(gateway), None);
-        Ok(())
-    })
+    Activation::for_actor(&ac, Account::new(syndicate::name!("start-session")),
+                          |t| run_io_relay(t, i, o, initial_ref))
 }
 
 async fn detect_protocol(
