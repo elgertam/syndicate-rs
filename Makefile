@@ -28,6 +28,11 @@ release-%:
 		-vv --no-dev-version --exclude-unchanged \
 		$*
 
+static: static-x86_64
+
+static-%:
+	cross build --target $*-unknown-linux-musl --features vendored-openssl
+
 ###########################################################################
 
 # OK, rather than doing it myself (per
