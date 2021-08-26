@@ -367,7 +367,7 @@ preserves_schema::support::lazy_static! {
         let credit =
             std::env::var("SYNDICATE_CREDIT").unwrap_or("100".to_owned())
             .parse::<i64>().expect("Valid SYNDICATE_CREDIT environment variable");
-        tracing::info!("Configured SYNDICATE_CREDIT = {}", credit);
+        tracing::debug!("Configured SYNDICATE_CREDIT = {}", credit);
         credit
     };
 

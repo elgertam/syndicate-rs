@@ -61,7 +61,7 @@ pub fn convenient_logging() -> Result<(), Box<dyn std::error::Error>> {
         _ =>
             tracing_subscriber::filter::EnvFilter::try_from_default_env()?,
     };
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+    let subscriber = tracing_subscriber::fmt()
         .with_ansi(true)
         .with_max_level(tracing::Level::TRACE)
         .with_env_filter(filter)
