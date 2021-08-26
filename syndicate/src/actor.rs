@@ -291,7 +291,6 @@ pub struct RunningActor {
     tx: UnboundedSender<SystemMessage>,
     mailbox: Weak<Mailbox>,
     cleanup_actions: CleanupActions,
-    next_task_id: u64,
     linked_tasks: Map<u64, CancellationToken>,
     exit_hooks: Vec<Box<dyn Send + FnOnce(&mut Activation, &Arc<ActorResult>) -> ActorResult>>,
 }
@@ -353,13 +352,15 @@ pub fn next_actor_id() -> ActorId {
     NEXT_ACTOR_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 
-static NEXT_HANDLE: AtomicU64 = AtomicU64::new(3);
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(2);
 /// Allocate a process-unique `Handle`.
 pub fn next_handle() -> Handle {
     NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 
-static NEXT_ACCOUNT_ID: AtomicU64 = AtomicU64::new(4);
+static NEXT_ACCOUNT_ID: AtomicU64 = AtomicU64::new(3);
+
+static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(4);
 
 preserves_schema::support::lazy_static! {
     #[doc(hidden)]
@@ -778,7 +779,6 @@ impl Actor {
                     tx,
                     mailbox: Weak::new(),
                     cleanup_actions: Map::new(),
-                    next_task_id: 0,
                     linked_tasks: Map::new(),
                     exit_hooks: Vec::new(),
                 }))),
@@ -988,8 +988,7 @@ impl RunningActor {
     ) {
         let mailbox = self.mailbox();
         let token = CancellationToken::new();
-        let task_id = self.next_task_id;
-        self.next_task_id += 1;
+        let task_id = NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed);
         name.record("task_id", &task_id);
         {
             let token = token.clone();
