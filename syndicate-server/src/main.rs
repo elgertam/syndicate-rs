@@ -87,7 +87,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::trace!("startup");
 
     if config.debt_reporter {
-        syndicate::actor::start_debt_reporter();
+        Actor::new().boot(syndicate::name!("debt-reporter"), |t| {
+            t.state.linked_task(syndicate::name!("tick"), async {
+                let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
+                loop {
+                    timer.tick().await;
+                    for (id, (name, debt)) in syndicate::actor::ACCOUNTS.read().unwrap().iter() {
+                        let _enter = name.enter();
+                        tracing::info!(id, debt = debug(
+                            debt.load(std::sync::atomic::Ordering::Relaxed)));
+                    }
+                }
+            });
+            Ok(())
+        });
     }
 
     let ds = Cap::new(&Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));

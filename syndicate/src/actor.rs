@@ -376,23 +376,6 @@ preserves_schema::support::lazy_static! {
         RwLock::new(Map::new());
 }
 
-/// Starts a "debt reporter" actor which periodically logs information about active [`Account`]s.
-pub fn start_debt_reporter() {
-    Actor::new().boot(crate::name!("debt-reporter"), |t| {
-        t.state.linked_task(crate::name!("tick"), async {
-            let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
-            loop {
-                timer.tick().await;
-                for (id, (name, debt)) in ACCOUNTS.read().unwrap().iter() {
-                    let _enter = name.enter();
-                    tracing::info!(id, debt = debug(debt.load(Ordering::Relaxed)));
-                }
-            }
-        });
-        Ok(())
-    });
-}
-
 impl TryFrom<&AnyValue> for Synced {
     type Error = ParseError;
     fn try_from(value: &AnyValue) -> Result<Self, Self::Error> {

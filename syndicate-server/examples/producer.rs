@@ -32,7 +32,6 @@ fn says(who: AnyValue, what: AnyValue) -> AnyValue {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
-    syndicate::actor::start_debt_reporter();
     Actor::new().boot(syndicate::name!("producer"), |t| {
         let ac = t.actor.clone();
         let boot_account = Arc::clone(t.account());
