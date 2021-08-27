@@ -1095,8 +1095,7 @@ impl Actor {
         tokio::spawn(async move {
             tracing::trace!("start");
             self.run(|t| {
-                boot(t)?;
-                t.stop_if_inert();
+                t.facet(boot)?;
                 Ok(())
             }).await;
             let result = self.ac_ref.exit_status().expect("terminated");
