@@ -3,7 +3,20 @@ use std::sync::Arc;
 use syndicate::actor::*;
 use syndicate::during::DuringResult;
 use syndicate::schemas::gatekeeper;
+use syndicate::sturdy;
 use syndicate::value::NestedValue;
+
+pub fn bind(
+    t: &mut Activation,
+    oid: syndicate::schemas::sturdy::_Any,
+    key: [u8; 16],
+    ds: &Arc<Cap>,
+    target: Arc<Cap>,
+) {
+    let sr = sturdy::SturdyRef::mint(oid.clone(), &key);
+    tracing::info!(cap = debug(&AnyValue::from(&sr)), hex = display(sr.to_hex()));
+    ds.assert(t, &gatekeeper::Bind { oid, key: key.to_vec(), target });
+}
 
 pub fn handle_resolve(
     ds: &mut Arc<Cap>,

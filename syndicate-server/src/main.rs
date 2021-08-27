@@ -5,7 +5,6 @@ use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::dataspace::*;
-use syndicate::sturdy;
 
 use syndicate::value::NestedValue;
 
@@ -59,28 +58,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::trace!("startup");
 
-    Actor::new().boot(syndicate::name!("dataspace"), move |t| {
-        let ds = Cap::new(&t.create(Dataspace::new()));
+    Actor::new().boot(tracing::Span::current(), move |t| {
+        let root_ds = Cap::new(&t.create(Dataspace::new()));
 
-        {
-            use syndicate::schemas::gatekeeper;
-            let key = vec![0; 16];
-            let sr = sturdy::SturdyRef::mint(AnyValue::new("syndicate"), &key);
-            tracing::info!(rootcap = debug(&AnyValue::from(&sr)));
-            tracing::info!(rootcap = display(sr.to_hex()));
-            ds.assert(t, &gatekeeper::Bind { oid: sr.oid.clone(), key, target: ds.clone() });
-        }
+        gatekeeper::bind(t, AnyValue::new("syndicate"), [0; 16], &root_ds, Arc::clone(&root_ds));
 
         if config.debt_reporter {
             services::debt_reporter::spawn(t);
         }
 
         if config.inferior {
-            services::stdio_relay_listener::spawn(t, Arc::clone(&ds));
+            services::stdio_relay_listener::spawn(t, Arc::clone(&root_ds));
         }
 
         let gateway = Cap::guard(&t.create(
-            syndicate::entity(Arc::clone(&ds)).on_asserted(gatekeeper::handle_resolve)));
+            syndicate::entity(Arc::clone(&root_ds)).on_asserted(gatekeeper::handle_resolve)));
 
         for port in config.ports.clone() {
             services::tcp_relay_listener::spawn(t, Arc::clone(&gateway), port);
