@@ -16,12 +16,14 @@ use preserves::value::Domain;
 use preserves::value::IOValue;
 use preserves::value::Map;
 use preserves::value::NestedValue;
+use preserves::value::Set;
 use preserves_schema::support::ParseError;
 
 use std::boxed::Box;
 use std::collections::hash_map::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::RwLock;
@@ -50,6 +52,9 @@ pub type AnyValue = super::schemas::internal_protocol::_Any;
 /// The type of process-unique actor IDs.
 pub type ActorId = u64;
 
+/// The type of process-unique facet IDs.
+pub type FacetId = NonZeroU64;
+
 /// The type of process-unique assertion handles.
 ///
 /// Used both as a reference to [retract][Entity::retract]
@@ -60,8 +65,8 @@ pub type Handle = u64;
 /// Responses to events must have type `ActorResult`.
 pub type ActorResult = Result<(), Error>;
 
-/// Methods [`Actor::boot`] and [`Actor::start`] return an
-/// `ActorHandle`, representing the actor's mainloop task.
+/// The [`Actor::boot`] method returns an `ActorHandle`, representing
+/// the actor's mainloop task.
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
 /// A small protocol for indicating successful synchronisation with
@@ -193,17 +198,22 @@ pub type PendingEventQueue = Vec<Action>;
 /// The main API for programming Syndicated Actor objects.
 ///
 /// Through `Activation`s, programs can access the state of their
-/// animating [`RunningActor`].
+/// animating [`RunningActor`] and their active [`Facet`].
+///
+/// Usually, an `Activation` will be supplied to code that needs one; but when non-Actor code
+/// (such as a [linked task][crate::actor#linked-tasks]) needs to enter an Actor's execution
+/// context, use [`FacetRef::activate`] to construct one.
 ///
 /// Many actions that an entity can perform are methods directly on
-/// `Activation`, but methods on the [`RunningActor`] and [`ActorRef`]
+/// `Activation`, but methods on the [`RunningActor`] and [`FacetRef`]
 /// values contained in an `Activation` are also sometimes useful.
 ///
 /// This is what other implementations call a "Turn", renamed here to
 /// avoid conflicts with [`crate::schemas::internal_protocol::Turn`].
 pub struct Activation<'activation> {
-    /// A reference to the implementation-side of the currently active [`Actor`].
-    pub actor: ActorRef,
+    /// A reference to the currently active [`Facet`] and the implementation-side state of its
+    /// [`Actor`].
+    pub facet: FacetRef,
     /// A reference to the current state of the active [`Actor`].
     pub state: &'activation mut RunningActor,
     pending: EventBuffer,
@@ -272,6 +282,14 @@ pub struct ActorRef {
     state: Arc<Mutex<ActorState>>,
 }
 
+/// A combination of an [`ActorRef`] with a [`FacetId`], acting as a capability to enter the
+/// execution context of a facet from a linked task.
+#[derive(Clone)]
+pub struct FacetRef {
+    pub actor: ActorRef,
+    pub facet_id: FacetId,
+}
+
 /// The state of an actor: either `Running` or `Terminated`.
 pub enum ActorState {
     /// A non-terminated actor has an associated [`RunningActor`] state record.
@@ -290,9 +308,40 @@ pub struct RunningActor {
     pub actor_id: ActorId,
     tx: UnboundedSender<SystemMessage>,
     mailbox: Weak<Mailbox>,
-    cleanup_actions: CleanupActions,
-    linked_tasks: Map<u64, CancellationToken>,
     exit_hooks: Vec<Box<dyn Send + FnOnce(&mut Activation, &Arc<ActorResult>) -> ActorResult>>,
+    facet_nodes: Map<FacetId, Facet>,
+    facet_children: Map<FacetId, Set<FacetId>>,
+    root: FacetId,
+}
+
+/// State associated with each facet in an [`Actor`]'s facet tree.
+///
+/// # Inert facets
+///
+/// A facet is considered *inert* if:
+///
+/// 1. it has no child facets;
+/// 2. it has no cleanup actions (that is, no assertions placed by any of its entities);
+/// 3. it has no linked tasks; and
+/// 4. it has no "inert check preventers" (see [Activation::prevent_inert_check]).
+///
+/// If a facet is created and is inert at the moment that its `boot` function returns, it is
+/// automatically terminated.
+///
+/// When a facet is terminated, if its parent facet is inert, the parent is terminated.
+///
+/// If the root facet in an actor is terminated, the entire actor is terminated (with exit
+/// status `Ok(())`).
+///
+pub struct Facet {
+    /// The ID of the facet.
+    pub facet_id: FacetId,
+    /// The ID of the facet's parent facet, if any; if None, this facet is the `Actor`'s root facet.
+    pub parent_facet_id: Option<FacetId>,
+    cleanup_actions: CleanupActions,
+    stop_actions: Vec<Action>,
+    linked_tasks: Map<u64, CancellationToken>,
+    inert_check_preventers: Arc<AtomicU64>,
 }
 
 /// A reference to an object that expects messages/assertions of type
@@ -303,6 +352,8 @@ pub struct RunningActor {
 pub struct Ref<M> {
     /// Mailbox of the actor owning the referenced entity.
     pub mailbox: Arc<Mailbox>,
+    /// ID of the facet (within the actor) owning the referenced entity.
+    pub facet_id: FacetId,
     /// Mutex owning and guarding the state backing the referenced entity.
     pub target: Mutex<Option<Box<dyn Entity<M>>>>,
 }
@@ -352,15 +403,22 @@ pub fn next_actor_id() -> ActorId {
     NEXT_ACTOR_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 
-static NEXT_HANDLE: AtomicU64 = AtomicU64::new(2);
+static NEXT_FACET_ID: AtomicU64 = AtomicU64::new(2);
+#[doc(hidden)]
+pub fn next_facet_id() -> FacetId {
+    FacetId::new(NEXT_FACET_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed))
+        .expect("Internal error: Attempt to allocate FacetId of zero. Too many FacetIds allocated. Restart the process.")
+}
+
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(3);
 /// Allocate a process-unique `Handle`.
 pub fn next_handle() -> Handle {
     NEXT_HANDLE.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed)
 }
 
-static NEXT_ACCOUNT_ID: AtomicU64 = AtomicU64::new(3);
+static NEXT_ACCOUNT_ID: AtomicU64 = AtomicU64::new(4);
 
-static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(4);
+static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(5);
 
 preserves_schema::support::lazy_static! {
     #[doc(hidden)]
@@ -394,29 +452,20 @@ impl From<&Synced> for AnyValue {
     }
 }
 
-impl<'activation> Activation<'activation> {
-    fn make(actor: &ActorRef, account: Arc<Account>, state: &'activation mut RunningActor) -> Self {
-        Activation {
-            actor: actor.clone(),
-            state,
-            pending: EventBuffer::new(account),
-        }
-    }
-
-    /// Constructs and executes `f` in a new "turn" for `actor`. If
-    /// `f` returns `Ok(())`, [commits the turn][Self::deliver] and
-    /// performs the buffered actions; otherwise, [abandons the
-    /// turn][Self::clear] and discards the buffered actions.
+impl FacetRef {
+    /// Executes `f` in a new "[turn][Activation]" for `actor`. If `f` returns `Ok(())`,
+    /// [commits the turn][Activation::deliver] and performs the buffered actions; otherwise,
+    /// [abandons the turn][Activation::clear] and discards the buffered actions.
     ///
     /// Bills any activity to `account`.
-    pub fn for_actor<F>(
-        actor: &ActorRef,
+    pub fn activate<F>(
+        &self,
         account: Arc<Account>,
         f: F,
     ) -> ActorResult where
         F: FnOnce(&mut Activation) -> ActorResult,
     {
-        match Self::for_actor_exit(actor, account, |t| match f(t) {
+        match self.activate_exit(account, |t| match f(t) {
             Ok(()) => None,
             Err(e) => Some(Err(e)),
         }) {
@@ -425,28 +474,26 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    /// Constructs and executes `f` in a new "turn" for `actor`. If
-    /// `f` returns `Some(exit_status)`, terminates `actor` with that
-    /// `exit_status`. Otherwise, if `f` returns `None`, leaves
-    /// `actor` in runnable state. [Commits buffered
-    /// actions][Self::deliver] unless `actor` terminates with an
-    /// `Err` status.
+    /// Executes `f` in a new "[turn][Activation]" for `actor`. If `f` returns
+    /// `Some(exit_status)`, terminates `actor` with that `exit_status`. Otherwise, if `f`
+    /// returns `None`, leaves `actor` in runnable state. [Commits buffered
+    /// actions][Activation::deliver] unless `actor` terminates with an `Err` status.
     ///
     /// Bills any activity to `account`.
-    pub fn for_actor_exit<F>(
-        actor: &ActorRef,
+    pub fn activate_exit<F>(
+        &self,
         account: Arc<Account>,
         f: F,
     ) -> Option<ActorResult> where
         F: FnOnce(&mut Activation) -> Option<ActorResult>,
     {
-        match actor.state.lock() {
+        match self.actor.state.lock() {
             Err(_) => panicked_err(),
             Ok(mut g) => match &mut *g {
                 ActorState::Terminated { exit_status } =>
                     Some((**exit_status).clone()),
                 ActorState::Running(state) => {
-                    let mut activation = Activation::make(actor, account, state);
+                    let mut activation = Activation::make(self, account, state);
                     match f(&mut activation) {
                         None => None,
                         Some(exit_status) => {
@@ -455,11 +502,18 @@ impl<'activation> Activation<'activation> {
                             }
                             drop(activation);
                             let exit_status = Arc::new(exit_status);
-                            let mut t = Activation::make(actor, Account::new(crate::name!("shutdown")), state);
+                            let mut t = Activation::make(&self.actor.facet_ref(state.root),
+                                                         Account::new(crate::name!("shutdown")),
+                                                         state);
                             for action in std::mem::take(&mut t.state.exit_hooks) {
                                 if let Err(err) = action(&mut t, &exit_status) {
                                     tracing::error!(err = debug(err), "error in exit hook");
                                 }
+                            }
+                            if let Err(err) = t._terminate_facet(t.state.root, false) {
+                                // This can only occur as the result of an internal error in this file's code.
+                                tracing::error!(err = debug(err), "unexpected error from disorderly terminate_facet");
+                                panic!("Unexpected error result from disorderly terminate_facet");
                             }
                             *g = ActorState::Terminated {
                                 exit_status: Arc::clone(&exit_status),
@@ -471,11 +525,51 @@ impl<'activation> Activation<'activation> {
             }
         }
     }
+}
+
+impl<'activation> Activation<'activation> {
+    fn make(
+        facet: &FacetRef,
+        account: Arc<Account>,
+        state: &'activation mut RunningActor,
+    ) -> Self {
+        Activation {
+            facet: facet.clone(),
+            state,
+            pending: EventBuffer::new(account),
+        }
+    }
 
     fn immediate_oid<M>(&self, r: &Arc<Ref<M>>) {
-        if r.mailbox.actor_id != self.actor.actor_id {
+        if r.mailbox.actor_id != self.facet.actor.actor_id {
             panic!("Cannot use for_myself to send to remote peers");
         }
+    }
+
+    fn with_facet<F>(&mut self, check_existence: bool, facet_id: FacetId, f: F) -> ActorResult
+    where
+        F: FnOnce(&mut Activation) -> ActorResult,
+    {
+        if !check_existence || self.state.facet_nodes.contains_key(&facet_id) {
+            let old_facet_id = self.facet.facet_id;
+            self.facet.facet_id = facet_id;
+            let result = f(self);
+            self.facet.facet_id = old_facet_id;
+            result
+        } else {
+            Ok(())
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn with_entity<M, F>(&mut self, r: &Arc<Ref<M>>, f: F) -> ActorResult where
+        F: FnOnce(&mut Activation, &mut dyn Entity<M>) -> ActorResult
+    {
+        self.with_facet(true, r.facet_id, |t| r.internal_with_entity(|e| f(t, e)))
+    }
+
+    fn active_facet<'a>(&'a mut self) -> Option<&'a mut Facet> {
+        self.state.get_facet(self.facet.facet_id)
     }
 
     /// Core API: assert `a` at recipient `r`.
@@ -483,17 +577,20 @@ impl<'activation> Activation<'activation> {
     /// Returns the [`Handle`] for the new assertion.
     pub fn assert<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         let handle = next_handle();
-        {
-            let r = Arc::clone(r);
-            self.pending.queue_for(&r).push(Box::new(
-                move |t| r.with_entity(|e| e.assert(t, a, handle))));
-        }
-        {
-            let r = Arc::clone(r);
-            self.state.cleanup_actions.insert(
-                handle,
-                CleanupAction::ForAnother(Arc::clone(&r.mailbox), Box::new(
-                    move |t| r.with_entity(|e| e.retract(t, handle)))));
+        if let Some(f) = self.active_facet() {
+            {
+                let r = Arc::clone(r);
+                f.cleanup_actions.insert(
+                    handle,
+                    CleanupAction::ForAnother(Arc::clone(&r.mailbox), Box::new(
+                        move |t| t.with_entity(&r, |t, e| e.retract(t, handle)))));
+            }
+            drop(f);
+            {
+                let r = Arc::clone(r);
+                self.pending.queue_for(&r).push(Box::new(
+                    move |t| t.with_entity(&r, |t, e| e.assert(t, a, handle))));
+            }
         }
         handle
     }
@@ -515,25 +612,30 @@ impl<'activation> Activation<'activation> {
     pub fn assert_for_myself<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         self.immediate_oid(r);
         let handle = next_handle();
-        {
-            let r = Arc::clone(r);
-            self.pending.for_myself.push(Box::new(
-                move |t| r.with_entity(|e| e.assert(t, a, handle))));
-        }
-        {
-            let r = Arc::clone(r);
-            self.state.cleanup_actions.insert(
-                handle,
-                CleanupAction::ForMyself(Box::new(
-                    move |t| r.with_entity(|e| e.retract(t, handle)))));
+        if let Some(f) = self.active_facet() {
+            {
+                let r = Arc::clone(r);
+                f.cleanup_actions.insert(
+                    handle,
+                    CleanupAction::ForMyself(Box::new(
+                        move |t| t.with_entity(&r, |t, e| e.retract(t, handle)))));
+            }
+            drop(f);
+            {
+                let r = Arc::clone(r);
+                self.pending.for_myself.push(Box::new(
+                    move |t| t.with_entity(&r, |t, e| e.assert(t, a, handle))));
+            }
         }
         handle
     }
 
     /// Core API: retract a previously-established assertion.
     pub fn retract(&mut self, handle: Handle) {
-        if let Some(d) = self.state.cleanup_actions.remove(&handle) {
-            self.pending.execute_cleanup_action(d)
+        if let Some(f) = self.active_facet() {
+            if let Some(d) = f.cleanup_actions.remove(&handle) {
+                self.pending.execute_cleanup_action(d)
+            }
         }
     }
 
@@ -541,7 +643,7 @@ impl<'activation> Activation<'activation> {
     pub fn message<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, m: M) {
         let r = Arc::clone(r);
         self.pending.queue_for(&r).push(Box::new(
-            move |t| r.with_entity(|e| e.message(t, m))))
+            move |t| t.with_entity(&r, |t, e| e.message(t, m))))
     }
 
     /// Core API: send message `m` to recipient `r`, which must be a
@@ -558,7 +660,7 @@ impl<'activation> Activation<'activation> {
         self.immediate_oid(r);
         let r = Arc::clone(r);
         self.pending.for_myself.push(Box::new(
-            move |t| r.with_entity(|e| e.message(t, m))))
+            move |t| t.with_entity(&r, |t, e| e.message(t, m))))
     }
 
     /// Core API: begins a synchronisation with `r`.
@@ -569,7 +671,7 @@ impl<'activation> Activation<'activation> {
     pub fn sync<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
         let r = Arc::clone(r);
         self.pending.queue_for(&r).push(Box::new(
-            move |t| r.with_entity(|e| e.sync(t, peer))))
+            move |t| t.with_entity(&r, |t, e| e.sync(t, peer))))
     }
 
     /// Retrieve the [`Account`] against which actions are recorded.
@@ -595,6 +697,182 @@ impl<'activation> Activation<'activation> {
     /// outstanding at the time of the call.
     pub fn deliver(&mut self) {
         self.pending.deliver();
+    }
+
+    /// Construct an entity with behaviour [`InertEntity`] within the active facet.
+    pub fn inert_entity<M>(&mut self) -> Arc<Ref<M>> {
+        self.create(InertEntity)
+    }
+
+    /// Construct an entity with behaviour `e` within the active facet.
+    pub fn create<M, E: Entity<M> + Send + 'static>(&mut self, e: E) -> Arc<Ref<M>> {
+        let r = self.create_inert();
+        r.become_entity(e);
+        r
+    }
+
+    /// Construct an entity (within the active facet) whose behaviour will be specified later
+    /// via [`become_entity`][Ref::become_entity].
+    pub fn create_inert<M>(&mut self) -> Arc<Ref<M>> {
+        Arc::new(Ref {
+            mailbox: self.state.mailbox(),
+            facet_id: self.facet.facet_id,
+            target: Mutex::new(None),
+        })
+    }
+
+    /// Start a new [linked task][crate::actor#linked-tasks] attached to the active facet. The
+    /// task will execute the future "`boot`" to completion unless it is cancelled first (by
+    /// e.g. termination of the owning facet or crashing of the owning actor). Uses `name` for
+    /// log messages emitted by the task.
+    pub fn linked_task<F: 'static + Send + futures::Future<Output = ActorResult>>(
+        &mut self,
+        name: tracing::Span,
+        boot: F,
+    ) {
+        let mailbox = self.state.mailbox();
+        if let Some(f) = self.active_facet() {
+            let token = CancellationToken::new();
+            let task_id = NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed);
+            name.record("task_id", &task_id);
+            {
+                let token = token.clone();
+                tokio::spawn(async move {
+                    tracing::trace!(task_id, "linked task start");
+                    select! {
+                        _ = token.cancelled() => {
+                            tracing::trace!(task_id, "linked task cancelled");
+                            Ok(())
+                        }
+                        result = boot => {
+                            match &result {
+                                Ok(()) => {
+                                    tracing::trace!(task_id, "linked task normal stop");
+                                    ()
+                                }
+                                Err(e) => {
+                                    tracing::error!(task_id, "linked task error: {}", e);
+                                    let _ = mailbox.tx.send(SystemMessage::Crash(e.clone()));
+                                    ()
+                                }
+                            }
+                            result
+                        }
+                    }
+                }.instrument(name));
+            }
+            f.linked_tasks.insert(task_id, token);
+        }
+    }
+
+    /// Create a new subfacet of the currently-active facet. Runs `boot` in the new facet's
+    /// context. If `boot` returns leaving the new facet [inert][Facet#inert-facets],
+    pub fn facet<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        boot: F,
+    ) -> Result<FacetId, Error> {
+        let f = Facet::new(Some(self.facet.facet_id));
+        let facet_id = f.facet_id;
+        self.state.facet_nodes.insert(facet_id, f);
+        self.state.facet_children.entry(self.facet.facet_id).or_default().insert(facet_id);
+        self.with_facet(true /* TODO: tiny optimisation: "false" would be safe here */, facet_id, move |t| {
+            boot(t)?;
+            t.stop_if_inert();
+            Ok(())
+        })?;
+        Ok(facet_id)
+    }
+
+    /// Useful during facet (and actor) startup, in some situations: when a facet `boot`
+    /// procedure would return while the facet is inert, but the facet should survive until
+    /// some subsequent time, call `prevent_inert_check` to increment a counter that prevents
+    /// inertness-checks from succeeding on the active facet.
+    ///
+    /// The result of `prevent_inert_check` is a function which, when called, decrements the
+    /// counter again. After the counter has been decremented, any subsequent inertness checks
+    /// will no longer be artificially forced to fail.
+    ///
+    /// An example of when you might want this: creating an actor having only a single
+    /// Dataspace entity within it, then using the Dataspace from other actors. At the start of
+    /// its life, the Dataspace actor will have no outbound assertions, no child facets, and no
+    /// linked tasks, so the only way to prevent it from being prematurely garbage collected is
+    /// to use `prevent_inert_check` in its boot function.
+    pub fn prevent_inert_check(&mut self) -> Box<dyn FnOnce()> {
+        if let Some(f) = self.active_facet() {
+            Box::new(f.prevent_inert_check())
+        } else {
+            Box::new(|| ())
+        }
+    }
+
+    /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
+    /// commits. If `continuation` is supplied, the facet to be stopped hasn't been stopped
+    /// yet, none of the shutdown handlers yields an error, and the facet's parent facet is
+    /// alive, executes `continuation` in the parent facet's context.
+    pub fn stop_facet(&mut self, facet_id: FacetId, continuation: Option<Action>) {
+        let mailbox = self.state.mailbox();
+        let maybe_parent_id = self.active_facet().and_then(|f| f.parent_facet_id);
+        self.pending.queue_for_mailbox(&mailbox).push(Box::new(
+            move |t| {
+                t._terminate_facet(facet_id, true)?;
+                if let Some(k) = continuation {
+                    if let Some(parent_id) = maybe_parent_id {
+                        t.with_facet(true, parent_id, k)?;
+                    }
+                }
+                Ok(())
+            }));
+    }
+
+    /// Arranges for the active facet to be stopped cleanly when `self` commits.
+    ///
+    /// Equivalent to `self.stop_facet(self.facet_id.unwrap(), None)`.
+    pub fn stop(&mut self) {
+        self.stop_facet(self.facet.facet_id, None)
+    }
+
+    fn stop_if_inert(&mut self) {
+        if self.state.facet_exists_and_is_inert(self.facet.facet_id) {
+            self.stop_facet(self.facet.facet_id, None);
+        }
+    }
+
+    fn _terminate_facet(&mut self, facet_id: FacetId, orderly: bool) -> ActorResult {
+        if let Some(mut f) = self.state.facet_nodes.remove(&facet_id) {
+            tracing::debug!("{} terminating {:?}",
+                            if orderly { "orderly" } else { "disorderly" },
+                            facet_id);
+            if let Some(p) = f.parent_facet_id {
+                self.state.facet_children.get_mut(&p).map(|children| children.remove(&facet_id));
+            }
+            self.with_facet(false, facet_id, |t| {
+                if let Some(children) = t.state.facet_children.remove(&facet_id) {
+                    for child_id in children.into_iter() {
+                        t._terminate_facet(child_id, orderly)?;
+                    }
+                }
+                if orderly {
+                    for action in std::mem::take(&mut f.stop_actions) {
+                        action(t)?;
+                    }
+                    let parent_facet_id = f.parent_facet_id;
+                    // if !orderly, the drop will happen at the end of this function, but we
+                    // need it to happen right here so that child-facet cleanup-actions are
+                    // performed before parent-facet cleanup-actions.
+                    drop(f);
+                    if let Some(p) = parent_facet_id {
+                        if t.state.facet_exists_and_is_inert(p) {
+                            t._terminate_facet(p, true)?;
+                        }
+                    } else {
+                        t.state.shutdown();
+                    }
+                }
+                Ok(())
+            })
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -764,50 +1042,29 @@ impl Drop for Mailbox {
 }
 
 impl Actor {
-    /// Create a new actor. It still needs to be
-    /// [`start`ed][Self::start]/[`boot`ed][Self::boot].
+    /// Create a new actor. It still needs to be [`boot`ed][Self::boot].
     pub fn new() -> Self {
         let (tx, rx) = unbounded_channel();
         let actor_id = next_actor_id();
+        let root = Facet::new(None);
         // tracing::trace!(id = actor_id, "Actor::new");
+        let mut st = RunningActor {
+            actor_id,
+            tx,
+            mailbox: Weak::new(),
+            exit_hooks: Vec::new(),
+            facet_nodes: Map::new(),
+            facet_children: Map::new(),
+            root: root.facet_id,
+        };
+        st.facet_nodes.insert(root.facet_id, root);
         Actor {
             rx,
             ac_ref: ActorRef {
                 actor_id,
-                state: Arc::new(Mutex::new(ActorState::Running(RunningActor {
-                    actor_id,
-                    tx,
-                    mailbox: Weak::new(),
-                    cleanup_actions: Map::new(),
-                    linked_tasks: Map::new(),
-                    exit_hooks: Vec::new(),
-                }))),
+                state: Arc::new(Mutex::new(ActorState::Running(st))),
             },
         }
-    }
-
-    /// Create and start a new actor to own entity `e`. Returns a
-    /// `Ref` to the new entity. The `name` is used as context for any
-    /// log messages emitted by the new actor.
-    pub fn create_and_start<M, E: Entity<M> + Send + 'static>(
-        name: tracing::Span,
-        e: E,
-    ) -> Arc<Ref<M>> {
-        let r = Self::create_and_start_inert(name);
-        r.become_entity(e);
-        r
-    }
-
-    /// Create and start a new actor, returning a `Ref` to a fresh
-    /// entity contained within it. Before using the `Ref`, its
-    /// initialization must be completed by calling
-    /// [`become_entity`][Ref::become_entity] on it. The `name` is
-    /// used as context for any log messages emitted by the new actor.
-    pub fn create_and_start_inert<M>(name: tracing::Span) -> Arc<Ref<M>> {
-        let ac = Self::new();
-        let r = ac.ac_ref.access(|s| s.unwrap().expect_running().create_inert());
-        ac.start(name);
-        r
     }
 
     /// Start the actor's mainloop. Takes ownership of `self`. The
@@ -822,7 +1079,11 @@ impl Actor {
         name.record("actor_id", &self.ac_ref.actor_id);
         tokio::spawn(async move {
             tracing::trace!("start");
-            self.run(boot).await;
+            self.run(|t| {
+                boot(t)?;
+                t.stop_if_inert();
+                Ok(())
+            }).await;
             let result = self.ac_ref.exit_status().expect("terminated");
             match &result {
                 Ok(()) => tracing::trace!("normal stop"),
@@ -832,55 +1093,81 @@ impl Actor {
         }.instrument(name))
     }
 
-    /// Start the actor's mainloop. Takes ownership of `self`. The
-    /// `name` is used as context for any log messages emitted by the
-    /// actor. Delegates to [`boot`][Self::boot], with a no-op `boot`
-    /// function.
-    pub fn start(self, name: tracing::Span) -> ActorHandle {
-        self.boot(name, |_ac| Ok(()))
-    }
-
-    fn terminate(&mut self, result: ActorResult) {
-        let _ = Activation::for_actor_exit(
-            &self.ac_ref, Account::new(crate::name!("shutdown")), |_| Some(result));
-    }
-
     async fn run<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
         boot: F,
     ) -> () {
-        if Activation::for_actor(&self.ac_ref, Account::new(crate::name!("boot")), boot).is_err() {
+        let root = self.ac_ref.access(|s| match s.expect("New actor missing its state") {
+            ActorState::Terminated { .. } => panic!("New actor unexpectedly in terminated state"),
+            ActorState::Running(ra) => ra.root, // what a lot of work to get this one number
+        });
+
+        let root_facet_ref = self.ac_ref.facet_ref(root);
+
+        let terminate = |result: ActorResult| {
+            let _ = root_facet_ref.activate_exit(Account::new(crate::name!("shutdown")),
+                                                 |_| Some(result));
+        };
+
+        if root_facet_ref.activate(Account::new(crate::name!("boot")), boot).is_err() {
             return;
         }
 
         loop {
             match self.rx.recv().await {
                 None => {
-                    return self.terminate(Err(error("Unexpected channel close", AnyValue::new(false))));
+                    return terminate(Err(error("Unexpected channel close", AnyValue::new(false))));
                 }
                 Some(m) => match m {
                     SystemMessage::Release => {
                         tracing::trace!("SystemMessage::Release");
-                        return self.terminate(Ok(()));
+                        return terminate(Ok(()));
                     }
                     SystemMessage::Turn(mut loaned_item) => {
                         let mut actions = std::mem::take(&mut loaned_item.item);
-                        let r = Activation::for_actor(
-                            &self.ac_ref, Arc::clone(&loaned_item.account), |t| {
-                                loop {
-                                    for action in actions.into_iter() { action(t)? }
-                                    actions = std::mem::take(&mut t.pending.for_myself);
-                                    if actions.is_empty() { break; }
-                                }
-                                Ok(())
-                            });
+                        let r = root_facet_ref.activate(Arc::clone(&loaned_item.account), |t| {
+                            loop {
+                                for action in actions.into_iter() { action(t)? }
+                                actions = std::mem::take(&mut t.pending.for_myself);
+                                if actions.is_empty() { break; }
+                            }
+                            Ok(())
+                        });
                         if r.is_err() { return; }
                     }
                     SystemMessage::Crash(e) => {
                         tracing::trace!("SystemMessage::Crash({:?})", &e);
-                        return self.terminate(Err(e));
+                        return terminate(Err(e));
                     }
                 }
+            }
+        }
+    }
+}
+
+impl Facet {
+    fn new(parent_facet_id: Option<FacetId>) -> Self {
+        Facet {
+            facet_id: next_facet_id(),
+            parent_facet_id,
+            cleanup_actions: Map::new(),
+            stop_actions: Vec::new(),
+            linked_tasks: Map::new(),
+            inert_check_preventers: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn prevent_inert_check(&mut self) -> impl FnOnce() {
+        let inert_check_preventers = Arc::clone(&self.inert_check_preventers);
+        let armed = AtomicU64::new(1);
+        inert_check_preventers.fetch_add(1, Ordering::Relaxed);
+        move || {
+            match armed.compare_exchange(1, 0, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => {
+                    inert_check_preventers.fetch_sub(1, Ordering::Relaxed);
+                    ()
+                }
+                Err(_) => (),
             }
         }
     }
@@ -913,13 +1200,11 @@ impl ActorRef {
                 ActorState::Terminated { exit_status } => Some((**exit_status).clone()),
             }))
     }
-}
 
-impl ActorState {
-    fn expect_running(&mut self) -> &mut RunningActor {
-        match self {
-            ActorState::Terminated { .. } => panic!("Expected a running actor"),
-            ActorState::Running(r) => r,
+    fn facet_ref(&self, facet_id: FacetId) -> FacetRef {
+        FacetRef {
+            actor: self.clone(),
+            facet_id,
         }
     }
 }
@@ -946,77 +1231,30 @@ impl RunningActor {
         }
     }
 
-    /// Construct an entity with behaviour [`InertEntity`] within this
-    /// actor.
-    pub fn inert_entity<M>(&mut self) -> Arc<Ref<M>> {
-        self.create(InertEntity)
-    }
-
-    /// Construct an entity with behaviour `e` within this actor.
-    pub fn create<M, E: Entity<M> + Send + 'static>(&mut self, e: E) -> Arc<Ref<M>> {
-        let r = self.create_inert();
-        r.become_entity(e);
-        r
-    }
-
-    /// Construct an entity whose behaviour will be specified later
-    /// (via [`become_entity`][Ref::become_entity]).
-    pub fn create_inert<M>(&mut self) -> Arc<Ref<M>> {
-        Arc::new(Ref {
-            mailbox: self.mailbox(),
-            target: Mutex::new(None),
-        })
-    }
-
     /// Registers the entity `r` in the list of exit hooks for this
     /// actor. When the actor terminates, `r`'s
     /// [`exit_hook`][Entity::exit_hook] will be called.
     pub fn add_exit_hook<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>) {
         let r = Arc::clone(r);
-        self.exit_hooks.push(Box::new(move |t, exit_status| {
-            r.with_entity(|e| e.exit_hook(t, &exit_status))
-        }))
+        self.exit_hooks.push(Box::new(
+            move |t, exit_status| r.internal_with_entity(|e| e.exit_hook(t, &exit_status))))
     }
 
-    /// Start a new [linked task][crate::actor#linked-tasks] attached
-    /// to this actor. The function `boot` is the main function of the
-    /// new task. Uses `name` for log messages emitted by the task.
-    pub fn linked_task<F: 'static + Send + futures::Future<Output = ActorResult>>(
-        &mut self,
-        name: tracing::Span,
-        boot: F,
-    ) {
-        let mailbox = self.mailbox();
-        let token = CancellationToken::new();
-        let task_id = NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed);
-        name.record("task_id", &task_id);
-        {
-            let token = token.clone();
-            tokio::spawn(async move {
-                tracing::trace!(task_id, "linked task start");
-                select! {
-                    _ = token.cancelled() => {
-                        tracing::trace!(task_id, "linked task cancelled");
-                        Ok(())
-                    }
-                    result = boot => {
-                        match &result {
-                            Ok(()) => {
-                                tracing::trace!(task_id, "linked task normal stop");
-                                ()
-                            }
-                            Err(e) => {
-                                tracing::error!(task_id, "linked task error: {}", e);
-                                let _ = mailbox.tx.send(SystemMessage::Crash(e.clone()));
-                                ()
-                            }
-                        }
-                        result
-                    }
-                }
-            }.instrument(name));
+    fn get_facet(&mut self, facet_id: FacetId) -> Option<&mut Facet> {
+        self.facet_nodes.get_mut(&facet_id)
+    }
+
+    /// See the definition of an [inert facet][Facet#inert-facets].
+    fn facet_exists_and_is_inert(&mut self, facet_id: FacetId) -> bool {
+        let no_kids = self.facet_children.get(&facet_id).map(|cs| cs.is_empty()).unwrap_or(true);
+        if let Some(f) = self.get_facet(facet_id) {
+            no_kids &&
+                f.cleanup_actions.is_empty() &&
+                f.linked_tasks.is_empty() &&
+                f.inert_check_preventers.load(Ordering::Relaxed) == 0
+        } else {
+            false
         }
-        self.linked_tasks.insert(task_id, token);
     }
 }
 
@@ -1026,7 +1264,7 @@ impl Drop for Actor {
     }
 }
 
-impl Drop for RunningActor {
+impl Drop for Facet {
     fn drop(&mut self) {
         for (_task_id, token) in std::mem::take(&mut self.linked_tasks).into_iter() {
             token.cancel();
@@ -1041,13 +1279,13 @@ impl Drop for RunningActor {
             }
         }
 
-        tracing::trace!("Actor::drop");
+        tracing::trace!(facet_id = debug(self.facet_id), "Facet::drop");
     }
 }
 
 /// Directly injects `action` into `mailbox`, billing subsequent activity against `account`.
 ///
-/// Primarily for use by [linked tasks][RunningActor::linked_task].
+/// Primarily for use by [linked tasks][Activation::linked_task].
 #[must_use]
 pub fn external_event(mailbox: &Arc<Mailbox>, account: &Arc<Account>, action: Action) -> ActorResult {
     send_actions(&mailbox.tx, account, vec![action])
@@ -1055,7 +1293,7 @@ pub fn external_event(mailbox: &Arc<Mailbox>, account: &Arc<Account>, action: Ac
 
 /// Directly injects `actions` into `mailbox`, billing subsequent activity against `account`.
 ///
-/// Primarily for use by [linked tasks][RunningActor::linked_task].
+/// Primarily for use by [linked tasks][Activation::linked_task].
 #[must_use]
 pub fn external_events(mailbox: &Arc<Mailbox>, account: &Arc<Account>, actions: PendingEventQueue) -> ActorResult {
     send_actions(&mailbox.tx, account, actions)
@@ -1063,7 +1301,7 @@ pub fn external_events(mailbox: &Arc<Mailbox>, account: &Arc<Account>, actions: 
 
 impl<M> Ref<M> {
     /// Supplies the behaviour (`e`) for a `Ref` created via
-    /// [`create_inert`][RunningActor::create_inert].
+    /// [`create_inert`][Activation::create_inert].
     ///
     /// # Panics
     ///
@@ -1076,8 +1314,7 @@ impl<M> Ref<M> {
         *g = Some(Box::new(e));
     }
 
-    #[doc(hidden)]
-    pub fn with_entity<R, F: FnOnce(&mut dyn Entity<M>) -> R>(&self, f: F) -> R {
+    fn internal_with_entity<R, F: FnOnce(&mut dyn Entity<M>) -> R>(&self, f: F) -> R {
         let mut g = self.target.lock().expect("unpoisoned");
         f(g.as_mut().expect("initialized").as_mut())
     }
@@ -1135,6 +1372,7 @@ impl Cap {
     {
         Self::new(&Arc::new(Ref {
             mailbox: Arc::clone(&underlying.mailbox),
+            facet_id: underlying.facet_id,
             target: Mutex::new(Some(Box::new(Guard { underlying: underlying.clone() }))),
         }))
     }
@@ -1221,24 +1459,24 @@ where
 {
     fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
         match M::try_from(&a) {
-            Ok(a) => self.underlying.with_entity(|e| e.assert(t, a, h)),
+            Ok(a) => t.with_entity(&self.underlying, |t, e| e.assert(t, a, h)),
             Err(_) => Ok(()),
         }
     }
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
-        self.underlying.with_entity(|e| e.retract(t, h))
+        t.with_entity(&self.underlying, |t, e| e.retract(t, h))
     }
     fn message(&mut self, t: &mut Activation, m: AnyValue) -> ActorResult {
         match M::try_from(&m) {
-            Ok(m) => self.underlying.with_entity(|e| e.message(t, m)),
+            Ok(m) => t.with_entity(&self.underlying, |t, e| e.message(t, m)),
             Err(_) => Ok(()),
         }
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
-        self.underlying.with_entity(|e| e.sync(t, peer))
+        t.with_entity(&self.underlying, |t, e| e.sync(t, peer))
     }
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
-        self.underlying.with_entity(|e| e.exit_hook(t, exit_status))
+        self.underlying.internal_with_entity(|e| e.exit_hook(t, exit_status))
     }
 }
 

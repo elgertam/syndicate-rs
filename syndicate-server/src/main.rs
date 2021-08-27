@@ -72,13 +72,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!(r"");
     }
 
-    let mut non_daemons = Vec::new();
-
     tracing::trace!("startup");
 
     if config.debt_reporter {
         Actor::new().boot(syndicate::name!("debt-reporter"), |t| {
-            t.state.linked_task(syndicate::name!("tick"), async {
+            t.linked_task(syndicate::name!("tick"), async {
                 let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
                 loop {
                     timer.tick().await;
@@ -93,51 +91,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    let ds = Cap::new(&Actor::create_and_start(syndicate::name!("dataspace"), Dataspace::new()));
+    Actor::new().boot(syndicate::name!("dataspace"), move |t| {
+        let ds = Cap::new(&t.create(Dataspace::new()));
 
-    if config.inferior {
-        let ds = Arc::clone(&ds);
-        non_daemons.push(
-            Actor::new().boot(syndicate::name!("parent"), move |t| run_io_relay(
-                t,
-                relay::Input::Bytes(Box::pin(tokio::io::stdin())),
-                relay::Output::Bytes(Box::pin(tokio::io::stdout())),
-                ds)));
-    }
-
-    let gateway = Cap::guard(&Actor::create_and_start(
-        syndicate::name!("gateway"),
-        syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve)));
-    {
-        let ds = Arc::clone(&ds);
-        Actor::new().boot(syndicate::name!("rootcap"), move |t| {
+        {
             use syndicate::schemas::gatekeeper;
             let key = vec![0; 16];
             let sr = sturdy::SturdyRef::mint(_Any::new("syndicate"), &key);
             tracing::info!(rootcap = debug(&_Any::from(&sr)));
             tracing::info!(rootcap = display(sr.to_hex()));
             ds.assert(t, &gatekeeper::Bind { oid: sr.oid.clone(), key, target: ds.clone() });
-            Ok(())
-        });
-    }
+        }
 
-    for port in config.ports.clone() {
-        let gateway = Arc::clone(&gateway);
-        non_daemons.push(Actor::new().boot(
-            syndicate::name!("tcp", port),
-            move |t| Ok(t.state.linked_task(syndicate::name!("listener"),
-                                            run_tcp_listener(gateway, port)))));
-    }
+        if config.inferior {
+            let ds = Arc::clone(&ds);
+            Actor::new().boot(syndicate::name!("parent"), move |t| run_io_relay(
+                t,
+                relay::Input::Bytes(Box::pin(tokio::io::stdin())),
+                relay::Output::Bytes(Box::pin(tokio::io::stdout())),
+                ds));
+        }
 
-    for path in config.sockets.clone() {
-        let gateway = Arc::clone(&gateway);
-        non_daemons.push(Actor::new().boot(
-            syndicate::name!("unix", socket = debug(path.to_str().expect("representable UnixListener path"))),
-            move |t| Ok(t.state.linked_task(syndicate::name!("listener"),
-                                            run_unix_listener(gateway, path)))));
-    }
+        let gateway = Cap::guard(&t.create(
+            syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve)));
 
-    futures::future::join_all(non_daemons).await;
+        for port in config.ports.clone() {
+            let gateway = Arc::clone(&gateway);
+            Actor::new().boot(
+                syndicate::name!("tcp", port),
+                move |t| Ok(t.linked_task(syndicate::name!("listener"),
+                                          run_tcp_listener(gateway, port))));
+        }
+
+        for path in config.sockets.clone() {
+            let gateway = Arc::clone(&gateway);
+            Actor::new().boot(
+                syndicate::name!("unix", socket = debug(path.to_str().expect("representable UnixListener path"))),
+                move |t| Ok(t.linked_task(syndicate::name!("listener"),
+                                          run_unix_listener(gateway, path))));
+        }
+
+        Ok(())
+    }).await??;
+
     Ok(())
 }
 
@@ -183,24 +179,24 @@ fn run_io_relay(
     o: relay::Output,
     initial_ref: Arc<Cap>,
 ) -> ActorResult {
-    let exit_listener = t.state.create(ExitListener);
+    let exit_listener = t.create(ExitListener);
     t.state.add_exit_hook(&exit_listener);
     relay::TunnelRelay::run(t, i, o, Some(initial_ref), None);
     Ok(())
 }
 
 fn run_connection(
-    ac: ActorRef,
+    facet: FacetRef,
     i: relay::Input,
     o: relay::Output,
     initial_ref: Arc<Cap>,
 ) -> ActorResult {
-    Activation::for_actor(&ac, Account::new(syndicate::name!("start-session")),
-                          |t| run_io_relay(t, i, o, initial_ref))
+    facet.activate(Account::new(syndicate::name!("start-session")),
+                   |t| run_io_relay(t, i, o, initial_ref))
 }
 
 async fn detect_protocol(
-    ac: ActorRef,
+    facet: FacetRef,
     stream: TcpStream,
     gateway: Arc<Cap>,
     addr: std::net::SocketAddr,
@@ -229,7 +225,7 @@ async fn detect_protocol(
             _ => unreachable!()
         }
     };
-    run_connection(ac, i, o, gateway)
+    run_connection(facet, i, o, gateway)
 }
 
 async fn run_tcp_listener(
@@ -244,9 +240,9 @@ async fn run_tcp_listener(
         let gateway = Arc::clone(&gateway);
         let ac = Actor::new();
         ac.boot(syndicate::name!(parent: None, "tcp"),
-                move |t| Ok(t.state.linked_task(
+                move |t| Ok(t.linked_task(
                     tracing::Span::current(),
-                    detect_protocol(t.actor.clone(), stream, gateway, addr))));
+                    detect_protocol(t.facet.clone(), stream, gateway, addr))));
     }
 }
 
@@ -261,24 +257,21 @@ async fn run_unix_listener(
         let (stream, _addr) = listener.accept().await?;
         let peer = stream.peer_cred()?;
         let gateway = Arc::clone(&gateway);
-        let ac = Actor::new();
-        ac.boot(syndicate::name!(parent: None,
-                                 "unix",
-                                 pid = debug(peer.pid().unwrap_or(-1)),
-                                 uid = peer.uid()),
-                move |t| Ok(t.state.linked_task(
-                    tracing::Span::current(),
-                    {
-                        let ac = t.actor.clone();
-                        async move {
-                            tracing::info!(protocol = display("unix"));
-                            let (i, o) = stream.into_split();
-                            run_connection(ac,
-                                           relay::Input::Bytes(Box::pin(i)),
-                                           relay::Output::Bytes(Box::pin(o)),
-                                           gateway)
-                        }
-                    })));
+        Actor::new().boot(
+            syndicate::name!(parent: None, "unix", pid = debug(peer.pid().unwrap_or(-1)), uid = peer.uid()),
+            |t| Ok(t.linked_task(
+                tracing::Span::current(),
+                {
+                    let facet = t.facet.clone();
+                    async move {
+                        tracing::info!(protocol = display("unix"));
+                        let (i, o) = stream.into_split();
+                        run_connection(facet,
+                                       relay::Input::Bytes(Box::pin(i)),
+                                       relay::Output::Bytes(Box::pin(o)),
+                                       gateway)
+                    }
+                })));
     }
 }
 
@@ -342,7 +335,7 @@ fn handle_resolve(
                 }
             }
         })
-        .create_cap(t.state);
+        .create_cap(t);
     if let Some(oh) = ds.assert(t, &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
         pattern: syndicate_macros::pattern!("<bind =queried_oid $ $>"),

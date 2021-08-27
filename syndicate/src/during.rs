@@ -98,8 +98,8 @@ where
         }
     }
 
-    pub fn create(self, ac: &mut RunningActor) -> Arc<Ref<M>> {
-        ac.create(self)
+    pub fn create(self, t: &mut Activation) -> Arc<Ref<M>> {
+        t.create(self)
     }
 }
 
@@ -109,9 +109,9 @@ where
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> ActorResult,
 {
-    pub fn create_cap(self, ac: &mut RunningActor) -> Arc<Cap>
+    pub fn create_cap(self, t: &mut Activation) -> Arc<Cap>
     {
-        Cap::new(&self.create(ac))
+        Cap::new(&self.create(t))
     }
 }
 

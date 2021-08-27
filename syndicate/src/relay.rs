@@ -162,7 +162,7 @@ pub fn connect_stream<I, O, E, F>(
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
     let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into()))).unwrap();
-    let main_entity = t.state.create(during::entity(initial_state).on_asserted(move |state, t, a: AnyValue| {
+    let main_entity = t.create(during::entity(initial_state).on_asserted(move |state, t, a: AnyValue| {
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
@@ -182,7 +182,7 @@ impl TunnelRelay {
     ) -> Option<Arc<Cap>> {
         let (output_tx, output_rx) = unbounded_channel();
         let tr_ref = Arc::new(Mutex::new(None));
-        let self_entity = t.state.create(TunnelRefEntity {
+        let self_entity = t.create(TunnelRefEntity {
             relay_ref: Arc::clone(&tr_ref),
         });
         let mut tr = TunnelRelay {
@@ -203,10 +203,10 @@ impl TunnelRelay {
             tr.membranes.export_ref(ir, true);
         }
         let result = initial_oid.map(
-            |io| Arc::clone(&tr.membranes.import_oid(t.state, &tr_ref, io).obj));
+            |io| Arc::clone(&tr.membranes.import_oid(t, &tr_ref, io).obj));
         *tr_ref.lock().unwrap() = Some(tr);
-        t.state.linked_task(crate::name!("writer"), output_loop(o, output_rx));
-        t.state.linked_task(crate::name!("reader"), input_loop(t.actor.clone(), i, tr_ref));
+        t.linked_task(crate::name!("writer"), output_loop(o, output_rx));
+        t.linked_task(crate::name!("reader"), input_loop(t.facet.clone(), i, tr_ref));
         t.state.add_exit_hook(&self_entity);
         result
     }
@@ -324,7 +324,7 @@ impl TunnelRelay {
                                     Ok(())
                                 }
                             }
-                            let k = t.state.create(SyncPeer {
+                            let k = t.create(SyncPeer {
                                 relay_ref: Arc::clone(&self.self_ref),
                                 peer: Arc::clone(&peer),
                             });
@@ -419,11 +419,11 @@ impl Membranes {
 
     fn import_oid(
         &mut self,
-        ac: &mut RunningActor,
+        t: &mut Activation,
         relay_ref: &TunnelRelayRef,
         oid: sturdy::Oid,
     ) -> Arc<WireSymbol> {
-        let obj = ac.create(RelayEntity { relay_ref: Arc::clone(relay_ref), oid: oid.clone() });
+        let obj = t.create(RelayEntity { relay_ref: Arc::clone(relay_ref), oid: oid.clone() });
         self.imported.insert(oid, Cap::new(&obj))
     }
 
@@ -440,7 +440,7 @@ impl Membranes {
                 let oid = *b;
                 match self.imported.oid_map.get(&oid) {
                     Some(ws) => Ok(Arc::clone(&ws.obj)),
-                    None => Ok(Arc::clone(&self.import_oid(t.state, relay_ref, oid).obj)),
+                    None => Ok(Arc::clone(&self.import_oid(t, relay_ref, oid).obj)),
                 }
             }
             sturdy::WireRef::Yours { oid: b, attenuation } => {
@@ -458,7 +458,7 @@ impl Membranes {
                                })?)
                         }
                     }
-                    None => Ok(Cap::new(&t.state.inert_entity())),
+                    None => Ok(Cap::new(&t.inert_entity())),
                 }
             }
         }
@@ -515,7 +515,7 @@ impl DomainEncode<P::_Ptr> for Membranes {
 }
 
 async fn input_loop(
-    ac: ActorRef,
+    facet: FacetRef,
     i: Input,
     relay: TunnelRelayRef,
 ) -> ActorResult {
@@ -525,10 +525,8 @@ async fn input_loop(
             loop {
                 account.ensure_clear_funds().await;
                 match src.next().await {
-                    None => return Activation::for_actor(&ac, Arc::clone(&account), |t| {
-                        Ok(t.state.shutdown())
-                    }),
-                    Some(bs) => Activation::for_actor(&ac, Arc::clone(&account), |t| {
+                    None => return facet.activate(Arc::clone(&account), |t| Ok(t.state.shutdown())),
+                    Some(bs) => facet.activate(Arc::clone(&account), |t| {
                         let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_datagram(t, &bs?)
@@ -546,18 +544,14 @@ async fn input_loop(
                     Ok(n) => n,
                     Err(e) =>
                         if e.kind() == io::ErrorKind::ConnectionReset {
-                            return Activation::for_actor(&ac, Arc::clone(&account), |t| {
-                                Ok(t.state.shutdown())
-                            });
+                            return facet.activate(Arc::clone(&account), |t| Ok(t.state.shutdown()));
                         } else {
                             return Err(e)?;
                         },
                 };
                 match n {
-                    0 => return Activation::for_actor(&ac, Arc::clone(&account), |t| {
-                        Ok(t.state.shutdown())
-                    }),
-                    _ => Activation::for_actor(&ac, Arc::clone(&account), |t| {
+                    0 => return facet.activate(Arc::clone(&account), |t| Ok(t.state.shutdown())),
+                    _ => facet.activate(Arc::clone(&account), |t| {
                         let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_stream(t, &mut buf)

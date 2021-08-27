@@ -10,17 +10,9 @@ fn set_name_oid<M>(t: &mut Tracer, r: &Arc<Ref<M>>) {
     t.0.record("oid", &tracing::field::display(&r.oid()));
 }
 
-pub fn tracer<M: Debug>(ac: &mut RunningActor, name: tracing::Span) -> Arc<Ref<M>> {
+pub fn tracer<M: Debug>(t: &mut Activation, name: tracing::Span) -> Arc<Ref<M>> {
     let mut e = Tracer(name);
-    let r = ac.create_inert();
-    set_name_oid(&mut e, &r);
-    r.become_entity(e);
-    r
-}
-
-pub fn tracer_top<M: Debug>(name: tracing::Span) -> Arc<Ref<M>> {
-    let mut e = Tracer(name);
-    let r = Actor::create_and_start_inert(crate::name!(parent: None, "tracer"));
+    let r = t.create_inert();
     set_name_oid(&mut e, &r);
     r.become_entity(e);
     r

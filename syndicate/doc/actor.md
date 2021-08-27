@@ -2,10 +2,12 @@ The [actor][crate::actor] module is the core of the Syndicated Actor model imple
 
 Central features:
 
- - trait [`Entity`], the core protocol that must be implemented by
-   every object
  - struct [`Activation`], the API for programming a Syndicated Actor
    object
+ - trait [`Entity`], the core protocol that must be implemented by
+   every object
+ - struct [`Facet`], a node in the tree of nested conversations that
+   an Actor is participating in
  - type [`AnyValue`], the type of messages and assertions that can be
    exchanged among distributed objects, including via
    [dataspace][crate::dataspace]

@@ -19,16 +19,16 @@ pub struct Config {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
     Actor::new().boot(syndicate::name!("state-producer"), |t| {
-        let ac = t.actor.clone();
+        let facet = t.facet.clone();
         let boot_account = Arc::clone(t.account());
-        Ok(t.state.linked_task(tracing::Span::current(), async move {
+        Ok(t.linked_task(tracing::Span::current(), async move {
             let config = Config::from_args();
             let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
             let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-            Activation::for_actor(&ac, boot_account, |t| {
+            facet.activate(boot_account, |t| {
                 relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
                     let account = Account::new(syndicate::name!("account"));
-                    t.state.linked_task(syndicate::name!("sender"), async move {
+                    t.linked_task(syndicate::name!("sender"), async move {
                         let presence: AnyValue = Value::simple_record1(
                             "Present",
                             Value::from(std::process::id()).wrap()).wrap();
@@ -38,13 +38,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let presence = presence.clone();
                             let handle = handle.clone();
                             external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
-                                move |t| ds.underlying.with_entity(|e| e.assert(t, presence, handle))))
+                                move |t| t.with_entity(&ds.underlying, |t, e| e.assert(t, presence, handle))))
                         };
                         let retract_e = || {
                             let ds = Arc::clone(&ds);
                             let handle = handle.clone();
                             external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
-                                move |t| ds.underlying.with_entity(|e| e.retract(t, handle))))
+                                move |t| t.with_entity(&ds.underlying, |t, e| e.retract(t, handle))))
                         };
                         assert_e()?;
                         loop {

@@ -1,3 +1,3 @@
 # Linked Tasks
 
- - linked_task
+ - [Activation::linked_task]

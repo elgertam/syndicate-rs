@@ -1,18 +1,23 @@
 # What is an Actor?
 
 A [Syndicated Actor][Actor] is a collection of stateful
-[Entities][Entity]. In the taxonomy of De Koster *et al.*
-([2016](#DeKoster2016)), the Syndicated Actor model is a
-*Communicating Event-Loop* actor model, similar to that offered by the
-E programming language
+[Entities][Entity], organised in a tree of [Facets][Facet], with each
+facet representing a
+[(sub)conversation](https://syndicate-lang.org/about/#conversational-concurrency-1)
+that the Actor is engaged in. Each entity belongs to exactly one
+facet; each facet has exactly one parent and zero or more children;
+each actor has exactly one associated root facet. When a facet is its
+actor's root facet, its parent is the actor itself; otherwise, its
+parent is always another facet.
+
+In the taxonomy of De Koster *et al.* ([2016](#DeKoster2016)), the
+Syndicated Actor model is a *Communicating Event-Loop* actor model,
+similar to that offered by the E programming language
 ([Wikipedia](https://en.wikipedia.org/wiki/E_(programming_language));
 [erights.org](http://erights.org/)).
 
-**Note.** In the full Syndicated Actor model, entities are arranged in a tree of
-*facets*; the current Rust implementation does not yet include support
-for facets.
-
- - Actor, ActorRef, ActorState, Mailbox
+ - [Actor], [ActorRef], [Facet], [FacetRef], [ActorState], [Mailbox],
+   [Activation]
 
 **References.**
 

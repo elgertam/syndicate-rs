@@ -92,13 +92,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
 
     Actor::new().boot(syndicate::name!("pingpong"), |t| {
-        let ac = t.actor.clone();
+        let facet = t.facet.clone();
         let boot_account = Arc::clone(t.account());
-        Ok(t.state.linked_task(tracing::Span::current(), async move {
+        Ok(t.linked_task(tracing::Span::current(), async move {
             let config = Config::from_args();
             let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
             let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-            Activation::for_actor(&ac, boot_account, |t| {
+            facet.activate(boot_account, |t| {
                 relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
 
                     let (send_label, recv_label, report_latency_every, should_echo, bytes_padding) =
@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut rtt_ns_samples: Vec<u64> = vec![0; report_latency_every];
                         let mut rtt_batch_count: usize = 0;
                         let mut current_reply = None;
-                        let self_ref = t.state.create_inert();
+                        let self_ref = t.create_inert();
                         self_ref.become_entity(
                             syndicate::entity(Arc::clone(&self_ref))
                                 .on_message(move |self_ref, t, m: AnyValue| {
@@ -177,15 +177,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         observer: Arc::clone(&consumer),
                     });
 
-                    t.state.linked_task(syndicate::name!("tick"), async move {
+                    t.linked_task(syndicate::name!("tick"), async move {
                         let mut stats_timer = interval(Duration::from_secs(1));
                         loop {
                             stats_timer.tick().await;
                             let consumer = Arc::clone(&consumer);
                             external_event(&Arc::clone(&consumer.underlying.mailbox),
                                            &Account::new(syndicate::name!("account")),
-                                           Box::new(move |t| consumer.underlying.with_entity(
-                                               |e| e.message(t, AnyValue::new(true)))))?;
+                                           Box::new(move |t| t.with_entity(
+                                               &consumer.underlying,
+                                               |t, e| e.message(t, AnyValue::new(true)))))?;
                         }
                     });
 
@@ -193,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let turn_count = c.turn_count;
                         let action_count = c.action_count;
                         let account = Arc::clone(t.account());
-                        t.state.linked_task(syndicate::name!("boot-ping"), async move {
+                        t.linked_task(syndicate::name!("boot-ping"), async move {
                             let padding: AnyValue = Value::ByteString(vec![0; bytes_padding]).wrap();
                             for _ in 0..turn_count {
                                 let mut events: PendingEventQueue = vec![];
@@ -203,8 +204,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 for _ in 0..action_count {
                                     let ds = Arc::clone(&ds);
                                     let current_rec = current_rec.clone();
-                                    events.push(Box::new(move |t| ds.underlying.with_entity(
-                                        |e| e.message(t, current_rec))));
+                                    events.push(Box::new(move |t| t.with_entity(
+                                        &ds.underlying,
+                                        |t, e| e.message(t, current_rec))));
                                 }
                                 external_events(&ds.underlying.mailbox, &account, events)?
                             }
