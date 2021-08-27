@@ -765,6 +765,23 @@ impl<'activation> Activation<'activation> {
         }
     }
 
+    fn enqueue_for_myself_at_commit(&mut self, action: Action) {
+        let mailbox = self.state.mailbox();
+        self.pending.queue_for_mailbox(&mailbox).push(action);
+    }
+
+    /// Schedule the creation of a new actor when the Activation commits.
+    pub fn spawn<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        name: tracing::Span,
+        boot: F,
+    ) {
+        self.enqueue_for_myself_at_commit(Box::new(move |_| {
+            Actor::new().boot(name, boot);
+            Ok(())
+        }));
+    }
+
     /// Create a new subfacet of the currently-active facet. Runs `boot` in the new facet's
     /// context. If `boot` returns leaving the new facet [inert][Facet#inert-facets],
     pub fn facet<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
@@ -810,18 +827,16 @@ impl<'activation> Activation<'activation> {
     /// yet, none of the shutdown handlers yields an error, and the facet's parent facet is
     /// alive, executes `continuation` in the parent facet's context.
     pub fn stop_facet(&mut self, facet_id: FacetId, continuation: Option<Action>) {
-        let mailbox = self.state.mailbox();
         let maybe_parent_id = self.active_facet().and_then(|f| f.parent_facet_id);
-        self.pending.queue_for_mailbox(&mailbox).push(Box::new(
-            move |t| {
-                t._terminate_facet(facet_id, true)?;
-                if let Some(k) = continuation {
-                    if let Some(parent_id) = maybe_parent_id {
-                        t.with_facet(true, parent_id, k)?;
-                    }
+        self.enqueue_for_myself_at_commit(Box::new(move |t| {
+            t._terminate_facet(facet_id, true)?;
+            if let Some(k) = continuation {
+                if let Some(parent_id) = maybe_parent_id {
+                    t.with_facet(true, parent_id, k)?;
                 }
-                Ok(())
-            }));
+            }
+            Ok(())
+        }));
     }
 
     /// Arranges for the active facet to be stopped cleanly when `self` commits.

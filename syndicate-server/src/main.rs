@@ -1,9 +1,3 @@
-use futures::SinkExt;
-use futures::StreamExt;
-
-use std::future::ready;
-use std::io;
-use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,22 +5,13 @@ use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::dataspace::*;
-use syndicate::during::DuringResult;
-use syndicate::error::Error;
-use syndicate::error::error;
-use syndicate::relay;
-use syndicate::schemas::internal_protocol::_Any;
-use syndicate::schemas::gatekeeper;
 use syndicate::sturdy;
 
 use syndicate::value::NestedValue;
 
-use tokio::net::TcpListener;
-use tokio::net::TcpStream;
-use tokio::net::UnixListener;
-use tokio::net::UnixStream;
-
-use tungstenite::Message;
+mod gatekeeper;
+mod protocol;
+mod services;
 
 #[derive(Clone, StructOpt)]
 struct ServerConfig {
@@ -74,275 +59,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::trace!("startup");
 
-    if config.debt_reporter {
-        Actor::new().boot(syndicate::name!("debt-reporter"), |t| {
-            t.linked_task(syndicate::name!("tick"), async {
-                let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
-                loop {
-                    timer.tick().await;
-                    for (id, (name, debt)) in syndicate::actor::ACCOUNTS.read().unwrap().iter() {
-                        let _enter = name.enter();
-                        tracing::info!(id, debt = debug(
-                            debt.load(std::sync::atomic::Ordering::Relaxed)));
-                    }
-                }
-            });
-            Ok(())
-        });
-    }
-
     Actor::new().boot(syndicate::name!("dataspace"), move |t| {
         let ds = Cap::new(&t.create(Dataspace::new()));
 
         {
             use syndicate::schemas::gatekeeper;
             let key = vec![0; 16];
-            let sr = sturdy::SturdyRef::mint(_Any::new("syndicate"), &key);
-            tracing::info!(rootcap = debug(&_Any::from(&sr)));
+            let sr = sturdy::SturdyRef::mint(AnyValue::new("syndicate"), &key);
+            tracing::info!(rootcap = debug(&AnyValue::from(&sr)));
             tracing::info!(rootcap = display(sr.to_hex()));
             ds.assert(t, &gatekeeper::Bind { oid: sr.oid.clone(), key, target: ds.clone() });
         }
 
+        if config.debt_reporter {
+            services::debt_reporter::spawn(t);
+        }
+
         if config.inferior {
-            let ds = Arc::clone(&ds);
-            Actor::new().boot(syndicate::name!("parent"), move |t| run_io_relay(
-                t,
-                relay::Input::Bytes(Box::pin(tokio::io::stdin())),
-                relay::Output::Bytes(Box::pin(tokio::io::stdout())),
-                ds));
+            services::stdio_relay_listener::spawn(t, Arc::clone(&ds));
         }
 
         let gateway = Cap::guard(&t.create(
-            syndicate::entity(Arc::clone(&ds)).on_asserted(handle_resolve)));
+            syndicate::entity(Arc::clone(&ds)).on_asserted(gatekeeper::handle_resolve)));
 
         for port in config.ports.clone() {
-            let gateway = Arc::clone(&gateway);
-            Actor::new().boot(
-                syndicate::name!("tcp", port),
-                move |t| Ok(t.linked_task(syndicate::name!("listener"),
-                                          run_tcp_listener(gateway, port))));
+            services::tcp_relay_listener::spawn(t, Arc::clone(&gateway), port);
         }
 
         for path in config.sockets.clone() {
-            let gateway = Arc::clone(&gateway);
-            Actor::new().boot(
-                syndicate::name!("unix", socket = debug(path.to_str().expect("representable UnixListener path"))),
-                move |t| Ok(t.linked_task(syndicate::name!("listener"),
-                                          run_unix_listener(gateway, path))));
+            services::unix_relay_listener::spawn(t, Arc::clone(&gateway), path);
         }
 
         Ok(())
     }).await??;
 
     Ok(())
-}
-
-//---------------------------------------------------------------------------
-
-fn message_error<E: std::fmt::Display>(e: E) -> Error {
-    error(&e.to_string(), _Any::new(false))
-}
-
-fn extract_binary_packets(
-    r: Result<Message, tungstenite::Error>,
-) -> Result<Option<Vec<u8>>, Error> {
-    match r {
-        Ok(m) => match m {
-            Message::Text(_) =>
-                Err("Text websocket frames are not accepted")?,
-            Message::Binary(bs) =>
-                Ok(Some(bs)),
-            Message::Ping(_) =>
-                Ok(None), // pings are handled by tungstenite before we see them
-            Message::Pong(_) =>
-                Ok(None), // unsolicited pongs are to be ignored
-            Message::Close(_) =>
-                Ok(None), // we're about to see the end of the stream, so ignore this
-        },
-        Err(e) => Err(message_error(e)),
-    }
-}
-
-#[doc(hidden)]
-struct ExitListener;
-
-impl Entity<()> for ExitListener {
-    fn exit_hook(&mut self, _t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
-        tracing::info!(exit_status = debug(exit_status), "disconnect");
-        Ok(())
-    }
-}
-
-fn run_io_relay(
-    t: &mut Activation,
-    i: relay::Input,
-    o: relay::Output,
-    initial_ref: Arc<Cap>,
-) -> ActorResult {
-    let exit_listener = t.create(ExitListener);
-    t.state.add_exit_hook(&exit_listener);
-    relay::TunnelRelay::run(t, i, o, Some(initial_ref), None);
-    Ok(())
-}
-
-fn run_connection(
-    facet: FacetRef,
-    i: relay::Input,
-    o: relay::Output,
-    initial_ref: Arc<Cap>,
-) -> ActorResult {
-    facet.activate(Account::new(syndicate::name!("start-session")),
-                   |t| run_io_relay(t, i, o, initial_ref))
-}
-
-async fn detect_protocol(
-    facet: FacetRef,
-    stream: TcpStream,
-    gateway: Arc<Cap>,
-    addr: std::net::SocketAddr,
-) -> ActorResult {
-    let (i, o) = {
-        let mut buf = [0; 1]; // peek at the first byte to see what kind of connection to expect
-        match stream.peek(&mut buf).await? {
-            1 => match buf[0] {
-                b'G' /* ASCII 'G' for "GET" */ => {
-                    tracing::info!(protocol = display("websocket"), peer = debug(addr));
-                    let s = tokio_tungstenite::accept_async(stream).await
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                    let (o, i) = s.split();
-                    let i = i.filter_map(|r| ready(extract_binary_packets(r).transpose()));
-                    let o = o.sink_map_err(message_error).with(|bs| ready(Ok(Message::Binary(bs))));
-                    (relay::Input::Packets(Box::pin(i)), relay::Output::Packets(Box::pin(o)))
-                },
-                _ => {
-                    tracing::info!(protocol = display("raw"), peer = debug(addr));
-                    let (i, o) = stream.into_split();
-                    (relay::Input::Bytes(Box::pin(i)),
-                     relay::Output::Bytes(Box::pin(o /* BufWriter::new(o) */)))
-                }
-            }
-            0 => Err(error("closed before starting", _Any::new(false)))?,
-            _ => unreachable!()
-        }
-    };
-    run_connection(facet, i, o, gateway)
-}
-
-async fn run_tcp_listener(
-    gateway: Arc<Cap>,
-    port: u16,
-) -> ActorResult {
-    let listen_addr = format!("0.0.0.0:{}", port);
-    tracing::info!("Listening on {}", listen_addr);
-    let listener = TcpListener::bind(listen_addr).await?;
-    loop {
-        let (stream, addr) = listener.accept().await?;
-        let gateway = Arc::clone(&gateway);
-        let ac = Actor::new();
-        ac.boot(syndicate::name!(parent: None, "tcp"),
-                move |t| Ok(t.linked_task(
-                    tracing::Span::current(),
-                    detect_protocol(t.facet.clone(), stream, gateway, addr))));
-    }
-}
-
-async fn run_unix_listener(
-    gateway: Arc<Cap>,
-    path: PathBuf,
-) -> ActorResult {
-    let path_str = path.to_str().expect("representable UnixListener path");
-    tracing::info!("Listening on {:?}", path_str);
-    let listener = bind_unix_listener(&path).await?;
-    loop {
-        let (stream, _addr) = listener.accept().await?;
-        let peer = stream.peer_cred()?;
-        let gateway = Arc::clone(&gateway);
-        Actor::new().boot(
-            syndicate::name!(parent: None, "unix", pid = debug(peer.pid().unwrap_or(-1)), uid = peer.uid()),
-            |t| Ok(t.linked_task(
-                tracing::Span::current(),
-                {
-                    let facet = t.facet.clone();
-                    async move {
-                        tracing::info!(protocol = display("unix"));
-                        let (i, o) = stream.into_split();
-                        run_connection(facet,
-                                       relay::Input::Bytes(Box::pin(i)),
-                                       relay::Output::Bytes(Box::pin(o)),
-                                       gateway)
-                    }
-                })));
-    }
-}
-
-async fn bind_unix_listener(path: &PathBuf) -> Result<UnixListener, Error> {
-    match UnixListener::bind(path) {
-        Ok(s) => Ok(s),
-        Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
-            // Potentially-stale socket file sitting around. Try
-            // connecting to it to see if it is alive, and remove it
-            // if not.
-            match UnixStream::connect(path).await {
-                Ok(_probe) => Err(e)?, // Someone's already there! Give up.
-                Err(f) if f.kind() == io::ErrorKind::ConnectionRefused => {
-                    // Try to steal the socket.
-                    tracing::info!("Cleaning stale socket");
-                    std::fs::remove_file(path)?;
-                    Ok(UnixListener::bind(path)?)
-                }
-                Err(f) => {
-                    tracing::error!(error = debug(f),
-                                    "Problem while probing potentially-stale socket");
-                    return Err(e)? // signal the *original* error, not the probe error
-                }
-            }
-        },
-        Err(e) => Err(e)?,
-    }
-}
-
-//---------------------------------------------------------------------------
-
-fn handle_resolve(
-    ds: &mut Arc<Cap>,
-    t: &mut Activation,
-    a: gatekeeper::Resolve,
-) -> DuringResult<Arc<Cap>> {
-    use syndicate::schemas::dataspace;
-
-    let gatekeeper::Resolve { sturdyref, observer } = a;
-    let queried_oid = sturdyref.oid.clone();
-    let handler = syndicate::entity(observer)
-        .on_asserted(move |observer, t, a: _Any| {
-            let bindings = a.value().to_sequence()?;
-            let key = bindings[0].value().to_bytestring()?;
-            let unattenuated_target = bindings[1].value().to_embedded()?;
-            match sturdyref.validate_and_attenuate(key, unattenuated_target) {
-                Err(e) => {
-                    tracing::warn!(sturdyref = debug(&_Any::from(&sturdyref)),
-                                   "sturdyref failed validation: {}", e);
-                    Ok(None)
-                },
-                Ok(target) => {
-                    tracing::trace!(sturdyref = debug(&_Any::from(&sturdyref)),
-                                    target = debug(&target),
-                                    "sturdyref resolved");
-                    if let Some(h) = observer.assert(t, _Any::domain(target)) {
-                        Ok(Some(Box::new(move |_observer, t| Ok(t.retract(h)))))
-                    } else {
-                        Ok(None)
-                    }
-                }
-            }
-        })
-        .create_cap(t);
-    if let Some(oh) = ds.assert(t, &dataspace::Observe {
-        // TODO: codegen plugin to generate pattern constructors
-        pattern: syndicate_macros::pattern!("<bind =queried_oid $ $>"),
-        observer: handler,
-    }) {
-        Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))
-    } else {
-        Ok(None)
-    }
 }

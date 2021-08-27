@@ -106,6 +106,8 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
     let P_: TokenStream = quote!(syndicate::schemas::dataspace_patterns);
     #[allow(non_snake_case)]
     let V_: TokenStream = quote!(syndicate::value);
+    #[allow(non_snake_case)]
+    let MapFromIterator_: TokenStream = quote!(<#V_::Map<_, _> as std::iter::FromIterator<_>>::from_iter);
 
     match v.value() {
         Value::Symbol(s) => match s.as_str() {
@@ -139,7 +141,7 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                             label: #label_stx,
                             arity: #arity .into(),
                         }),
-                        members: #V_::Map::from_iter(vec![#(#members),*])
+                        members: #MapFromIterator_(vec![#(#members),*])
                     })))
                 }
             }
@@ -151,7 +153,7 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                 ctor: Box::new(#P_::CArr {
                     arity: #arity .into(),
                 }),
-                members: #V_::Map::from_iter(vec![#(#members),*])
+                members: #MapFromIterator_(vec![#(#members),*])
             })))
         }
         Value::Set(_) =>
@@ -164,7 +166,7 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
             }).collect::<Vec<_>>();
             quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Dict {
                 ctor: Box::new(#P_::CDict),
-                members: #V_::Map::from_iter(vec![#(#members),*])
+                members: #MapFromIterator_(vec![#(#members),*])
             })))
         }
         _ => lit(compile_value(v)),
