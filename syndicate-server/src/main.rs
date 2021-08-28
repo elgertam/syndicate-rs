@@ -24,7 +24,7 @@ use schemas::internal_services;
 
 #[derive(Clone, StructOpt)]
 struct ServerConfig {
-    #[structopt(short = "p", long = "port", default_value = "8001")]
+    #[structopt(short = "p", long = "port")]
     ports: Vec<u16>,
 
     #[structopt(short = "s", long = "socket")]

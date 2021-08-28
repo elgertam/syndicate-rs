@@ -1,2 +1,2 @@
 #!/bin/sh
-make -C ../syndicate-server binary && exec taskset -c 0,1 ../target/release/syndicate-server "$@"
+make -C ../syndicate-server binary && exec taskset -c 0,1 ../target/release/syndicate-server -p 8001 "$@"
