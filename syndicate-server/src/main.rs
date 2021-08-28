@@ -72,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let root_ds = Cap::new(&t.create(Dataspace::new()));
 
         if config.inferior {
+            tracing::info!("inferior server instance");
             let root_ds = Arc::clone(&root_ds);
             t.spawn(syndicate::name!("parent"), move |t| protocol::run_io_relay(
                 t,
