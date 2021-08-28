@@ -28,6 +28,12 @@ release-%:
 		-vv --no-dev-version --exclude-unchanged \
 		$*
 
+pull-protocols:
+	git subtree pull -P syndicate/protocols \
+		-m 'Merge latest changes from the syndicate-protocols repository' \
+		git@git.syndicate-lang.org:syndicate-lang/syndicate-protocols \
+		main
+
 static: static-x86_64
 
 static-%:

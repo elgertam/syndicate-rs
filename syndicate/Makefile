@@ -9,9 +9,3 @@ inotifytest:
 
 binary-debug:
 	cargo build --all-targets
-
-pull-protocols:
-	git subtree pull -P protocols \
-		-m 'Merge latest changes from the syndicate-protocols repository' \
-		git@git.syndicate-lang.org:syndicate-lang/syndicate-protocols \
-		main
