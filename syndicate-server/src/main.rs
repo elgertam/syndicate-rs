@@ -60,11 +60,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Actor::new().boot(tracing::Span::current(), move |t| {
         let root_ds = Cap::new(&t.create(Dataspace::new()));
+        let server_config_ds = Cap::new(&t.create(Dataspace::new()));
 
-        gatekeeper::bind(t, AnyValue::new("syndicate"), [0; 16], &root_ds, Arc::clone(&root_ds));
+        gatekeeper::bind(t, &root_ds, AnyValue::new("syndicate"), [0; 16],
+                         Arc::clone(&root_ds));
+        gatekeeper::bind(t, &root_ds, AnyValue::new("server-config"), [0; 16],
+                         Arc::clone(&server_config_ds));
 
+        services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
         if config.debt_reporter {
-            services::debt_reporter::spawn(t);
+            server_config_ds.assert(t, &syndicate::schemas::service::RequireService {
+                service_name: AnyValue::symbol("debt-reporter")
+            });
         }
 
         if config.inferior {

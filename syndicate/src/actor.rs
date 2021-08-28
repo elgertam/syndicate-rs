@@ -393,6 +393,10 @@ where
     underlying: Arc<Ref<M>>
 }
 
+/// Simple entity that stops its containing facet when any assertion it receives is
+/// subsequently retracted.
+pub struct StopOnRetract;
+
 //---------------------------------------------------------------------------
 
 const BUMP_AMOUNT: u8 = 10;
@@ -578,13 +582,7 @@ impl<'activation> Activation<'activation> {
     pub fn assert<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         let handle = next_handle();
         if let Some(f) = self.active_facet() {
-            {
-                let r = Arc::clone(r);
-                f.cleanup_actions.insert(
-                    handle,
-                    CleanupAction::ForAnother(Arc::clone(&r.mailbox), Box::new(
-                        move |t| t.with_entity(&r, |t, e| e.retract(t, handle)))));
-            }
+            f.insert_retract_cleanup_action(&r, handle);
             drop(f);
             {
                 let r = Arc::clone(r);
@@ -628,6 +626,13 @@ impl<'activation> Activation<'activation> {
             }
         }
         handle
+    }
+
+    fn half_link(&mut self, t_other: &mut Activation) {
+        let entity_ref = t_other.create::<AnyValue, _>(StopOnRetract);
+        let handle = next_handle();
+        self.active_facet().unwrap().insert_retract_cleanup_action(&entity_ref, handle);
+        t_other.with_entity(&entity_ref, |t, e| e.assert(t, AnyValue::new(true), handle)).unwrap();
     }
 
     /// Core API: retract a previously-established assertion.
@@ -782,9 +787,28 @@ impl<'activation> Activation<'activation> {
         }));
     }
 
+    /// Schedule the creation of a new actor when the Activation commits.
+    ///
+    /// The new actor will be "linked" to the active facet: if the new actor terminates, the
+    /// active facet is stopped, and if the active facet stops, the new actor's root facet is
+    /// stopped.
+    pub fn spawn_link<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        name: tracing::Span,
+        boot: F,
+    ) {
+        let facet_id = self.facet.facet_id;
+        self.enqueue_for_myself_at_commit(Box::new(move |t| {
+            t.with_facet(true, facet_id, move |t| {
+                Actor::new().link(t).boot(name, boot);
+                Ok(())
+            })
+        }));
+    }
+
     /// Create a new subfacet of the currently-active facet. Runs `boot` in the new facet's
     /// context. If `boot` returns leaving the new facet [inert][Facet#inert-facets],
-    pub fn facet<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+    pub fn facet<F: FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
         boot: F,
     ) -> Result<FacetId, Error> {
@@ -847,9 +871,13 @@ impl<'activation> Activation<'activation> {
     }
 
     fn stop_if_inert(&mut self) {
-        if self.state.facet_exists_and_is_inert(self.facet.facet_id) {
-            self.stop_facet(self.facet.facet_id, None);
-        }
+        let facet_id = self.facet.facet_id;
+        self.enqueue_for_myself_at_commit(Box::new(move |t| {
+            if t.state.facet_exists_and_is_inert(facet_id) {
+                t.stop_facet(facet_id, None);
+            }
+            Ok(())
+        }))
     }
 
     fn _terminate_facet(&mut self, facet_id: FacetId, orderly: bool) -> ActorResult {
@@ -1082,6 +1110,18 @@ impl Actor {
         }
     }
 
+    fn link(self, t_parent: &mut Activation) -> Self {
+        if t_parent.active_facet().is_none() {
+            panic!("No active facet when calling spawn_link");
+        }
+        self.ac_ref.root_facet_ref().activate(Account::new(crate::name!("link")), |t_child| {
+            t_parent.half_link(t_child);
+            t_child.half_link(t_parent);
+            Ok(())
+        }).expect("Failed during link");
+        self
+    }
+
     /// Start the actor's mainloop. Takes ownership of `self`. The
     /// `name` is used as context for any log messages emitted by the
     /// actor. The `boot` function is called in the actor's context,
@@ -1111,12 +1151,7 @@ impl Actor {
         &mut self,
         boot: F,
     ) -> () {
-        let root = self.ac_ref.access(|s| match s.expect("New actor missing its state") {
-            ActorState::Terminated { .. } => panic!("New actor unexpectedly in terminated state"),
-            ActorState::Running(ra) => ra.root, // what a lot of work to get this one number
-        });
-
-        let root_facet_ref = self.ac_ref.facet_ref(root);
+        let root_facet_ref = self.ac_ref.root_facet_ref();
 
         let terminate = |result: ActorResult| {
             let _ = root_facet_ref.activate_exit(Account::new(crate::name!("shutdown")),
@@ -1185,6 +1220,14 @@ impl Facet {
             }
         }
     }
+
+    fn insert_retract_cleanup_action<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, handle: Handle) {
+        let r = Arc::clone(r);
+        self.cleanup_actions.insert(
+            handle,
+            CleanupAction::ForAnother(Arc::clone(&r.mailbox), Box::new(
+                move |t| t.with_entity(&r, |t, e| e.retract(t, handle)))));
+    }
 }
 
 fn panicked_err() -> Option<ActorResult> {
@@ -1220,6 +1263,17 @@ impl ActorRef {
             actor: self.clone(),
             facet_id,
         }
+    }
+
+    fn root_facet_id(&self) -> FacetId {
+        self.access(|s| match s.expect("Actor missing its state") {
+            ActorState::Terminated { .. } => panic!("Actor unexpectedly in terminated state"),
+            ActorState::Running(ra) => ra.root, // what a lot of work to get this one number
+        })
+    }
+
+    fn root_facet_ref(&self) -> FacetRef {
+        self.facet_ref(self.root_facet_id())
     }
 }
 
@@ -1491,6 +1545,13 @@ where
     }
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
         self.underlying.internal_with_entity(|e| e.exit_hook(t, exit_status))
+    }
+}
+
+impl<M> Entity<M> for StopOnRetract {
+    fn retract(&mut self, t: &mut Activation, _h: Handle) -> ActorResult {
+        t.stop();
+        Ok(())
     }
 }
 

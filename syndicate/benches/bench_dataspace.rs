@@ -104,7 +104,7 @@ pub fn bench_pub(c: &mut Criterion) {
                         ds.assert(t, &Observe {
                             pattern: p::Pattern::DBind(Box::new(p::DBind {
                                 pattern: p::Pattern::DLit(Box::new(p::DLit {
-                                    value: Value::symbol("consumer").wrap(),
+                                    value: AnyValue::symbol("consumer"),
                                 })),
                             })),
                             observer: shutdown,
@@ -126,7 +126,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             ds.assert(t, &Observe {
                                 pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
                                     ctor: Box::new(p::CRec {
-                                        label: Value::symbol("Says").wrap(),
+                                        label: AnyValue::symbol("Says"),
                                         arity: 2.into(),
                                     }),
                                     members: Map::from_iter(vec![

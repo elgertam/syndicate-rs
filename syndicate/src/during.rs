@@ -85,6 +85,22 @@ where
         }
     }
 
+    pub fn on_asserted_facet<Fa1>(
+        self,
+        mut assertion_handler: Fa1,
+    ) -> DuringEntity<M, E, Box<dyn 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>>, Fm>
+    where
+        Fa1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult
+    {
+        self.on_asserted(Box::new(move |state, t, a| {
+            let facet_id = t.facet(|t| assertion_handler(state, t, a))?;
+            Ok(Some(Box::new(move |_state, t| {
+                t.stop_facet(facet_id, None);
+                Ok(())
+            })))
+        }))
+    }
+
     pub fn on_message<Fm1>(self, message_handler: Fm1) -> DuringEntity<M, E, Fa, Fm1>
     where
         Fm1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,

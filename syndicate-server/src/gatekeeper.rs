@@ -8,9 +8,9 @@ use syndicate::value::NestedValue;
 
 pub fn bind(
     t: &mut Activation,
+    ds: &Arc<Cap>,
     oid: syndicate::schemas::sturdy::_Any,
     key: [u8; 16],
-    ds: &Arc<Cap>,
     target: Arc<Cap>,
 ) {
     let sr = sturdy::SturdyRef::mint(oid.clone(), &key);

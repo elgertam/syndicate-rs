@@ -36,12 +36,12 @@ pub fn error<Detail>(message: &str, detail: Detail) -> Error where _Any: From<De
 pub fn encode_error(result: Result<(), Error>) -> _Any {
     match result {
         Ok(()) => {
-            let mut r = Value::record(Value::symbol("Ok").wrap(), 1);
-            r.fields_vec_mut().push(Value::record(Value::symbol("tuple").wrap(), 0).finish().wrap());
+            let mut r = Value::record(_Any::symbol("Ok"), 1);
+            r.fields_vec_mut().push(Value::record(_Any::symbol("tuple"), 0).finish().wrap());
             r.finish().wrap()
         }
         Err(e) => {
-            let mut r = Value::record(Value::symbol("Err").wrap(), 1);
+            let mut r = Value::record(_Any::symbol("Err"), 1);
             r.fields_vec_mut().push((&e).into());
             r.finish().wrap()
         }

@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     ds.assert(t, &Observe {
                         pattern: {
-                            let recv_label = Value::symbol(recv_label).wrap();
+                            let recv_label = AnyValue::symbol(recv_label);
                             syndicate_macros::pattern!("<=recv_label $ $>")
                         },
                         observer: Arc::clone(&consumer),
@@ -194,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let action_count = c.action_count;
                         let account = Arc::clone(t.account());
                         t.linked_task(syndicate::name!("boot-ping"), async move {
-                            let padding: AnyValue = Value::ByteString(vec![0; bytes_padding]).wrap();
+                            let padding = AnyValue::bytestring(vec![0; bytes_padding]);
                             for _ in 0..turn_count {
                                 let mut events: PendingEventQueue = vec![];
                                 let current_rec = simple_record2(send_label,
