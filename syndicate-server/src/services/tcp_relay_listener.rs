@@ -1,29 +1,66 @@
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 use syndicate::actor::*;
+use syndicate::convert::*;
+use syndicate::during::entity;
+use syndicate::schemas::dataspace::Observe;
+use syndicate::value::NestedValue;
 
 use tokio::net::TcpListener;
 
 use crate::protocol::detect_protocol;
+use crate::schemas::internal_services;
 
-pub fn spawn(t: &mut Activation, gateway: Arc<Cap>, port: u16) {
-    t.spawn(syndicate::name!("tcp", port),
-            move |t| Ok(t.linked_task(syndicate::name!("listener"), run(gateway, port))))
+pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
+    t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
+        let monitor = entity(())
+            .on_asserted_facet({
+                let ds = Arc::clone(&ds);
+                move |_, t, captures| {
+                    let ds = Arc::clone(&ds);
+                    let gateway = Arc::clone(&gateway);
+                    t.spawn_link(syndicate::name!(parent: None, "relay", addr = debug(&captures)),
+                                 |t| run(t, ds, gateway, captures));
+                    Ok(())
+                }
+            })
+            .create_cap(t);
+        ds.assert(t, &Observe {
+            pattern: syndicate_macros::pattern!("<require-service <$ <relay-listener <tcp _ _>>>>"),
+            observer: monitor,
+        });
+        Ok(())
+    })
 }
 
-pub async fn run(
+fn run(
+    t: &'_ mut Activation,
+    ds: Arc<Cap>,
     gateway: Arc<Cap>,
-    port: u16,
+    captures: AnyValue,
 ) -> ActorResult {
-    let listen_addr = format!("0.0.0.0:{}", port);
-    tracing::info!("Listening on {}", listen_addr);
-    let listener = TcpListener::bind(listen_addr).await?;
-    loop {
-        let (stream, addr) = listener.accept().await?;
-        let gateway = Arc::clone(&gateway);
-        Actor::new().boot(syndicate::name!(parent: None, "tcp"),
-                          move |t| Ok(t.linked_task(
-                              tracing::Span::current(),
-                              detect_protocol(t.facet.clone(), stream, gateway, addr))));
+    let spec = internal_services::TcpRelayListener::try_from(&from_any_value(
+        &captures.value().to_sequence()?[0])?)?;
+    let host = spec.addr.host.clone();
+    let port = u16::try_from(&spec.addr.port).map_err(|_| "Invalid TCP port number")?;
+    {
+        let spec = from_io_value(&spec)?;
+        ds.assert(t, syndicate_macros::template!("<service-running =spec>"));
     }
+    let parent_span = tracing::Span::current();
+    t.linked_task(syndicate::name!("listener"), async move {
+        let listen_addr = format!("{}:{}", host, port);
+        let listener = TcpListener::bind(listen_addr).await?;
+        tracing::info!("listening");
+        loop {
+            let (stream, addr) = listener.accept().await?;
+            let gateway = Arc::clone(&gateway);
+            Actor::new().boot(syndicate::name!(parent: parent_span.clone(), "conn"),
+                              move |t| Ok(t.linked_task(
+                                  tracing::Span::current(),
+                                  detect_protocol(t.facet.clone(), stream, gateway, addr))));
+        }
+    });
+    Ok(())
 }

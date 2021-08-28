@@ -8,6 +8,7 @@ pub use preserves;
 
 pub mod actor;
 pub mod bag;
+pub mod convert;
 pub mod dataspace;
 pub mod during;
 pub mod error;

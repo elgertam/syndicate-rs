@@ -1,0 +1,6 @@
+version 1 .
+
+DebtReporter = =debt-reporter .
+
+TcpRelayListener = <relay-listener @addr TransportAddress.Tcp> .
+UnixRelayListener = <relay-listener @addr TransportAddress.Unix> .

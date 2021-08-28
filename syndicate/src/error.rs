@@ -48,8 +48,8 @@ pub fn encode_error(result: Result<(), Error>) -> _Any {
     }
 }
 
-impl From<&str> for Error {
-    fn from(v: &str) -> Self {
+impl<'a> From<&'a str> for Error {
+    fn from(v: &'a str) -> Self {
         error(v, _Any::new(false))
     }
 }

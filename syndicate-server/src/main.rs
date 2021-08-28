@@ -4,13 +4,23 @@ use std::sync::Arc;
 use structopt::StructOpt;
 
 use syndicate::actor::*;
+use syndicate::convert::from_io_value;
 use syndicate::dataspace::*;
+use syndicate::relay;
+use syndicate::schemas::service;
+use syndicate::schemas::transport_address;
 
 use syndicate::value::NestedValue;
 
 mod gatekeeper;
 mod protocol;
 mod services;
+
+mod schemas {
+    include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
+}
+
+use schemas::internal_services;
 
 #[derive(Clone, StructOpt)]
 struct ServerConfig {
@@ -60,6 +70,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Actor::new().boot(tracing::Span::current(), move |t| {
         let root_ds = Cap::new(&t.create(Dataspace::new()));
+
+        if config.inferior {
+            let root_ds = Arc::clone(&root_ds);
+            t.spawn(syndicate::name!("parent"), move |t| protocol::run_io_relay(
+                t,
+                relay::Input::Bytes(Box::pin(tokio::io::stdin())),
+                relay::Output::Bytes(Box::pin(tokio::io::stdout())),
+                root_ds));
+        }
+
         let server_config_ds = Cap::new(&t.create(Dataspace::new()));
 
         gatekeeper::bind(t, &root_ds, AnyValue::new("syndicate"), [0; 16],
@@ -67,26 +87,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gatekeeper::bind(t, &root_ds, AnyValue::new("server-config"), [0; 16],
                          Arc::clone(&server_config_ds));
 
-        services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
-        if config.debt_reporter {
-            server_config_ds.assert(t, &syndicate::schemas::service::RequireService {
-                service_name: AnyValue::symbol("debt-reporter")
-            });
-        }
-
-        if config.inferior {
-            services::stdio_relay_listener::spawn(t, Arc::clone(&root_ds));
-        }
-
         let gateway = Cap::guard(&t.create(
             syndicate::entity(Arc::clone(&root_ds)).on_asserted(gatekeeper::handle_resolve)));
 
+        services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
+        services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
+        services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
+
+        if config.debt_reporter {
+            server_config_ds.assert(t, &service::RequireService {
+                service_name: from_io_value(&internal_services::DebtReporter)?,
+            });
+        }
+
         for port in config.ports.clone() {
-            services::tcp_relay_listener::spawn(t, Arc::clone(&gateway), port);
+            server_config_ds.assert(t, &service::RequireService {
+                service_name: from_io_value(
+                    &internal_services::TcpRelayListener {
+                        addr: transport_address::Tcp {
+                            host: "0.0.0.0".to_owned(),
+                            port: (port as i32).into(),
+                        }
+                    })?,
+            });
         }
 
         for path in config.sockets.clone() {
-            services::unix_relay_listener::spawn(t, Arc::clone(&gateway), path);
+            server_config_ds.assert(t, &service::RequireService {
+                service_name: from_io_value(
+                    &internal_services::UnixRelayListener {
+                        addr: transport_address::Unix {
+                            path: path.to_str().expect("representable UnixListener path").to_owned(),
+                        }
+                    })?,
+            });
         }
 
         Ok(())

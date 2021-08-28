@@ -738,7 +738,7 @@ impl<'activation> Activation<'activation> {
         let mailbox = self.state.mailbox();
         if let Some(f) = self.active_facet() {
             let token = CancellationToken::new();
-            let task_id = NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed);
+            let task_id = NEXT_TASK_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed);
             name.record("task_id", &task_id);
             {
                 let token = token.clone();
