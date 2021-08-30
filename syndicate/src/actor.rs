@@ -29,6 +29,7 @@ use std::sync::Mutex;
 use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::time;
 
 use tokio::select;
 use tokio::sync::Notify;
@@ -69,8 +70,12 @@ pub type ActorResult = Result<(), Error>;
 /// the actor's mainloop task.
 pub type ActorHandle = tokio::task::JoinHandle<ActorResult>;
 
+/// The type of the "disarm" function returned from [`Activation::prevent_inert_check`].
+pub type DisarmFn = Box<dyn Send + FnOnce()>;
+
 /// A small protocol for indicating successful synchronisation with
 /// some peer; see [Entity::sync].
+#[derive(Debug)]
 pub struct Synced;
 
 /// The core metaprotocol implemented by every object.
@@ -594,15 +599,19 @@ impl<'activation> Activation<'activation> {
     /// Core API: assert `a` at recipient `r`.
     ///
     /// Returns the [`Handle`] for the new assertion.
-    pub fn assert<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
+    pub fn assert<M: 'static + Send + std::fmt::Debug>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         let handle = next_handle();
         if let Some(f) = self.active_facet() {
+            tracing::trace!(?r, ?handle, ?a, "assert");
             f.insert_retract_cleanup_action(&r, handle);
             drop(f);
             {
                 let r = Arc::clone(r);
                 self.pending.queue_for(&r).push(Box::new(
-                    move |t| t.with_entity(&r, |t, e| e.assert(t, a, handle))));
+                    move |t| t.with_entity(&r, |t, e| {
+                        tracing::trace!(?handle, ?a, "asserted");
+                        e.assert(t, a, handle)
+                    })));
             }
         }
         handle
@@ -622,22 +631,29 @@ impl<'activation> Activation<'activation> {
     /// # Panics
     ///
     /// Panics if `r` is not part of the active actor.
-    pub fn assert_for_myself<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
+    pub fn assert_for_myself<M: 'static + Send + std::fmt::Debug>(&mut self, r: &Arc<Ref<M>>, a: M) -> Handle {
         self.immediate_oid(r);
         let handle = next_handle();
         if let Some(f) = self.active_facet() {
+            tracing::trace!(?r, ?handle, ?a, "assert_for_myself");
             {
                 let r = Arc::clone(r);
                 f.cleanup_actions.insert(
                     handle,
                     CleanupAction::ForMyself(Box::new(
-                        move |t| t.with_entity(&r, |t, e| e.retract(t, handle)))));
+                        move |t| t.with_entity(&r, |t, e| {
+                            tracing::trace!(?handle, "retracted");
+                            e.retract(t, handle)
+                        }))));
             }
             drop(f);
             {
                 let r = Arc::clone(r);
                 self.pending.for_myself.push(Box::new(
-                    move |t| t.with_entity(&r, |t, e| e.assert(t, a, handle))));
+                    move |t| t.with_entity(&r, |t, e| {
+                        tracing::trace!(?handle, ?a, "asserted");
+                        e.assert(t, a, handle)
+                    })));
             }
         }
         handle
@@ -646,6 +662,7 @@ impl<'activation> Activation<'activation> {
     fn half_link(&mut self, t_other: &mut Activation) {
         let entity_ref = t_other.create::<AnyValue, _>(StopOnRetract);
         let handle = next_handle();
+        tracing::trace!(?handle, ?entity_ref, "half_link");
         self.active_facet().unwrap().insert_retract_cleanup_action(&entity_ref, handle);
         t_other.with_entity(&entity_ref, |t, e| e.assert(t, AnyValue::new(true), handle)).unwrap();
     }
@@ -660,10 +677,14 @@ impl<'activation> Activation<'activation> {
     }
 
     /// Core API: send message `m` to recipient `r`.
-    pub fn message<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, m: M) {
+    pub fn message<M: 'static + Send + std::fmt::Debug>(&mut self, r: &Arc<Ref<M>>, m: M) {
+        tracing::trace!(?r, ?m, "message");
         let r = Arc::clone(r);
         self.pending.queue_for(&r).push(Box::new(
-            move |t| t.with_entity(&r, |t, e| e.message(t, m))))
+            move |t| t.with_entity(&r, |t, e| {
+                tracing::trace!(?m, "delivered");
+                e.message(t, m)
+            })))
     }
 
     /// Core API: send message `m` to recipient `r`, which must be a
@@ -766,6 +787,7 @@ impl<'activation> Activation<'activation> {
         boot: F,
     ) {
         let mailbox = self.state.mailbox();
+        let facet = self.facet.clone();
         if let Some(f) = self.active_facet() {
             let token = CancellationToken::new();
             let task_id = NEXT_TASK_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed);
@@ -774,7 +796,7 @@ impl<'activation> Activation<'activation> {
                 let token = token.clone();
                 tokio::spawn(async move {
                     tracing::trace!(task_id, "linked task start");
-                    select! {
+                    let result = select! {
                         _ = token.cancelled() => {
                             tracing::trace!(task_id, "linked task cancelled");
                             Ok(())
@@ -793,11 +815,38 @@ impl<'activation> Activation<'activation> {
                             }
                             result
                         }
-                    }
+                    };
+                    let _ = facet.activate(
+                        Account::new(crate::name!("release_linked_task")), |t| {
+                            if let Some(f) = t.active_facet() {
+                                tracing::trace!(task_id, "cancellation token removed");
+                                f.linked_tasks.remove(&task_id);
+                            }
+                            Ok(())
+                        });
+                    result
                 }.instrument(name));
             }
             f.linked_tasks.insert(task_id, token);
         }
+    }
+
+    /// Executes the given action after the given duration has elapsed (so long as the active
+    /// facet still exists at that time).
+    pub fn after(&mut self, duration: time::Duration, a: Action) {
+        self.at(time::Instant::now() + duration, a)
+    }
+
+    /// Executes the given action at the given instant (so long as the active facet still
+    /// exists at that time).
+    pub fn at<I: Into<tokio::time::Instant>>(&mut self, instant: I, a: Action) {
+        let facet = self.facet.clone();
+        let account = Arc::clone(self.account());
+        let instant = instant.into();
+        self.linked_task(crate::name!("Activation::at"), async move {
+            tokio::time::sleep_until(instant.into()).await;
+            facet.activate(account, a)
+        });
     }
 
     fn enqueue_for_myself_at_commit(&mut self, action: Action) {
@@ -868,7 +917,7 @@ impl<'activation> Activation<'activation> {
     /// its life, the Dataspace actor will have no outbound assertions, no child facets, and no
     /// linked tasks, so the only way to prevent it from being prematurely garbage collected is
     /// to use `prevent_inert_check` in its boot function.
-    pub fn prevent_inert_check(&mut self) -> Box<dyn FnOnce()> {
+    pub fn prevent_inert_check(&mut self) -> DisarmFn {
         if let Some(f) = self.active_facet() {
             Box::new(f.prevent_inert_check())
         } else {
@@ -986,6 +1035,7 @@ impl EventBuffer {
     }
 
     fn deliver(&mut self) {
+        tracing::trace!("EventBuffer::deliver");
         if !self.for_myself.is_empty() {
             panic!("Unprocessed for_myself events remain at deliver() time");
         }
@@ -1223,7 +1273,8 @@ impl Actor {
                         if r.is_err() { return; }
                     }
                     SystemMessage::Crash(e) => {
-                        tracing::trace!(actor_id = ?self.ac_ref.actor_id, "SystemMessage::Crash({:?})", &e);
+                        tracing::trace!(actor_id = ?self.ac_ref.actor_id,
+                                        "SystemMessage::Crash({:?})", &e);
                         return terminate(Err(e));
                     }
                 }
@@ -1264,7 +1315,10 @@ impl Facet {
         self.cleanup_actions.insert(
             handle,
             CleanupAction::ForAnother(Arc::clone(&r.mailbox), Box::new(
-                move |t| t.with_entity(&r, |t, e| e.retract(t, handle)))));
+                move |t| t.with_entity(&r, |t, e| {
+                    tracing::trace!(?handle, "retracted");
+                    e.retract(t, handle)
+                }))));
     }
 }
 

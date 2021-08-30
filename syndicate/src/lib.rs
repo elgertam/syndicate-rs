@@ -16,6 +16,7 @@ pub mod error;
 pub mod pattern;
 pub mod relay;
 pub mod rewrite;
+pub mod supervise;
 
 pub mod schemas {
     //! Auto-generated codecs for [Syndicate protocol

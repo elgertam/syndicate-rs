@@ -5,6 +5,7 @@ use syndicate::actor::*;
 use syndicate::convert::*;
 use syndicate::during::entity;
 use syndicate::schemas::dataspace::Observe;
+use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::value::NestedValue;
 
 use tokio::net::TcpListener;
@@ -17,11 +18,14 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
         let monitor = entity(())
             .on_asserted_facet({
                 let ds = Arc::clone(&ds);
-                move |_, t, captures| {
+                move |_, t, captures: AnyValue| {
                     let ds = Arc::clone(&ds);
                     let gateway = Arc::clone(&gateway);
-                    t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?captures),
-                                 |t| run(t, ds, gateway, captures));
+                    Supervisor::start(
+                        t,
+                        syndicate::name!(parent: None, "relay", addr = ?captures),
+                        SupervisorConfiguration::default(),
+                        move |t| run(t, Arc::clone(&ds), Arc::clone(&gateway), captures.clone()));
                     Ok(())
                 }
             })

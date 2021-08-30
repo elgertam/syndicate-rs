@@ -64,7 +64,6 @@ fn assertions_at_existing_file(t: &mut Activation, ds: &Arc<Cap>, path: &PathBuf
     }
     for value in values.into_iter() {
         if let Some(handle) = ds.assert(t, value.clone()) {
-            tracing::debug!("asserted {:?} -> {:?}", value, handle);
             handles.insert(handle);
         }
     }
@@ -190,7 +189,6 @@ fn run(t: &mut Activation, ds: Arc<Cap>, captures: AnyValue) -> ActorResult {
                     }
                 }
                 for h in to_retract.into_iter() {
-                    tracing::debug!("retract {:?}", h);
                     t.retract(h);
                 }
                 Ok(())
