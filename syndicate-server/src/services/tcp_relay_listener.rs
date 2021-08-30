@@ -20,7 +20,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
                 move |_, t, captures| {
                     let ds = Arc::clone(&ds);
                     let gateway = Arc::clone(&gateway);
-                    t.spawn_link(syndicate::name!(parent: None, "relay", addr = debug(&captures)),
+                    t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?captures),
                                  |t| run(t, ds, gateway, captures));
                     Ok(())
                 }

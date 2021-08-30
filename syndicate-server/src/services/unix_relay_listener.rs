@@ -25,7 +25,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
                 move |_, t, captures| {
                     let ds = Arc::clone(&ds);
                     let gateway = Arc::clone(&gateway);
-                    t.spawn_link(syndicate::name!(parent: None, "relay", addr = debug(&captures)),
+                    t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?captures),
                                  |t| run(t, ds, gateway, captures));
                     Ok(())
                 }
@@ -62,14 +62,14 @@ fn run(
             let gateway = Arc::clone(&gateway);
             Actor::new().boot(
                 syndicate::name!(parent: parent_span.clone(), "conn",
-                                 pid = debug(peer.pid().unwrap_or(-1)),
+                                 pid = ?peer.pid().unwrap_or(-1),
                                  uid = peer.uid()),
                 |t| Ok(t.linked_task(
                     tracing::Span::current(),
                     {
                         let facet = t.facet.clone();
                         async move {
-                            tracing::info!(protocol = display("unix"));
+                            tracing::info!(protocol = %"unix");
                             let (i, o) = stream.into_split();
                             run_connection(facet,
                                            relay::Input::Bytes(Box::pin(i)),
@@ -97,9 +97,8 @@ async fn bind_unix_listener(path: &PathBuf) -> Result<UnixListener, Error> {
                     std::fs::remove_file(path)?;
                     Ok(UnixListener::bind(path)?)
                 }
-                Err(f) => {
-                    tracing::error!(error = debug(f),
-                                    "Problem while probing potentially-stale socket");
+                Err(error) => {
+                    tracing::error!(?error, "Problem while probing potentially-stale socket");
                     return Err(e)? // signal the *original* error, not the probe error
                 }
             }

@@ -39,8 +39,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {
             timer.tick().await;
             for (id, (name, debt)) in syndicate::actor::ACCOUNTS.read().unwrap().iter() {
                 let _enter = name.enter();
-                tracing::info!(id, debt = debug(
-                    debt.load(std::sync::atomic::Ordering::Relaxed)));
+                tracing::info!(id, debt = ?debt.load(std::sync::atomic::Ordering::Relaxed));
             }
         }
     });

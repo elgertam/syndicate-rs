@@ -19,7 +19,7 @@ struct ExitListener;
 
 impl Entity<()> for ExitListener {
     fn exit_hook(&mut self, _t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
-        tracing::info!(exit_status = debug(exit_status), "disconnect");
+        tracing::info!(?exit_status, "disconnect");
         Ok(())
     }
 }
@@ -57,7 +57,7 @@ pub async fn detect_protocol(
         match stream.peek(&mut buf).await? {
             1 => match buf[0] {
                 b'G' /* ASCII 'G' for "GET" */ => {
-                    tracing::info!(protocol = display("websocket"), peer = debug(addr));
+                    tracing::info!(protocol = %"websocket", peer = ?addr);
                     let s = tokio_tungstenite::accept_async(stream).await
                         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                     let (o, i) = s.split();
@@ -66,7 +66,7 @@ pub async fn detect_protocol(
                     (relay::Input::Packets(Box::pin(i)), relay::Output::Packets(Box::pin(o)))
                 },
                 _ => {
-                    tracing::info!(protocol = display("raw"), peer = debug(addr));
+                    tracing::info!(protocol = %"raw", peer = ?addr);
                     let (i, o) = stream.into_split();
                     (relay::Input::Bytes(Box::pin(i)),
                      relay::Output::Bytes(Box::pin(o /* BufWriter::new(o) */)))

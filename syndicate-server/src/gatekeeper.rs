@@ -14,7 +14,7 @@ pub fn bind(
     target: Arc<Cap>,
 ) {
     let sr = sturdy::SturdyRef::mint(oid.clone(), &key);
-    tracing::info!(cap = debug(&AnyValue::from(&sr)), hex = display(sr.to_hex()));
+    tracing::info!(cap = ?AnyValue::from(&sr), hex = %sr.to_hex());
     ds.assert(t, &gatekeeper::Bind { oid, key: key.to_vec(), target });
 }
 
@@ -34,13 +34,13 @@ pub fn handle_resolve(
             let unattenuated_target = bindings[1].value().to_embedded()?;
             match sturdyref.validate_and_attenuate(key, unattenuated_target) {
                 Err(e) => {
-                    tracing::warn!(sturdyref = debug(&AnyValue::from(&sturdyref)),
+                    tracing::warn!(sturdyref = ?AnyValue::from(&sturdyref),
                                    "sturdyref failed validation: {}", e);
                     Ok(None)
                 },
                 Ok(target) => {
-                    tracing::trace!(sturdyref = debug(&AnyValue::from(&sturdyref)),
-                                    target = debug(&target),
+                    tracing::trace!(sturdyref = ?AnyValue::from(&sturdyref),
+                                    ?target,
                                     "sturdyref resolved");
                     if let Some(h) = observer.assert(t, AnyValue::domain(target)) {
                         Ok(Some(Box::new(move |_observer, t| Ok(t.retract(h)))))
