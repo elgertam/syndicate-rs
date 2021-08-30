@@ -511,12 +511,12 @@ impl FacetRef {
                                                          state);
                             for action in std::mem::take(&mut t.state.exit_hooks) {
                                 if let Err(err) = action(&mut t, &exit_status) {
-                                    tracing::error!(err = debug(err), "error in exit hook");
+                                    tracing::error!(?err, "error in exit hook");
                                 }
                             }
                             if let Err(err) = t._terminate_facet(t.state.root, false) {
                                 // This can only occur as the result of an internal error in this file's code.
-                                tracing::error!(err = debug(err), "unexpected error from disorderly terminate_facet");
+                                tracing::error!(?err, "unexpected error from disorderly terminate_facet");
                                 panic!("Unexpected error result from disorderly terminate_facet");
                             }
                             *g = ActorState::Terminated {
@@ -1342,12 +1342,12 @@ impl Drop for Facet {
         {
             let mut b = EventBuffer::new(Account::new(crate::name!("drop")));
             for (_handle, r) in to_clear.into_iter() {
-                tracing::trace!(h = debug(&_handle), "retract on termination");
+                tracing::trace!(h = ?_handle, "retract on termination");
                 b.execute_cleanup_action(r);
             }
         }
 
-        tracing::trace!(facet_id = debug(self.facet_id), "Facet::drop");
+        tracing::trace!(facet_id = ?self.facet_id, "Facet::drop");
     }
 }
 

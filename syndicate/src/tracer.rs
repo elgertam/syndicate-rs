@@ -21,22 +21,22 @@ pub fn tracer<M: Debug>(t: &mut Activation, name: tracing::Span) -> Arc<Ref<M>> 
 impl<M: Debug> Entity<M> for Tracer {
     fn assert(&mut self, _t: &mut Activation, a: M, h: Handle) -> ActorResult {
         let _guard = self.0.enter();
-        tracing::trace!(a = debug(&a), h = debug(&h), "assert");
+        tracing::trace!(?a, ?h, "assert");
         Ok(())
     }
     fn retract(&mut self, _t: &mut Activation, h: Handle) -> ActorResult {
         let _guard = self.0.enter();
-        tracing::trace!(h = debug(&h), "retract");
+        tracing::trace!(?h, "retract");
         Ok(())
     }
     fn message(&mut self, _t: &mut Activation, m: M) -> ActorResult {
         let _guard = self.0.enter();
-        tracing::trace!(m = debug(&m), "message");
+        tracing::trace!(?m, "message");
         Ok(())
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
         let _guard = self.0.enter();
-        tracing::trace!(peer = debug(&peer), "sync");
+        tracing::trace!(?peer, "sync");
         t.message(&peer, Synced);
         Ok(())
     }

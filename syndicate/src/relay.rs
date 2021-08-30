@@ -252,11 +252,11 @@ impl TunnelRelay {
     }
 
     fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet) -> ActorResult {
-        // tracing::trace!(packet = debug(&p), "-->");
+        // tracing::trace!(packet = ?p, "-->");
         match p {
             P::Packet::Error(b) => {
-                tracing::info!(message = debug(b.message.clone()),
-                               detail = debug(b.detail.clone()),
+                tracing::info!(message = ?b.message.clone(),
+                               detail = ?b.detail.clone(),
                                "received Error from peer");
                 Err(*b)
             },
@@ -372,7 +372,7 @@ impl TunnelRelay {
 
     fn encode_packet(&mut self, p: P::Packet) -> Result<Vec<u8>, Error> {
         let item = AnyValue::from(&p);
-        // tracing::trace!(packet = debug(&item), "<--");
+        // tracing::trace!(packet = ?item, "<--");
         if self.output_text {
             let mut s = TextWriter::encode::<_, AnyValue, _>(&mut self.membranes, &item)?;
             s.push('\n');
