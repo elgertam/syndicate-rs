@@ -24,3 +24,9 @@ pub fn to_any_value<N: NestedValue<D>, D: Embeddable>(v: &N) -> Result<AnyValue,
 pub fn from_io_value<V: TryInto<IOValue>>(v: V) -> Result<AnyValue, &'static str> {
     to_any_value(&v.try_into().map_err(|_| "Could not convert to IOValue")?)
 }
+
+/// Identity function for helping `rustc` decide which
+/// [`crate::value::NestedValue`] to use (namely, [`AnyValue`]).
+pub fn any_value(v: AnyValue) -> AnyValue {
+    v
+}
