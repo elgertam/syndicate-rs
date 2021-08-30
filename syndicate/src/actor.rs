@@ -497,8 +497,9 @@ impl FacetRef {
                 ActorState::Terminated { exit_status } =>
                     Some((**exit_status).clone()),
                 ActorState::Running(state) => {
+                    tracing::trace!(actor_id=?self.actor.actor_id, "activate");
                     let mut activation = Activation::make(self, account, state);
-                    match f(&mut activation) {
+                    let result = match f(&mut activation) {
                         None => None,
                         Some(exit_status) => {
                             if exit_status.is_err() {
@@ -524,7 +525,9 @@ impl FacetRef {
                             };
                             Some((*exit_status).clone())
                         }
-                    }
+                    };
+                    tracing::trace!(actor_id=?self.actor.actor_id, "deactivate");
+                    result
                 }
             }
         }
@@ -555,12 +558,14 @@ impl<'activation> Activation<'activation> {
         F: FnOnce(&mut Activation) -> ActorResult,
     {
         if !check_existence || self.state.facet_nodes.contains_key(&facet_id) {
+            tracing::trace!(check_existence, facet_id, "is_alive");
             let old_facet_id = self.facet.facet_id;
             self.facet.facet_id = facet_id;
             let result = f(self);
             self.facet.facet_id = old_facet_id;
             result
         } else {
+            tracing::trace!(facet_id, "not_alive");
             Ok(())
         }
     }
@@ -873,17 +878,21 @@ impl<'activation> Activation<'activation> {
     fn stop_if_inert(&mut self) {
         let facet_id = self.facet.facet_id;
         self.enqueue_for_myself_at_commit(Box::new(move |t| {
+            tracing::trace!("Checking inertness of facet {} from facet {}", facet_id, t.facet.facet_id);
             if t.state.facet_exists_and_is_inert(facet_id) {
+                tracing::trace!(" - facet {} is inert, stopping it", facet_id);
                 t.stop_facet(facet_id, None);
+            } else {
+                tracing::trace!(" - facet {} is not inert", facet_id);
             }
             Ok(())
         }))
     }
 
-    fn _terminate_facet(&mut self, facet_id: FacetId, orderly: bool) -> ActorResult {
+    fn _terminate_facet(&mut self, facet_id: FacetId, alive: bool) -> ActorResult {
         if let Some(mut f) = self.state.facet_nodes.remove(&facet_id) {
-            tracing::debug!("{} terminating {:?}",
-                            if orderly { "orderly" } else { "disorderly" },
+            tracing::debug!("{} termination of {:?}",
+                            if alive { "living" } else { "post-exit" },
                             facet_id);
             if let Some(p) = f.parent_facet_id {
                 self.state.facet_children.get_mut(&p).map(|children| children.remove(&facet_id));
@@ -891,15 +900,15 @@ impl<'activation> Activation<'activation> {
             self.with_facet(false, facet_id, |t| {
                 if let Some(children) = t.state.facet_children.remove(&facet_id) {
                     for child_id in children.into_iter() {
-                        t._terminate_facet(child_id, orderly)?;
+                        t._terminate_facet(child_id, alive)?;
                     }
                 }
-                if orderly {
+                if alive {
                     for action in std::mem::take(&mut f.stop_actions) {
                         action(t)?;
                     }
                     let parent_facet_id = f.parent_facet_id;
-                    // if !orderly, the drop will happen at the end of this function, but we
+                    // if !alive, the drop will happen at the end of this function, but we
                     // need it to happen right here so that child-facet cleanup-actions are
                     // performed before parent-facet cleanup-actions.
                     drop(f);
@@ -956,7 +965,9 @@ impl EventBuffer {
             panic!("Unprocessed for_myself events remain at deliver() time");
         }
         for (_actor_id, (tx, turn)) in std::mem::take(&mut self.queues).into_iter() {
-            let _ = send_actions(&tx, &self.account, turn);
+            if let Err(e) = send_actions(&tx, &self.account, turn) {
+                tracing::error!(actor=?_actor_id, ?e);
+            }
         }
     }
 }
@@ -1163,16 +1174,18 @@ impl Actor {
         }
 
         loop {
+            tracing::trace!(actor_id = ?self.ac_ref.actor_id, "mainloop top");
             match self.rx.recv().await {
                 None => {
                     return terminate(Err(error("Unexpected channel close", AnyValue::new(false))));
                 }
                 Some(m) => match m {
                     SystemMessage::Release => {
-                        tracing::trace!("SystemMessage::Release");
+                        tracing::trace!(actor_id = ?self.ac_ref.actor_id, "SystemMessage::Release");
                         return terminate(Ok(()));
                     }
                     SystemMessage::Turn(mut loaned_item) => {
+                        tracing::trace!(actor_id = ?self.ac_ref.actor_id, "SystemMessage::Turn");
                         let mut actions = std::mem::take(&mut loaned_item.item);
                         let r = root_facet_ref.activate(Arc::clone(&loaned_item.account), |t| {
                             loop {
@@ -1185,7 +1198,7 @@ impl Actor {
                         if r.is_err() { return; }
                     }
                     SystemMessage::Crash(e) => {
-                        tracing::trace!("SystemMessage::Crash({:?})", &e);
+                        tracing::trace!(actor_id = ?self.ac_ref.actor_id, "SystemMessage::Crash({:?})", &e);
                         return terminate(Err(e));
                     }
                 }
@@ -1329,6 +1342,7 @@ impl RunningActor {
 impl Drop for Actor {
     fn drop(&mut self) {
         self.rx.close();
+        tracing::trace!(actor_id = ?self.ac_ref.actor_id, "Actor::drop");
     }
 }
 
@@ -1424,7 +1438,7 @@ impl<M> Ord for Ref<M> {
 
 impl<M> std::fmt::Debug for Ref<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "⌜{}:{:016x}⌝", self.mailbox.actor_id, self.oid())
+        write!(f, "⌜{}/{}:{:016x}⌝", self.mailbox.actor_id, self.facet_id, self.oid())
     }
 }
 
@@ -1497,8 +1511,9 @@ impl std::fmt::Debug for Cap {
         if self.attenuation.is_empty() {
             self.underlying.fmt(f)
         } else {
-            write!(f, "⌜{}:{:016x}\\{:?}⌝",
+            write!(f, "⌜{}/{}:{:016x}\\{:?}⌝",
                    self.underlying.mailbox.actor_id,
+                   self.underlying.facet_id,
                    self.underlying.oid(),
                    self.attenuation)
         }
