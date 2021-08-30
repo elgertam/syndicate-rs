@@ -165,6 +165,16 @@ pub trait Entity<M>: Send {
         Ok(())
     }
 
+    /// Optional callback for running actions when the entity's owning [Facet] terminates
+    /// cleanly. Will not be called in case of abnormal shutdown (crash) of an actor.
+    ///
+    /// Programs register an entity's stop hook with [Activation::on_stop].
+    ///
+    /// The default implementation does nothing.
+    fn stop(&mut self, turn: &mut Activation) -> ActorResult {
+        Ok(())
+    }
+
     /// Optional callback for running cleanup actions when the
     /// entity's animating [Actor] terminates.
     ///
@@ -510,15 +520,15 @@ impl FacetRef {
                             let mut t = Activation::make(&self.actor.facet_ref(state.root),
                                                          Account::new(crate::name!("shutdown")),
                                                          state);
+                            if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok()) {
+                                // This can only occur as the result of an internal error in this file's code.
+                                tracing::error!(?err, "unexpected error from terminate_facet");
+                                panic!("Unexpected error result from terminate_facet");
+                            }
                             for action in std::mem::take(&mut t.state.exit_hooks) {
                                 if let Err(err) = action(&mut t, &exit_status) {
                                     tracing::error!(?err, "error in exit hook");
                                 }
-                            }
-                            if let Err(err) = t._terminate_facet(t.state.root, false) {
-                                // This can only occur as the result of an internal error in this file's code.
-                                tracing::error!(?err, "unexpected error from disorderly terminate_facet");
-                                panic!("Unexpected error result from disorderly terminate_facet");
                             }
                             *g = ActorState::Terminated {
                                 exit_status: Arc::clone(&exit_status),
@@ -682,6 +692,21 @@ impl<'activation> Activation<'activation> {
         let r = Arc::clone(r);
         self.pending.queue_for(&r).push(Box::new(
             move |t| t.with_entity(&r, |t, e| e.sync(t, peer))))
+    }
+
+    /// Registers the entity `r` in the list of stop actions for the active facet. If the facet
+    /// terminates cleanly, `r`'s [`stop`][Entity::stop] will be called.
+    ///
+    /// **Note.** If the actor crashes, the stop actions will *not* be called.
+    ///
+    /// Use [`RunningActor::add_exit_hook`] to install a callback that will be called at the
+    /// end of the lifetime of the *actor* rather than the facet. (Also, exit hooks are called
+    /// no matter whether actor termination was normal or abnormal.)
+    pub fn on_stop<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>) {
+        if let Some(f) = self.active_facet() {
+            let r = Arc::clone(r);
+            f.stop_actions.push(Box::new(move |t| r.internal_with_entity(|e| e.stop(t))));
+        }
     }
 
     /// Retrieve the [`Account`] against which actions are recorded.
@@ -1557,6 +1582,9 @@ where
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
         t.with_entity(&self.underlying, |t, e| e.sync(t, peer))
+    }
+    fn stop(&mut self, t: &mut Activation) -> ActorResult {
+        t.with_entity(&self.underlying, |t, e| e.stop(t))
     }
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
         self.underlying.internal_with_entity(|e| e.exit_hook(t, exit_status))

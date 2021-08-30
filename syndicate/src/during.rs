@@ -10,17 +10,19 @@ pub struct During<T>(Map<Handle, DuringRetractionHandler<T>>);
 pub type DuringRetractionHandler<T> = Box<dyn Send + FnOnce(&mut T, &mut Activation) -> ActorResult>;
 pub type DuringResult<E> = Result<Option<DuringRetractionHandler<E>>, Error>;
 
-pub struct DuringEntity<M, E, Fa, Fm, Fx>
+pub struct DuringEntity<M, E, Fa, Fm, Fs, Fx>
 where
     M: 'static + Send,
     E: 'static + Send,
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
+    Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
     Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
 {
     state: E,
     assertion_handler: Option<Fa>,
     message_handler: Option<Fm>,
+    stop_handler: Option<Fs>,
     exit_handler: Option<Fx>,
     during: During<E>,
     phantom: PhantomData<M>,
@@ -51,38 +53,42 @@ pub fn entity<M: 'static + Send, E>(
                   E,
                   fn (&mut E, &mut Activation, M) -> DuringResult<E>,
                   fn (&mut E, &mut Activation, M) -> ActorResult,
+                  fn (&mut E, &mut Activation) -> ActorResult,
                   fn (&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult>
 where
     E: 'static + Send,
 {
-    DuringEntity::new(state, None, None, None)
+    DuringEntity::new(state, None, None, None, None)
 }
 
-impl<M, E, Fa, Fm, Fx> DuringEntity<M, E, Fa, Fm, Fx>
+impl<M, E, Fa, Fm, Fs, Fx> DuringEntity<M, E, Fa, Fm, Fs, Fx>
 where
     M: 'static + Send,
     E: 'static + Send,
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
+    Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
     Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
 {
     pub fn new(
         state: E,
         assertion_handler: Option<Fa>,
         message_handler: Option<Fm>,
+        stop_handler: Option<Fs>,
         exit_handler: Option<Fx>,
     ) -> Self {
         DuringEntity {
             state,
             assertion_handler,
             message_handler,
+            stop_handler,
             exit_handler,
             during: During::new(),
             phantom: PhantomData,
         }
     }
 
-    pub fn on_asserted<Fa1>(self, assertion_handler: Fa1) -> DuringEntity<M, E, Fa1, Fm, Fx>
+    pub fn on_asserted<Fa1>(self, assertion_handler: Fa1) -> DuringEntity<M, E, Fa1, Fm, Fs, Fx>
     where
         Fa1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     {
@@ -90,6 +96,7 @@ where
             state: self.state,
             assertion_handler: Some(assertion_handler),
             message_handler: self.message_handler,
+            stop_handler: self.stop_handler,
             exit_handler: self.exit_handler,
             during: self.during,
             phantom: self.phantom,
@@ -99,7 +106,7 @@ where
     pub fn on_asserted_facet<Fa1>(
         self,
         mut assertion_handler: Fa1,
-    ) -> DuringEntity<M, E, Box<dyn 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>>, Fm, Fx>
+    ) -> DuringEntity<M, E, Box<dyn 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>>, Fm, Fs, Fx>
     where
         Fa1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult
     {
@@ -112,7 +119,7 @@ where
         }))
     }
 
-    pub fn on_message<Fm1>(self, message_handler: Fm1) -> DuringEntity<M, E, Fa, Fm1, Fx>
+    pub fn on_message<Fm1>(self, message_handler: Fm1) -> DuringEntity<M, E, Fa, Fm1, Fs, Fx>
     where
         Fm1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
     {
@@ -120,13 +127,29 @@ where
             state: self.state,
             assertion_handler: self.assertion_handler,
             message_handler: Some(message_handler),
+            stop_handler: self.stop_handler,
             exit_handler: self.exit_handler,
             during: self.during,
             phantom: self.phantom,
         }
     }
 
-    pub fn on_exit<Fx1>(self, exit_handler: Fx1) -> DuringEntity<M, E, Fa, Fm, Fx1>
+    pub fn on_stop<Fs1>(self, stop_handler: Fs1) -> DuringEntity<M, E, Fa, Fm, Fs1, Fx>
+    where
+        Fs1: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
+    {
+        DuringEntity {
+            state: self.state,
+            assertion_handler: self.assertion_handler,
+            message_handler: self.message_handler,
+            stop_handler: Some(stop_handler),
+            exit_handler: self.exit_handler,
+            during: self.during,
+            phantom: self.phantom,
+        }
+    }
+
+    pub fn on_exit<Fx1>(self, exit_handler: Fx1) -> DuringEntity<M, E, Fa, Fm, Fs, Fx1>
     where
         Fx1: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
     {
@@ -134,6 +157,7 @@ where
             state: self.state,
             assertion_handler: self.assertion_handler,
             message_handler: self.message_handler,
+            stop_handler: self.stop_handler,
             exit_handler: Some(exit_handler),
             during: self.during,
             phantom: self.phantom,
@@ -141,8 +165,12 @@ where
     }
 
     pub fn create(self, t: &mut Activation) -> Arc<Ref<M>> {
+        let should_register_stop_action = self.stop_handler.is_some();
         let should_register_exit_hook = self.exit_handler.is_some();
         let r = t.create(self);
+        if should_register_stop_action {
+            t.on_stop(&r);
+        }
         if should_register_exit_hook {
             t.state.add_exit_hook(&r);
         }
@@ -150,11 +178,12 @@ where
     }
 }
 
-impl<E, Fa, Fm, Fx> DuringEntity<AnyValue, E, Fa, Fm, Fx>
+impl<E, Fa, Fm, Fs, Fx> DuringEntity<AnyValue, E, Fa, Fm, Fs, Fx>
 where
     E: 'static + Send,
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> ActorResult,
+    Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
     Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
 {
     pub fn create_cap(self, t: &mut Activation) -> Arc<Cap>
@@ -163,12 +192,13 @@ where
     }
 }
 
-impl<M, E, Fa, Fm, Fx> Entity<M> for DuringEntity<M, E, Fa, Fm, Fx>
+impl<M, E, Fa, Fm, Fs, Fx> Entity<M> for DuringEntity<M, E, Fa, Fm, Fs, Fx>
 where
     M: Send,
     E: 'static + Send,
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
+    Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
     Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
 {
     fn assert(&mut self, t: &mut Activation, a: M, h: Handle) -> ActorResult {
@@ -188,6 +218,13 @@ where
     fn message(&mut self, t: &mut Activation, m: M) -> ActorResult {
         match &mut self.message_handler {
             Some(handler) => handler(&mut self.state, t, m),
+            None => Ok(()),
+        }
+    }
+
+    fn stop(&mut self, t: &mut Activation) -> ActorResult {
+        match &mut self.stop_handler {
+            Some(handler) => handler(&mut self.state, t),
             None => Ok(()),
         }
     }
