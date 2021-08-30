@@ -24,7 +24,7 @@ structopt = "0.3.14"
 tungstenite = "0.13.0"
 tokio-tungstenite = "0.14.0"
 
-tokio = { version = "1.10.0", features = ["io-std", "io-util", "macros", "sync", "net", "rt", "rt-multi-thread", "time"] }
+tokio = { version = "1.10.0", features = ["io-std", "time"] }
 tokio-util = "0.6.7"
 
 tracing = "0.1.14"
