@@ -35,6 +35,9 @@ struct ServerConfig {
 
     #[structopt(long)]
     debt_reporter: bool,
+
+    #[structopt(short = "c", long)]
+    config: Vec<PathBuf>,
 }
 
 #[tokio::main]
@@ -94,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
         services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
         services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
+        services::config_watcher::on_demand(t, Arc::clone(&server_config_ds));
 
         if config.debt_reporter {
             server_config_ds.assert(t, &service::RequireService {
@@ -120,6 +124,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         addr: transport_address::Unix {
                             path: path.to_str().expect("representable UnixListener path").to_owned(),
                         }
+                    })?,
+            });
+        }
+
+        for path in config.config.clone() {
+            server_config_ds.assert(t, &service::RequireService {
+                service_name: from_io_value(
+                    &internal_services::ConfigWatcher {
+                        path: path.to_str().expect("representable ConfigWatcher path").to_owned(),
                     })?,
             });
         }

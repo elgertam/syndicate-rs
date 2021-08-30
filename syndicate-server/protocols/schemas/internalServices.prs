@@ -4,3 +4,4 @@ DebtReporter = =debt-reporter .
 
 TcpRelayListener = <relay-listener @addr TransportAddress.Tcp> .
 UnixRelayListener = <relay-listener @addr TransportAddress.Unix> .
+ConfigWatcher = <config-watcher @path string>.
