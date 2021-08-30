@@ -7,10 +7,8 @@ use syndicate::schemas::dataspace::Observe;
 
 use crate::schemas::internal_services;
 
-const SERVICE_NAME: &str = "debt-reporter";
-
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("on_demand", service = SERVICE_NAME), move |t| {
+    t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
         let monitor = entity(())
             .on_asserted_facet({
                 let ds = Arc::clone(&ds);
