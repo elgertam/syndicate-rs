@@ -1040,9 +1040,13 @@ impl EventBuffer {
             panic!("Unprocessed for_myself events remain at deliver() time");
         }
         for (_actor_id, (tx, turn)) in std::mem::take(&mut self.queues).into_iter() {
-            if let Err(e) = send_actions(&tx, &self.account, turn) {
-                tracing::error!(actor=?_actor_id, ?e);
-            }
+            // Deliberately ignore send errors here: they indicate that the recipient is no
+            // longer alive. But we don't care about that case, since we have to be robust to
+            // crashes anyway. (When we were printing errors we saw here, an example of the
+            // problems it caused was a relay output_loop that received EPIPE causing the relay
+            // to crash, just as it was receiving thousands of messages a second, leading to
+            // many, many log reports of failed send_actions from the following line.)
+            let _ = send_actions(&tx, &self.account, turn);
         }
     }
 }
