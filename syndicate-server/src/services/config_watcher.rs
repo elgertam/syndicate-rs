@@ -58,7 +58,11 @@ fn assertions_at_existing_file(t: &mut Activation, ds: &Arc<Cap>, path: &PathBuf
     let fh = fs::File::open(path)?;
     let mut src = IOBinarySource::new(fh);
     let mut r = src.text::<_, AnyValue, _>(ViaCodec::new(NoEmbeddedDomainCodec));
+    let mut values = Vec::new();
     while let Some(value) = Reader::<_, AnyValue>::next(&mut r, true)? {
+        values.push(value);
+    }
+    for value in values.into_iter() {
         if let Some(handle) = ds.assert(t, value.clone()) {
             tracing::debug!("asserted {:?} -> {:?}", value, handle);
             handles.insert(handle);
@@ -94,16 +98,22 @@ fn scan_file(
     path_state: &mut Map<PathBuf, Set<Handle>>,
     ds: &Arc<Cap>,
     path: &PathBuf,
-) {
+) -> bool {
     if is_hidden(path) {
-        return;
+        return true;
     }
     tracing::info!("scan_file: {:?}", path);
     match assertions_at_path(t, ds, path) {
-        Ok(new_handles) => if !new_handles.is_empty() {
-            path_state.insert(path.clone(), new_handles);
+        Ok(new_handles) => {
+            if !new_handles.is_empty() {
+                path_state.insert(path.clone(), new_handles);
+            }
+            true
         },
-        Err(e) => tracing::warn!("scan_file: {:?}: {:?}", path, e),
+        Err(e) => {
+            tracing::warn!("scan_file: {:?}: {:?}", path, e);
+            false
+        }
     }
 }
 
@@ -118,7 +128,7 @@ fn initial_scan(
     }
     match fs::metadata(path) {
         Ok(md) => if md.is_file() {
-            scan_file(t, path_state, ds, path)
+            scan_file(t, path_state, ds, path);
         } else {
             match fs::read_dir(path) {
                 Ok(entries) => for er in entries {
@@ -169,10 +179,15 @@ fn run(t: &mut Activation, ds: Arc<Cap>, captures: AnyValue) -> ActorResult {
             facet.activate(Arc::clone(&account), |t| {
                 let mut to_retract = Set::new();
                 for path in paths.into_iter() {
-                    if let Some(handles) = path_state.remove(&path) {
-                        to_retract.extend(handles.into_iter());
+                    let maybe_handles = path_state.remove(&path);
+                    let new_content_ok = scan_file(t, &mut path_state, &ds, &path);
+                    if let Some(old_handles) = maybe_handles {
+                        if new_content_ok {
+                            to_retract.extend(old_handles.into_iter());
+                        } else {
+                            path_state.insert(path, old_handles);
+                        }
                     }
-                    scan_file(t, &mut path_state, &ds, &path);
                 }
                 for h in to_retract.into_iter() {
                     tracing::debug!("retract {:?}", h);
