@@ -163,11 +163,9 @@ fn run(t: &mut Activation, ds: Arc<Cap>, captures: AnyValue) -> ActorResult {
     thread::spawn(move || {
         let mut path_state: Map<PathBuf, Set<Handle>> = Map::new();
 
-        let account = Account::new(syndicate::name!("watcher"));
-
         {
             let root_path = path.clone().into();
-            facet.activate(Arc::clone(&account), |t| {
+            facet.activate(Account::new(syndicate::name!("initial_scan")), |t| {
                 initial_scan(t, &mut path_state, &ds, &root_path);
                 Ok(())
             }).unwrap();
@@ -175,7 +173,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, captures: AnyValue) -> ActorResult {
         }
 
         let mut rescan = |paths: Vec<PathBuf>| {
-            facet.activate(Arc::clone(&account), |t| {
+            facet.activate(Account::new(syndicate::name!("rescan")), |t| {
                 let mut to_retract = Set::new();
                 for path in paths.into_iter() {
                     let maybe_handles = path_state.remove(&path);
@@ -213,7 +211,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, captures: AnyValue) -> ActorResult {
             }
         }
 
-        let _ = facet.activate(Arc::clone(&account), |t| {
+        let _ = facet.activate(Account::new(syndicate::name!("termination")), |t| {
             tracing::trace!("linked thread terminating associated facet");
             t.stop();
             Ok(())
