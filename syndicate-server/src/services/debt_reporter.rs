@@ -21,7 +21,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
             .create_cap(t);
         let spec = from_io_value(&internal_services::DebtReporter)?;
         ds.assert(t, &Observe {
-            pattern: syndicate_macros::pattern!("<require-service =spec>"),
+            pattern: syndicate_macros::pattern!{<require-service #(spec)>},
             observer: monitor,
         });
         Ok(())

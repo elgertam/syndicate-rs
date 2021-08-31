@@ -1,14 +1,13 @@
+#![feature(proc_macro_span)]
+
 use syndicate::value::IOValue;
 use syndicate::value::NestedValue;
 use syndicate::value::Value;
 use syndicate::value::text::iovalue_from_str;
 
-extern crate proc_macro;
-
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 
-use quote::ToTokens;
 use quote::quote;
 
 use std::convert::TryFrom;
@@ -19,6 +18,12 @@ use syn::Ident;
 use syn::Lit;
 use syn::LitByteStr;
 
+mod stx;
+mod pat;
+mod val;
+
+use pat::lit;
+
 enum SymbolVariant<'a> {
     Normal(&'a str),
     Binder(&'a str),
@@ -26,19 +31,10 @@ enum SymbolVariant<'a> {
     Discard,
 }
 
-fn lit<T: ToTokens>(e: T) -> TokenStream {
-    quote!(
-        syndicate::schemas::dataspace_patterns::Pattern::DLit(Box::new(
-            syndicate::schemas::dataspace_patterns::DLit { value: #e })))
-}
-
 fn compile_sequence_members(vs: &[IOValue]) -> Vec<TokenStream> {
-    let mut i = 0;
-    vs.iter().map(|f| {
+    vs.iter().enumerate().map(|(i, f)| {
         let p = compile_pattern(f);
-        let result = quote!((#i .into(), #p));
-        i += 1;
-        result
+        quote!((#i .into(), #p))
     }).collect::<Vec<_>>()
 }
 
@@ -177,7 +173,7 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
             match r.label().value().as_symbol() {
                 None => panic!("Record labels in patterns must be symbols"),
                 Some(label) =>
-                    if label == "$" && arity == 1 {
+                    if label.starts_with("$") && arity == 1 {
                         let nested = compile_pattern(&r.fields()[0]);
                         quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
                             pattern: #nested
@@ -228,7 +224,7 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
 }
 
 #[proc_macro]
-pub fn pattern(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn pattern_str(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
     if let Lit::Str(s) = parse_macro_input!(src as ExprLit).lit {
         match iovalue_from_str(&s.value()) {
             Ok(v) => {
@@ -257,4 +253,11 @@ pub fn template(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }
 
     panic!("Expected literal string containing the template and no more");
+}
+
+//---------------------------------------------------------------------------
+
+#[proc_macro]
+pub fn pattern(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    pat::pattern(src)
 }

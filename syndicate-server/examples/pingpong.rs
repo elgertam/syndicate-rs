@@ -171,7 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ds.assert(t, &Observe {
                         pattern: {
                             let recv_label = AnyValue::symbol(recv_label);
-                            syndicate_macros::pattern!("<=recv_label $ $>")
+                            syndicate_macros::pattern!{<#(recv_label) $ $>}
                         },
                         observer: Arc::clone(&consumer),
                     });

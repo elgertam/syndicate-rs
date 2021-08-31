@@ -31,7 +31,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
             })
             .create_cap(t);
         ds.assert(t, &Observe {
-            pattern: syndicate_macros::pattern!("<require-service <$ <relay-listener <tcp _ _>>>>"),
+            pattern: syndicate_macros::pattern!{<require-service $(<relay-listener <tcp _ _>>)>},
             observer: monitor,
         });
         Ok(())

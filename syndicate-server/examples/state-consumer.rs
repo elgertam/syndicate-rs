@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     ds.assert(t, &Observe {
-                        pattern: syndicate_macros::pattern!("<Present $>"),
+                        pattern: syndicate_macros::pattern!{<Present $>},
                         observer: Arc::clone(&consumer),
                     });
 

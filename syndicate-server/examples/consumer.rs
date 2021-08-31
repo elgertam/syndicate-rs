@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         })
                         .create_cap(t);
                     ds.assert(t, &Observe {
-                        pattern: syndicate_macros::pattern!("<Says $ $>"),
+                        pattern: syndicate_macros::pattern!{<Says $ $>},
                         observer: Arc::clone(&consumer),
                     });
 

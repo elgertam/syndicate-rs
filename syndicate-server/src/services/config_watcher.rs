@@ -42,7 +42,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
             })
             .create_cap(t);
         ds.assert(t, &Observe {
-            pattern: syndicate_macros::pattern!("<require-service <$ <config-watcher _>>>"),
+            pattern: syndicate_macros::pattern!{<require-service $(<config-watcher _>)>},
             observer: monitor,
         });
         Ok(())
