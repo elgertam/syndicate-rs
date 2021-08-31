@@ -111,7 +111,13 @@ where
         Fa1: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult
     {
         self.on_asserted(Box::new(move |state, t, a| {
-            let facet_id = t.facet(|t| assertion_handler(state, t, a))?;
+            let facet_id = t.facet(|t| {
+                // Prevent inertness check because we have a bounded lifetime anyway. This
+                // allows e.g. facets containing Supervisors to Just Work (they go momentarily
+                // inert when their supervisee exits).
+                let _ = t.prevent_inert_check();
+                assertion_handler(state, t, a)
+            })?;
             Ok(Some(Box::new(move |_state, t| {
                 t.stop_facet(facet_id, None);
                 Ok(())

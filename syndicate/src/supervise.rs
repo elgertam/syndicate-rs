@@ -130,15 +130,6 @@ impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult> Supervisor<Bo
             restarts: VecDeque::new(),
             supervisee: Supervisee::NotRunning,
         };
-
-        // In cases where we are the only Entity in our Facet, and our
-        // supervisee terminates, we will often be "inert" until we
-        // can restart it. So we prevent_inert_check to signal to the
-        // system that there's something going on for that moment of
-        // time between the supervisee terminating and our responding
-        // to it.
-        let _ = t.prevent_inert_check();
-
         supervisor.ensure_started(t).unwrap();
         self_ref.become_entity(supervisor);
     }
