@@ -25,7 +25,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
             observer: monitor,
         });
         Ok(())
-    })
+    });
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {

@@ -36,7 +36,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
             observer: monitor,
         });
         Ok(())
-    })
+    });
 }
 
 fn run(

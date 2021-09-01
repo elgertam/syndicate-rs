@@ -859,11 +859,14 @@ impl<'activation> Activation<'activation> {
         &mut self,
         name: tracing::Span,
         boot: F,
-    ) {
+    ) -> ActorRef {
+        let ac = Actor::new();
+        let ac_ref = ac.ac_ref.clone();
         self.enqueue_for_myself_at_commit(Box::new(move |_| {
-            Actor::new().boot(name, boot);
+            ac.boot(name, boot);
             Ok(())
         }));
+        ac_ref
     }
 
     /// Schedule the creation of a new actor when the Activation commits.
@@ -875,14 +878,17 @@ impl<'activation> Activation<'activation> {
         &mut self,
         name: tracing::Span,
         boot: F,
-    ) {
+    ) -> ActorRef {
+        let ac = Actor::new();
+        let ac_ref = ac.ac_ref.clone();
         let facet_id = self.facet.facet_id;
         self.enqueue_for_myself_at_commit(Box::new(move |t| {
             t.with_facet(true, facet_id, move |t| {
-                Actor::new().link(t).boot(name, boot);
+                ac.link(t).boot(name, boot);
                 Ok(())
             })
         }));
+        ac_ref
     }
 
     /// Create a new subfacet of the currently-active facet. Runs `boot` in the new facet's
