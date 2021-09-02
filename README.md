@@ -2,10 +2,9 @@
 
 A Rust implementation of:
 
- - the Syndicated Actor model (partial; includes assertion-based
-   communication, failure-handling, capability-style security, and
-   dataspace entities, but not (yet) facets as a structuring
-   principle);
+ - the Syndicated Actor model, including assertion-based
+   communication, failure-handling, capability-style security,
+   dataspace entities, and facets as a structuring principle;
 
  - the Syndicate network protocol, including
 
@@ -27,13 +26,13 @@ A Rust implementation of:
     git clone https://git.syndicate-lang.org/syndicate-lang/syndicate-rs
     cd syndicate-rs
     cargo build --release
-    ./target/release/syndicate-server
+    ./target/release/syndicate-server -p 8001
 
 ## Running the examples
 
 In one window, start the server:
 
-    ./target/release/syndicate-server
+    ./target/release/syndicate-server -p 8001
 
 Then, choose one of the examples below.
 
@@ -71,7 +70,7 @@ about who kicks off the pingpong session.
 You may find better performance by restricting the server to fewer
 cores than you have available. For example, for me, running
 
-    taskset -c 0,1 ./target/release/syndicate-server
+    taskset -c 0,1 ./target/release/syndicate-server -p 8001
 
 roughly *quadruples* throughput for a single producer/consumer pair,
 on my 48-core AMD CPU.
