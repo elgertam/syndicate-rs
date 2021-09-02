@@ -10,10 +10,10 @@ repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
 license = "Apache-2.0"
 
 [build-dependencies]
-preserves-schema = "0.8.0"
+preserves-schema = "1.0.0"
 
 [dependencies]
-preserves-schema = "0.8.0"
+preserves-schema = "1.0.0"
 syndicate = { path = "../syndicate", version = "^0.10.0"}
 syndicate-macros = { path = "../syndicate-macros", version = "^0.5.0"}
 
