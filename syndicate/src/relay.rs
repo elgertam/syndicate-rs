@@ -20,13 +20,10 @@ use preserves::value::BinarySource;
 use preserves::value::BytesBinarySource;
 use preserves::value::DomainDecode;
 use preserves::value::DomainEncode;
-use preserves::value::IOValue;
 use preserves::value::Map;
 use preserves::value::NestedValue;
 use preserves::value::NoEmbeddedDomainCodec;
-use preserves::value::PackedReader;
 use preserves::value::PackedWriter;
-use preserves::value::Reader;
 use preserves::value::TextWriter;
 use preserves::value::ViaCodec;
 use preserves::value::Writer;
@@ -35,7 +32,6 @@ use preserves::value::signed_integer::SignedInteger;
 use preserves_schema::support::Deserialize;
 use preserves_schema::support::ParseError;
 
-use std::convert::TryFrom;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -434,8 +430,7 @@ impl Membranes {
         src: &'src mut S,
         _read_annotations: bool,
     ) -> io::Result<P::_Ptr> {
-        let v: IOValue = PackedReader::new(src, NoEmbeddedDomainCodec).demand_next(false)?;
-        match sturdy::WireRef::try_from(&v)? {
+        match sturdy::WireRef::deserialize(&mut src.packed(NoEmbeddedDomainCodec))? {
             sturdy::WireRef::Mine{ oid: b } => {
                 let oid = *b;
                 match self.imported.oid_map.get(&oid) {
