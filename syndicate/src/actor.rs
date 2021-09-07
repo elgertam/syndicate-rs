@@ -530,6 +530,9 @@ impl FacetRef {
                                 tracing::error!(?err, "unexpected error from terminate_facet");
                                 panic!("Unexpected error result from terminate_facet");
                             }
+                            // TODO: The linked_tasks are being cancelled above ^ when their Facets drop.
+                            // TODO: We don't want that: we want (? do we?) exit hooks to run before linked_tasks are cancelled.
+                            // TODO: Example: send an error message in an exit_hook that is processed and delivered by a linked_task.
                             for action in std::mem::take(&mut t.state.exit_hooks) {
                                 if let Err(err) = action(&mut t, &exit_status) {
                                     tracing::error!(?err, "error in exit hook");
