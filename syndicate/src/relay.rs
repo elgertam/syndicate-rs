@@ -1,6 +1,7 @@
 use bytes::Buf;
 use bytes::BytesMut;
 
+use crate::language;
 use crate::actor::*;
 use crate::during;
 use crate::error::Error;
@@ -29,8 +30,9 @@ use preserves::value::ViaCodec;
 use preserves::value::Writer;
 use preserves::value::signed_integer::SignedInteger;
 
-use preserves_schema::support::Deserialize;
-use preserves_schema::support::ParseError;
+use preserves_schema::Codec;
+use preserves_schema::Deserialize;
+use preserves_schema::ParseError;
 
 use std::io;
 use std::pin::Pin;
@@ -191,7 +193,7 @@ pub fn connect_stream<I, O, E, F>(
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
-    gatekeeper.assert(t, &gatekeeper::Resolve {
+    gatekeeper.assert(t, language(), &gatekeeper::Resolve {
         sturdyref,
         observer: Cap::new(&main_entity),
     });
@@ -259,13 +261,13 @@ impl TunnelRelay {
         match src.peek() {
             Ok(v) => if v >= 128 {
                 self.output_text = false;
-                let mut r = src.packed::<_, AnyValue, _>(&mut dec);
+                let mut r = src.packed(&mut dec);
                 let res = P::Packet::deserialize(&mut r);
                 (res, r.source.index)
             } else {
                 self.output_text = true;
                 let mut dec = ViaCodec::new(dec);
-                let mut r = src.text::<_, AnyValue, _>(&mut dec);
+                let mut r = src.text::<AnyValue, _>(&mut dec);
                 let res = P::Packet::deserialize(&mut r);
                 (res, r.source.index)
             },
@@ -310,7 +312,7 @@ impl TunnelRelay {
                             ws.inc_ref(),
                         None => {
                             tracing::warn!(
-                                event = ?AnyValue::from(&P::TurnEvent { oid, event }),
+                                event = ?language().unparse(&P::TurnEvent { oid, event }),
                                 "Cannot deliver event: nonexistent oid");
                             return Ok(());
                         }
@@ -322,7 +324,7 @@ impl TunnelRelay {
                             let P::Assert { assertion: P::Assertion(a), handle: remote_handle } = *b;
                             a.foreach_embedded::<_, Error>(
                                 &mut |r| Ok(pins.push(self.membranes.lookup_ref(r))))?;
-                            if let Some(local_handle) = target.assert(t, a) {
+                            if let Some(local_handle) = target.assert(t, &(), &a) {
                                 if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, pins)) {
                                     return Err(error("Assertion with duplicate handle", AnyValue::new(false)));
                                 }
@@ -334,7 +336,7 @@ impl TunnelRelay {
                         P::Event::Retract(b) => {
                             let P::Retract { handle: remote_handle } = *b;
                             let (local_handle, previous_pins) = match self.inbound_assertions.remove(&remote_handle) {
-                                None => return Err(error("Retraction of nonexistent handle", AnyValue::from(&remote_handle))),
+                                None => return Err(error("Retraction of nonexistent handle", language().unparse(&remote_handle))),
                                 Some(wss) => wss,
                             };
                             self.membranes.release(previous_pins);
@@ -353,7 +355,7 @@ impl TunnelRelay {
                                     _ => Ok(())
                                 }
                             })?;
-                            target.message(t, a);
+                            target.message(t, &(), &a);
                             self.membranes.release(pins);
                             dump_membranes!(self.membranes);
                         }
@@ -368,7 +370,7 @@ impl TunnelRelay {
                             }
                             impl Entity<Synced> for SyncPeer {
                                 fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
-                                    self.peer.message(t, AnyValue::new(true));
+                                    self.peer.message(t, &(), &AnyValue::new(true));
                                     let mut g = self.relay_ref.lock().expect("unpoisoned");
                                     let tr = g.as_mut().expect("initialized");
                                     tr.membranes.release(std::mem::take(&mut self.pins));
@@ -393,7 +395,7 @@ impl TunnelRelay {
 
     fn outbound_event_bookkeeping(
         &mut self,
-        t: &mut Activation,
+        _t: &mut Activation,
         remote_oid: sturdy::Oid,
         event: &P::Event,
     ) -> ActorResult {
@@ -435,15 +437,15 @@ impl TunnelRelay {
     }
 
     pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet) -> ActorResult {
-        let item = AnyValue::from(&p);
+        let item = language().unparse(&p);
         tracing::trace!(packet = ?item, "<--");
 
         let bs = if self.output_text {
-            let mut s = TextWriter::encode::<_, AnyValue, _>(&mut self.membranes, &item)?;
+            let mut s = TextWriter::encode(&mut self.membranes, &item)?;
             s.push('\n');
             s.into_bytes()
         } else {
-            PackedWriter::encode::<_, AnyValue, _>(&mut self.membranes, &item)?
+            PackedWriter::encode(&mut self.membranes, &item)?
         };
 
         let _ = self.output.send(LoanedItem::new(account, cost, bs));
@@ -563,7 +565,7 @@ impl DomainEncode<P::_Ptr> for Membranes {
         w: &mut W,
         d: &P::_Ptr,
     ) -> io::Result<()> {
-        w.write(&mut NoEmbeddedDomainCodec, &AnyValue::from(&match self.exported.ref_map.get(d) {
+        w.write(&mut NoEmbeddedDomainCodec, &language().unparse(&match self.exported.ref_map.get(d) {
             Some(ws) => sturdy::WireRef::Mine {
                 oid: Box::new(ws.inc_ref().oid.clone()),
             },
@@ -711,7 +713,7 @@ impl Entity<AnyValue> for RelayEntity {
         let mut g = self.relay_ref.lock().expect("unpoisoned");
         let tr = g.as_mut().expect("initialized");
         tr.send_event(t, self.oid.clone(), P::Event::Sync(Box::new(P::Sync {
-            peer: Cap::guard(&peer)
+            peer: Cap::guard(Arc::new(()), peer)
         })))
     }
 }

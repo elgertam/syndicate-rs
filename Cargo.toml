@@ -8,8 +8,8 @@ members = [
   ]
 
 # [patch.crates-io]
-# preserves = { path = "/home/tonyg/src/preserves/implementations/rust/preserves" }
-# preserves-schema = { path = "/home/tonyg/src/preserves/implementations/rust/preserves-schema" }
+# preserves = { path = "../preserves/implementations/rust/preserves" }
+# preserves-schema = { path = "../preserves/implementations/rust/preserves-schema" }
 
 [profile.release]
 strip = true

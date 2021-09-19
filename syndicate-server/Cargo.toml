@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-server"
-version = "0.11.0"
+version = "0.12.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
@@ -10,17 +10,16 @@ repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
 license = "Apache-2.0"
 
 [build-dependencies]
-preserves-schema = "1.0.0"
+preserves-schema = "2.0.0-rc1"
 
 [dependencies]
-preserves-schema = "1.0.0"
-syndicate = { path = "../syndicate", version = "^0.11.0"}
-syndicate-macros = { path = "../syndicate-macros", version = "^0.6.0"}
+preserves-schema = "2.0.0-rc1"
+syndicate = { path = "../syndicate", version = "^0.12.0"}
+syndicate-macros = { path = "../syndicate-macros", version = "^0.7.0"}
 
 futures = "0.3"
-
+lazy_static = "1.4"
 notify = "4.0"
-
 structopt = "0.3"
 
 tungstenite = "0.13"

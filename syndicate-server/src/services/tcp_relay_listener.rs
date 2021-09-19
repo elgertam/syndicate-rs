@@ -1,8 +1,9 @@
+use preserves_schema::Codec;
+
 use std::convert::TryFrom;
 use std::sync::Arc;
 
 use syndicate::actor::*;
-use syndicate::convert::*;
 use syndicate::during::entity;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
@@ -10,6 +11,7 @@ use syndicate::value::NestedValue;
 
 use tokio::net::TcpListener;
 
+use crate::language::language;
 use crate::protocol::detect_protocol;
 use crate::schemas::internal_services;
 
@@ -30,8 +32,8 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
                 }
             })
             .create_cap(t);
-        ds.assert(t, &Observe {
-            pattern: syndicate_macros::pattern!{<require-service $(<relay-listener <tcp _ _>>)>},
+        ds.assert(t, language(), &Observe {
+            pattern: syndicate_macros::pattern!{<require-service ${<relay-listener <tcp _ _>>}>},
             observer: monitor,
         });
         Ok(())
@@ -44,13 +46,12 @@ fn run(
     gateway: Arc<Cap>,
     captures: AnyValue,
 ) -> ActorResult {
-    let spec = internal_services::TcpRelayListener::try_from(&from_any_value(
-        &captures.value().to_sequence()?[0])?)?;
+    let spec: internal_services::TcpRelayListener = language().parse(&captures.value().to_sequence()?[0])?;
     let host = spec.addr.host.clone();
     let port = u16::try_from(&spec.addr.port).map_err(|_| "Invalid TCP port number")?;
     {
-        let spec = from_io_value(&spec)?;
-        ds.assert(t, syndicate_macros::template!("<service-running =spec>"));
+        let spec = language().unparse(&spec);
+        ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
     }
     let parent_span = tracing::Span::current();
     t.linked_task(syndicate::name!("listener"), async move {

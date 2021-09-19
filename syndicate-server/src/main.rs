@@ -1,10 +1,11 @@
+use preserves_schema::Codec;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use structopt::StructOpt;
 
 use syndicate::actor::*;
-use syndicate::convert::from_io_value;
 use syndicate::dataspace::*;
 use syndicate::relay;
 use syndicate::schemas::service;
@@ -13,6 +14,7 @@ use syndicate::schemas::transport_address;
 use syndicate::value::NestedValue;
 
 mod gatekeeper;
+mod language;
 mod protocol;
 mod services;
 
@@ -20,6 +22,7 @@ mod schemas {
     include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
 }
 
+use language::language;
 use schemas::internal_services;
 
 #[derive(Clone, StructOpt)]
@@ -91,49 +94,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         gatekeeper::bind(t, &root_ds, AnyValue::new("server-config"), [0; 16],
                          Arc::clone(&server_config_ds));
 
-        let gateway = Cap::guard(&t.create(
+        let gateway = Cap::guard(Arc::clone(&language().syndicate), t.create(
             syndicate::entity(Arc::clone(&root_ds)).on_asserted(gatekeeper::handle_resolve)));
 
         services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
         services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
         services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
         services::config_watcher::on_demand(t, Arc::clone(&server_config_ds));
+        services::daemon::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&root_ds));
 
         if config.debt_reporter {
-            server_config_ds.assert(t, &service::RequireService {
-                service_name: from_io_value(&internal_services::DebtReporter)?,
+            server_config_ds.assert(t, language(), &service::RequireService {
+                service_name: language().unparse(&internal_services::DebtReporter),
             });
         }
 
         for port in config.ports.clone() {
-            server_config_ds.assert(t, &service::RequireService {
-                service_name: from_io_value(
-                    &internal_services::TcpRelayListener {
-                        addr: transport_address::Tcp {
-                            host: "0.0.0.0".to_owned(),
-                            port: (port as i32).into(),
-                        }
-                    })?,
+            server_config_ds.assert(t, language(), &service::RequireService {
+                service_name: language().unparse(&internal_services::TcpRelayListener {
+                    addr: transport_address::Tcp {
+                        host: "0.0.0.0".to_owned(),
+                        port: (port as i32).into(),
+                    }
+                }),
             });
         }
 
         for path in config.sockets.clone() {
-            server_config_ds.assert(t, &service::RequireService {
-                service_name: from_io_value(
-                    &internal_services::UnixRelayListener {
-                        addr: transport_address::Unix {
-                            path: path.to_str().expect("representable UnixListener path").to_owned(),
-                        }
-                    })?,
+            server_config_ds.assert(t, language(), &service::RequireService {
+                service_name: language().unparse(&internal_services::UnixRelayListener {
+                    addr: transport_address::Unix {
+                        path: path.to_str().expect("representable UnixListener path").to_owned(),
+                    }
+                }),
             });
         }
 
         for path in config.config.clone() {
-            server_config_ds.assert(t, &service::RequireService {
-                service_name: from_io_value(
-                    &internal_services::ConfigWatcher {
-                        path: path.to_str().expect("representable ConfigWatcher path").to_owned(),
-                    })?,
+            server_config_ds.assert(t, language(), &service::RequireService {
+                service_name: language().unparse(&internal_services::ConfigWatcher {
+                    path: path.to_str().expect("representable ConfigWatcher path").to_owned(),
+                }),
             });
         }
 

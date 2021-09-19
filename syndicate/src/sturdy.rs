@@ -4,17 +4,17 @@ use hmac::{Hmac, Mac, NewMac, crypto_mac::MacError};
 
 use preserves::hex::HexParser;
 use preserves::hex::HexFormatter;
-use preserves::value::Embeddable;
 use preserves::value::NestedValue;
 use preserves::value::NoEmbeddedDomainCodec;
 use preserves::value::packed::PackedWriter;
 use preserves::value::packed::from_bytes;
+use preserves_schema::Codec;
 
 use sha2::Sha256;
 
-use std::convert::TryFrom;
 use std::io;
 
+use super::language;
 use super::error::Error;
 use super::rewrite::CaveatError;
 pub use super::schemas::sturdy::*;
@@ -54,11 +54,11 @@ pub fn new_key() -> Vec<u8> {
     buf
 }
 
-pub fn encode<D: Embeddable, N: NestedValue<D>>(v: &N) -> Vec<u8> {
-    PackedWriter::encode::<D, N, _>(&mut NoEmbeddedDomainCodec, v).expect("no io errors")
+pub fn encode<N: NestedValue>(v: &N) -> Vec<u8> {
+    PackedWriter::encode(&mut NoEmbeddedDomainCodec, v).expect("no io errors")
 }
 
-pub fn decode<D: Embeddable, N: NestedValue<D>>(bs: &[u8]) -> io::Result<N> {
+pub fn decode<N: NestedValue>(bs: &[u8]) -> io::Result<N> {
     from_bytes(bs, &mut NoEmbeddedDomainCodec)
 }
 
@@ -70,11 +70,11 @@ impl SturdyRef {
 
     pub fn from_hex(s: &str) -> Result<Self, Error> {
         let binary = HexParser::Liberal.decode(s).expect("hex encoded sturdyref");
-        Ok(Self::try_from(&decode::<_, _Any>(&binary)?)?)
+        Ok(language().parse(&decode(&binary)?)?)
     }
 
     pub fn to_hex(&self) -> String {
-        HexFormatter::Packed.encode(&encode::<_, _Any>(&self.into()))
+        HexFormatter::Packed.encode(&encode(&language().unparse(self)))
     }
 
     pub fn validate_and_attenuate(
@@ -99,7 +99,7 @@ impl SturdyRef {
         let mut key = key.to_vec();
         key = signature(&key, &encode(oid));
         for c in caveat_chain {
-            key = signature(&key, &encode(&_Any::from(c)));
+            key = signature(&key, &encode(&language().unparse(c)));
         }
         if &key == sig {
             Ok(())
@@ -114,7 +114,7 @@ impl SturdyRef {
         let oid = oid.clone();
         let mut caveat_chain = caveat_chain.clone();
         caveat_chain.push(attenuation.clone());
-        let sig = signature(&sig, &encode(&_Any::from(attenuation)));
+        let sig = signature(&sig, &encode(&language().unparse(attenuation)));
         Ok(SturdyRef { oid, caveat_chain, sig })
     }
 }

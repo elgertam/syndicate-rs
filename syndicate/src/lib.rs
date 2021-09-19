@@ -8,7 +8,6 @@ pub use preserves;
 
 pub mod actor;
 pub mod bag;
-pub mod convert;
 pub mod dataspace;
 pub mod during;
 pub mod error;
@@ -33,3 +32,7 @@ pub use during::entity;
 
 #[doc(inline)]
 pub use tracer::convenient_logging;
+
+preserves_schema::define_language!(language(): Language<actor::AnyValue> {
+    syndicate: schemas::Language,
+});

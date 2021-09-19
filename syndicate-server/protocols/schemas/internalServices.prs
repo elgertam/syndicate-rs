@@ -1,7 +1,9 @@
 version 1 .
+embeddedType EntityRef.Cap .
 
 DebtReporter = =debt-reporter .
 
 TcpRelayListener = <relay-listener @addr TransportAddress.Tcp> .
 UnixRelayListener = <relay-listener @addr TransportAddress.Unix> .
 ConfigWatcher = <config-watcher @path string>.
+Milestone = <milestone @name any>.

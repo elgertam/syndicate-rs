@@ -3,12 +3,16 @@ use proc_macro2::LineColumn;
 use proc_macro2::TokenTree;
 
 use syn::ExprLit;
+use syn::Ident;
 use syn::Lit;
 use syn::Result;
+use syn::Type;
 use syn::buffer::Cursor;
 use syn::parse::Error;
 use syn::parse::Parse;
+use syn::parse::Parser;
 use syn::parse::ParseStream;
+use syn::parse_str;
 
 use syndicate::value::Float;
 use syndicate::value::Double;
@@ -18,11 +22,9 @@ use syndicate::value::NestedValue;
 #[derive(Debug, Clone)]
 pub enum Stx {
     Atom(IOValue),
-    Binder(Option<String>, Box<Stx>),
+    Binder(Option<Ident>, Option<Type>, Option<Box<Stx>>),
     Discard,
     Subst(TokenTree),
-    Ctor1(String, Box<Stx>),
-    CtorN(String, Vec<(Stx, Stx)>),
     Rec(Box<Stx>, Vec<Stx>),
     Seq(Vec<Stx>),
     Set(Vec<Stx>),
@@ -33,6 +35,39 @@ impl Parse for Stx {
     fn parse(input: ParseStream) -> Result<Self> {
         input.step(|c| parse1(*c))
     }
+}
+
+impl Stx {
+    pub fn bindings(&self) -> Vec<(Option<Ident>, Type)> {
+        let mut bs = vec![];
+        self._bindings(&mut bs);
+        bs
+    }
+
+    fn _bindings(&self, bs: &mut Vec<(Option<Ident>, Type)>) {
+        match self {
+            Stx::Atom(_) | Stx::Discard | Stx::Subst(_) => (),
+            Stx::Binder(id, ty, pat) => {
+                bs.push((id.clone(),
+                         ty.clone().unwrap_or_else(
+                             || parse_str("syndicate::actor::AnyValue").unwrap())));
+                if let Some(p) = pat {
+                    p._bindings(bs);
+                }
+            },
+            Stx::Rec(l, fs) => {
+                l._bindings(bs);
+                fs.iter().for_each(|f| f._bindings(bs));
+            },
+            Stx::Seq(vs) => vs.iter().for_each(|v| v._bindings(bs)),
+            Stx::Set(vs) => vs.iter().for_each(|v| v._bindings(bs)),
+            Stx::Dict(kvs) => kvs.iter().for_each(|(_k, v)| v._bindings(bs)),
+        }
+    }
+}
+
+fn punct_char(c: Cursor) -> Option<(char, Cursor)> {
+    c.punct().map(|(p, c)| (p.as_char(), c))
 }
 
 fn parse_id(mut c: Cursor) -> Result<(String, Cursor)> {
@@ -83,11 +118,9 @@ fn parse_seq(delim_ch: char, mut c: Cursor) -> Result<(Vec<Stx>, Cursor)> {
 
 fn skip_commas(mut c: Cursor) -> Cursor {
     loop {
-        if let Some((p, next)) = c.punct() {
-            if p.as_char() == ',' {
-                c = next;
-                continue;
-            }
+        if let Some((',', next)) = punct_char(c) {
+            c = next;
+            continue;
         }
         return c;
     }
@@ -121,25 +154,20 @@ fn parse_group<'c, R, F: Fn(Cursor<'c>) -> Result<(R, Cursor<'c>)>>(
 
 fn parse_kv(c: Cursor) -> Result<((Stx, Stx), Cursor)> {
     let (k, c) = parse1(c)?;
-    if let Some((p, c)) = c.punct() {
-        if p.as_char() == ':' {
-            let (v, c) = parse1(c)?;
-            return Ok(((k, v), c));
-        }
+    if let Some((':', c)) = punct_char(c) {
+        let (v, c) = parse1(c)?;
+        return Ok(((k, v), c));
     }
     Err(Error::new(c.span(), "Expected ':'"))
 }
 
-fn adjacent_id(pos: LineColumn, c: Cursor) -> (Option<String>, Cursor) {
+fn adjacent_ident(pos: LineColumn, c: Cursor) -> (Option<Ident>, Cursor) {
     if c.span().start() != pos {
         (None, c)
+    } else if let Some((id, next)) = c.ident() {
+        (Some(id), next)
     } else {
-        let (s, next) = parse_id(c).unwrap();
-        if s.is_empty() {
-            (None, c)
-        } else {
-            (Some(s), next)
-        }
+        (None, c)
     }
 }
 
@@ -149,6 +177,27 @@ fn parse_exactly_one<'c>(c: Cursor<'c>) -> Result<Stx> {
     } else {
         Err(Error::new(c.span(), "No more input expected"))
     })
+}
+
+fn parse_generic<T: Parse>(mut c: Cursor) -> Option<(T, Cursor)> {
+    match T::parse.parse2(c.token_stream()) {
+        Ok(t) => Some((t, Cursor::empty())), // because parse2 checks for end-of-stream!
+        Err(e) => {
+            // OK, because parse2 checks for end-of-stream, let's chop
+            // the input at the position of the error and try again (!).
+            let mut collected = Vec::new();
+            let upto = e.span().start();
+            while !c.eof() && c.span().start() != upto {
+                let (tt, next) = c.token_tree().unwrap();
+                collected.push(tt);
+                c = next;
+            }
+            match T::parse.parse2(collected.into_iter().collect()) {
+                Ok(t) => Some((t, c)),
+                Err(_) => None,
+            }
+        }
+    }
 }
 
 fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
@@ -162,12 +211,20 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
             '{' => parse_group(Delimiter::Brace, parse_kv, c).map(|(q,c)| (Stx::Dict(q),c)),
             '[' => parse_group(Delimiter::Bracket, parse1, c).map(|(q,c)| (Stx::Seq(q),c)),
             '$' => {
-                let (maybe_id, next) = adjacent_id(p.span().end(), next);
-                if let Some((inner, _, next)) = next.group(Delimiter::Parenthesis) {
-                    parse_exactly_one(inner).map(
-                        |q| (Stx::Binder(maybe_id, Box::new(q)), next))
+                let (maybe_id, next) = adjacent_ident(p.span().end(), next);
+                let (maybe_type, next) = if let Some((':', next)) = punct_char(next) {
+                    match parse_generic::<Type>(next) {
+                        Some((t, next)) => (Some(t), next),
+                        None => (None, next)
+                    }
                 } else {
-                    Ok((Stx::Binder(maybe_id, Box::new(Stx::Discard)), next))
+                    (None, next)
+                };
+                if let Some((inner, _, next)) = next.group(Delimiter::Brace) {
+                    parse_exactly_one(inner).map(
+                        |q| (Stx::Binder(maybe_id, maybe_type, Some(Box::new(q))), next))
+                } else {
+                    Ok((Stx::Binder(maybe_id, maybe_type, None), next))
                 }
             }
             '#' => {
@@ -185,17 +242,7 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
         if i.to_string() == "_" {
             Ok((Stx::Discard, next))
         } else {
-            parse_id(c).and_then(|(q,c)| {
-                if let Some((inner, _, next)) = c.group(Delimiter::Parenthesis) {
-                    match parse_group_inner(inner, parse_kv, next) {
-                        Ok((kvs, next)) => Ok((Stx::CtorN(q, kvs), next)),
-                        Err(_) => parse_exactly_one(inner).map(
-                            |v| (Stx::Ctor1(q, Box::new(v)), next)),
-                    }
-                } else {
-                    Ok((Stx::Atom(IOValue::symbol(&q)), c))
-                }
-            })
+            parse_id(c).and_then(|(q,c)| Ok((Stx::Atom(IOValue::symbol(&q)), c)))
         }
     } else if let Some((literal, next)) = c.literal() {
         let t: ExprLit = syn::parse_str(&literal.to_string())?;

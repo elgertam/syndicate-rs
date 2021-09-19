@@ -1,3 +1,5 @@
+use preserves_schema::Codec;
+
 use std::sync::Arc;
 
 use syndicate::actor::*;
@@ -5,6 +7,8 @@ use syndicate::during::DuringResult;
 use syndicate::schemas::gatekeeper;
 use syndicate::sturdy;
 use syndicate::value::NestedValue;
+
+use crate::language::language;
 
 pub fn bind(
     t: &mut Activation,
@@ -14,8 +18,8 @@ pub fn bind(
     target: Arc<Cap>,
 ) {
     let sr = sturdy::SturdyRef::mint(oid.clone(), &key);
-    tracing::info!(cap = ?AnyValue::from(&sr), hex = %sr.to_hex());
-    ds.assert(t, &gatekeeper::Bind { oid, key: key.to_vec(), target });
+    tracing::info!(cap = ?language().unparse(&sr), hex = %sr.to_hex());
+    ds.assert(t, language(), &gatekeeper::Bind { oid, key: key.to_vec(), target });
 }
 
 pub fn handle_resolve(
@@ -34,15 +38,15 @@ pub fn handle_resolve(
             let unattenuated_target = bindings[1].value().to_embedded()?;
             match sturdyref.validate_and_attenuate(key, unattenuated_target) {
                 Err(e) => {
-                    tracing::warn!(sturdyref = ?AnyValue::from(&sturdyref),
+                    tracing::warn!(sturdyref = ?language().unparse(&sturdyref),
                                    "sturdyref failed validation: {}", e);
                     Ok(None)
                 },
                 Ok(target) => {
-                    tracing::trace!(sturdyref = ?AnyValue::from(&sturdyref),
+                    tracing::trace!(sturdyref = ?language().unparse(&sturdyref),
                                     ?target,
                                     "sturdyref resolved");
-                    if let Some(h) = observer.assert(t, AnyValue::domain(target)) {
+                    if let Some(h) = observer.assert(t, &(), &AnyValue::domain(target)) {
                         Ok(Some(Box::new(move |_observer, t| Ok(t.retract(h)))))
                     } else {
                         Ok(None)
@@ -51,7 +55,7 @@ pub fn handle_resolve(
             }
         })
         .create_cap(t);
-    if let Some(oh) = ds.assert(t, &dataspace::Observe {
+    if let Some(oh) = ds.assert(t, language(), &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
         pattern: syndicate_macros::pattern!{<bind #(queried_oid) $ $>},
         observer: handler,

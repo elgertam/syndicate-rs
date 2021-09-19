@@ -1,10 +1,10 @@
-use std::convert::TryFrom;
+use preserves_schema::Codec;
+
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use syndicate::actor::*;
-use syndicate::convert::*;
 use syndicate::during::entity;
 use syndicate::error::Error;
 use syndicate::relay;
@@ -14,6 +14,7 @@ use syndicate::value::NestedValue;
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
 
+use crate::language::language;
 use crate::protocol::run_connection;
 use crate::schemas::internal_services;
 
@@ -31,8 +32,8 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
                 }
             })
             .create_cap(t);
-        ds.assert(t, &Observe {
-            pattern: syndicate_macros::pattern!{<require-service $(<relay-listener <unix _>>)>},
+        ds.assert(t, language(), &Observe {
+            pattern: syndicate_macros::pattern!{<require-service ${<relay-listener <unix _>>}>},
             observer: monitor,
         });
         Ok(())
@@ -45,12 +46,11 @@ fn run(
     gateway: Arc<Cap>,
     captures: AnyValue,
 ) -> ActorResult {
-    let spec = internal_services::UnixRelayListener::try_from(&from_any_value(
-        &captures.value().to_sequence()?[0])?)?;
+    let spec: internal_services::UnixRelayListener = language().parse(&captures.value().to_sequence()?[0])?;
     let path_str = spec.addr.path.clone();
     {
-        let spec = from_io_value(&spec)?;
-        ds.assert(t, syndicate_macros::template!("<service-running =spec>"));
+        let spec = language().unparse(&spec);
+        ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
     }
     let parent_span = tracing::Span::current();
     t.linked_task(syndicate::name!("listener"), async move {

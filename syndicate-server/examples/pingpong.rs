@@ -4,6 +4,7 @@ use std::time::SystemTime;
 use structopt::StructOpt;
 
 use syndicate::actor::*;
+use syndicate::language;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
@@ -137,9 +138,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let padding = &bindings[1];
 
                                             if should_echo || (report_latency_every == 0) {
-                                                ds.message(t, simple_record2(&send_label,
-                                                                             timestamp.clone(),
-                                                                             padding.clone()));
+                                                ds.message(t, &(), &simple_record2(&send_label,
+                                                                                   timestamp.clone(),
+                                                                                   padding.clone()));
                                             } else {
                                                 if let None = current_reply {
                                                     turn_counter += 1;
@@ -159,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                        Value::from(now()).wrap(),
                                                                        padding.clone()));
                                                 }
-                                                ds.message(t, current_reply.as_ref().expect("some reply").clone());
+                                                ds.message(t, &(), current_reply.as_ref().expect("some reply"));
                                             }
                                         }
                                     }
@@ -168,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Cap::new(&self_ref)
                     };
 
-                    ds.assert(t, &Observe {
+                    ds.assert(t, language(), &Observe {
                         pattern: {
                             let recv_label = AnyValue::symbol(recv_label);
                             syndicate_macros::pattern!{<#(recv_label) $ $>}

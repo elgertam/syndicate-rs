@@ -17,7 +17,9 @@ use preserves::value::IOValue;
 use preserves::value::Map;
 use preserves::value::NestedValue;
 use preserves::value::Set;
-use preserves_schema::support::ParseError;
+use preserves_schema::ParseError;
+use preserves_schema::support::Parse;
+use preserves_schema::support::Unparse;
 
 use std::boxed::Box;
 use std::collections::hash_map::HashMap;
@@ -401,12 +403,13 @@ pub struct Cap {
 /// The [`Entity`] implementation for `Guard` decodes `AnyValue`
 /// assertions/messages to type `M` before passing them on to the
 /// underlying entity.
-pub struct Guard<M>
+pub struct Guard<L, M>
 where
-    for<'a> &'a M: Into<AnyValue>,
-    for<'a> M: TryFrom<&'a AnyValue>,
+    M: for<'a> Unparse<&'a L, AnyValue>,
+    M: for<'a> Parse<&'a L, AnyValue>,
 {
-    underlying: Arc<Ref<M>>
+    underlying: Arc<Ref<M>>,
+    literals: Arc<L>,
 }
 
 /// Simple entity that stops its containing facet when any assertion it receives is
@@ -469,6 +472,18 @@ impl TryFrom<&AnyValue> for Synced {
 impl From<&Synced> for AnyValue {
     fn from(_value: &Synced) -> Self {
         AnyValue::new(true)
+    }
+}
+
+impl<'a> Parse<&'a (), AnyValue> for Synced {
+    fn parse(_language: &'a (), value: &AnyValue) -> Result<Self, ParseError> {
+        Synced::try_from(value)
+    }
+}
+
+impl<'a> Unparse<&'a (), AnyValue> for Synced {
+    fn unparse(&self, _language: &'a ()) -> AnyValue {
+        self.into()
     }
 }
 
@@ -1555,15 +1570,18 @@ impl Cap {
     /// `AnyValue`, yields a `Cap` for the referenced entity. The
     /// `Cap` automatically decodes presented `AnyValue`s into
     /// instances of `M`.
-    pub fn guard<M: 'static + Send>(underlying: &Arc<Ref<M>>) -> Arc<Self>
+    pub fn guard<L: 'static + Sync + Send, M: 'static + Send>(
+        literals: Arc<L>,
+        underlying: Arc<Ref<M>>,
+    ) -> Arc<Self>
     where
-        for<'a> &'a M: Into<AnyValue>,
-        for<'a> M: TryFrom<&'a AnyValue>,
+        M: for<'a> Unparse<&'a L, AnyValue>,
+        M: for<'a> Parse<&'a L, AnyValue>,
     {
         Self::new(&Arc::new(Ref {
             mailbox: Arc::clone(&underlying.mailbox),
             facet_id: underlying.facet_id,
-            target: Mutex::new(Some(Box::new(Guard { underlying: underlying.clone() }))),
+            target: Mutex::new(Some(Box::new(Guard { underlying: underlying, literals }))),
         }))
     }
 
@@ -1600,15 +1618,17 @@ impl Cap {
     /// Translates `m` into an `AnyValue`, passes it through
     /// [`rewrite`][Self::rewrite], and then
     /// [`assert`s][Activation::assert] it using the activation `t`.
-    pub fn assert<M: Into<AnyValue>>(&self, t: &mut Activation, m: M) -> Option<Handle> {
-        self.rewrite(m.into()).map(|m| t.assert(&self.underlying, m))
+    pub fn assert<L, M: Unparse<L, AnyValue>>(&self, t: &mut Activation, literals: L, m: &M) -> Option<Handle>
+    {
+        self.rewrite(m.unparse(literals)).map(|m| t.assert(&self.underlying, m))
     }
 
     /// Translates `m` into an `AnyValue`, passes it through
     /// [`rewrite`][Self::rewrite], and then sends it via method
     /// [`message`][Activation::message] on the activation `t`.
-    pub fn message<M: Into<AnyValue>>(&self, t: &mut Activation, m: M) {
-        if let Some(m) = self.rewrite(m.into()) {
+    pub fn message<L, M: Unparse<L, AnyValue>>(&self, t: &mut Activation, literals: L, m: &M)
+    {
+        if let Some(m) = self.rewrite(m.unparse(literals)) {
             t.message(&self.underlying, m)
         }
     }
@@ -1643,13 +1663,13 @@ impl std::convert::From<&Cap> for IOValue {
     }
 }
 
-impl<M> Entity<AnyValue> for Guard<M>
+impl<L: Sync + Send, M> Entity<AnyValue> for Guard<L, M>
 where
-    for<'a> &'a M: Into<AnyValue>,
-    for<'a> M: TryFrom<&'a AnyValue>,
+    M: for<'a> Unparse<&'a L, AnyValue>,
+    M: for<'a> Parse<&'a L, AnyValue>,
 {
     fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
-        match M::try_from(&a) {
+        match M::parse(&*self.literals, &a) {
             Ok(a) => t.with_entity(&self.underlying, |t, e| e.assert(t, a, h)),
             Err(_) => Ok(()),
         }
@@ -1658,7 +1678,7 @@ where
         t.with_entity(&self.underlying, |t, e| e.retract(t, h))
     }
     fn message(&mut self, t: &mut Activation, m: AnyValue) -> ActorResult {
-        match M::try_from(&m) {
+        match M::parse(&*self.literals, &m) {
             Ok(m) => t.with_entity(&self.underlying, |t, e| e.message(t, m)),
             Err(_) => Ok(()),
         }

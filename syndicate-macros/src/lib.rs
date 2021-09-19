@@ -18,8 +18,9 @@ use syn::Ident;
 use syn::Lit;
 use syn::LitByteStr;
 
-mod stx;
+mod dur;
 mod pat;
+mod stx;
 mod val;
 
 use pat::lit;
@@ -260,4 +261,11 @@ pub fn template(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro]
 pub fn pattern(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
     pat::pattern(src)
+}
+
+//---------------------------------------------------------------------------
+
+#[proc_macro]
+pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    dur::during(src)
 }

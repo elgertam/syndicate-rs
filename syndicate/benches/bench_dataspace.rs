@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use syndicate::language;
 use syndicate::actor::*;
 use syndicate::during::entity;
 use syndicate::dataspace::Dataspace;
@@ -101,7 +102,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             })
                             .create_cap(t);
 
-                        ds.assert(t, &Observe {
+                        ds.assert(t, language(), &Observe {
                             pattern: p::Pattern::DBind(Box::new(p::DBind {
                                 pattern: p::Pattern::DLit(Box::new(p::DLit {
                                     value: AnyValue::symbol("consumer"),
@@ -122,8 +123,8 @@ pub fn bench_pub(c: &mut Criterion) {
                             let shutdown = Cap::new(&t.create(ShutdownEntity));
                             let receiver = Cap::new(&t.create(Receiver(Arc::clone(&turn_count))));
 
-                            ds.assert(t, Value::<AnyValue, _>::symbol("consumer").wrap());
-                            ds.assert(t, &Observe {
+                            ds.assert(t, &(), &AnyValue::symbol("consumer"));
+                            ds.assert(t, language(), &Observe {
                                 pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
                                     ctor: Box::new(p::CRec {
                                         label: AnyValue::symbol("Says"),
@@ -140,7 +141,7 @@ pub fn bench_pub(c: &mut Criterion) {
                                 })),
                                 observer: receiver,
                             });
-                            ds.assert(t, &Observe {
+                            ds.assert(t, language(), &Observe {
                                 pattern: p::Pattern::DBind(Box::new(p::DBind {
                                     pattern: p::Pattern::DLit(Box::new(p::DLit {
                                         value: AnyValue::new(true),

@@ -1053,9 +1053,9 @@ checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 
 [[package]]
 name = "preserves"
-version = "1.0.0"
+version = "2.0.0-rc1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41e4496df1095b2d85d6ac4cad0b2b8c77ae9224aca1789ad41b0654c79c64eb"
+checksum = "e281800f60acacfaf49115f3032d3c9939a4eb4d6921cb280d7593744cada262"
 dependencies = [
  "base64",
  "dtoa",
@@ -1067,9 +1067,9 @@ dependencies = [
 
 [[package]]
 name = "preserves-schema"
-version = "1.0.0"
+version = "2.0.0-rc1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04ed3d65a4e263db4117a86e209ef1732e52749aa8fbaeb6b9b6ed3b49da1d94"
+checksum = "192e1fb003f58e76d60a70536deb6bc731ad9132ffb095ea31e7ecebaaf8de0e"
 dependencies = [
  "convert_case",
  "glob",
@@ -1458,13 +1458,14 @@ dependencies = [
 
 [[package]]
 name = "syndicate"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "bytes",
  "criterion",
  "futures",
  "getrandom",
  "hmac",
+ "lazy_static",
  "openssl",
  "preserves",
  "preserves-schema",
@@ -1478,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-macros"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1488,9 +1489,10 @@ dependencies = [
 
 [[package]]
 name = "syndicate-server"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "futures",
+ "lazy_static",
  "notify",
  "preserves-schema",
  "structopt",

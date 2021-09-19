@@ -3,7 +3,8 @@ use notify::Watcher;
 use notify::RecursiveMode;
 use notify::watcher;
 
-use std::convert::TryFrom;
+use preserves_schema::Codec;
+
 use std::fs;
 use std::future;
 use std::io;
@@ -14,7 +15,6 @@ use std::thread;
 use std::time::Duration;
 
 use syndicate::actor::*;
-use syndicate::convert::*;
 use syndicate::during::entity;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::value::BinarySource;
@@ -26,6 +26,7 @@ use syndicate::value::Reader;
 use syndicate::value::Set;
 use syndicate::value::ViaCodec;
 
+use crate::language::language;
 use crate::schemas::internal_services;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
@@ -41,8 +42,8 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
                 }
             })
             .create_cap(t);
-        ds.assert(t, &Observe {
-            pattern: syndicate_macros::pattern!{<require-service $(<config-watcher _>)>},
+        ds.assert(t, language(), &Observe {
+            pattern: syndicate_macros::pattern!{<require-service ${<config-watcher _>}>},
             observer: monitor,
         });
         Ok(())
@@ -57,13 +58,13 @@ fn assertions_at_existing_file(t: &mut Activation, ds: &Arc<Cap>, path: &PathBuf
     let mut handles = Set::new();
     let fh = fs::File::open(path)?;
     let mut src = IOBinarySource::new(fh);
-    let mut r = src.text::<_, AnyValue, _>(ViaCodec::new(NoEmbeddedDomainCodec));
+    let mut r = src.text::<AnyValue, _>(ViaCodec::new(NoEmbeddedDomainCodec));
     let mut values = Vec::new();
-    while let Some(value) = Reader::<_, AnyValue>::next(&mut r, true)? {
+    while let Some(value) = Reader::<AnyValue>::next(&mut r, true)? {
         values.push(value);
     }
     for value in values.into_iter() {
-        if let Some(handle) = ds.assert(t, value.clone()) {
+        if let Some(handle) = ds.assert(t, &(), &value) {
             handles.insert(handle);
         }
     }
@@ -145,11 +146,10 @@ fn initial_scan(
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, captures: AnyValue) -> ActorResult {
-    let spec = internal_services::ConfigWatcher::try_from(&from_any_value(
-        &captures.value().to_sequence()?[0])?)?;
+    let spec: internal_services::ConfigWatcher = language().parse(&captures.value().to_sequence()?[0])?;
     {
-        let spec = from_io_value(&spec)?;
-        ds.assert(t, syndicate_macros::template!("<service-running =spec>"));
+        let spec = language().unparse(&spec);
+        ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
     }
     let path = fs::canonicalize(spec.path)?;
 

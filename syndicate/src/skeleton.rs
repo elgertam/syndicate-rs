@@ -126,7 +126,7 @@ impl Index {
                     |es, cs| {
                         if es.cached_captures.change(cs.clone(), 1) == bag::Net::AbsentToPresent {
                             for (observer, capture_map) in &mut es.endpoints {
-                                if let Some(h) = observer.assert(t, cs.clone()) {
+                                if let Some(h) = observer.assert(t, &(), &cs) {
                                     capture_map.insert(cs.clone(), h);
                                 }
                             }
@@ -175,7 +175,7 @@ impl Index {
             |es, cs| {
                 // *delivery_count += es.endpoints.len();
                 for observer in es.endpoints.keys() {
-                    observer.message(t, cs.clone());
+                    observer.message(t, &(), &cs);
                 }
             }).perform(&mut self.root);
     }
@@ -446,7 +446,7 @@ impl Continuation {
         });
         let mut capture_map = Map::new();
         for cs in endpoints.cached_captures.keys() {
-            if let Some(h) = observer.assert(t, cs.clone()) {
+            if let Some(h) = observer.assert(t, &(), cs) {
                 capture_map.insert(cs.clone(), h);
             }
         }

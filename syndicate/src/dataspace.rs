@@ -8,14 +8,14 @@
 //!   on the web](https://syndicate-lang.org/tonyg-dissertation/).
 //!   [PDF](https://syndicate-lang.org/papers/conversational-concurrency-201712310922.pdf).
 
+use super::language;
 use super::skeleton;
 use super::actor::*;
 use super::schemas::dataspace::*;
 use super::schemas::dataspace::_Any;
 
 use preserves::value::Map;
-
-use std::convert::TryFrom;
+use preserves_schema::Codec;
 
 // #[derive(Debug)]
 // pub struct Churn {
@@ -99,7 +99,7 @@ impl Entity<_Any> for Dataspace {
         // self.churn.assertions_added += self.index.assertion_count() - old_assertions;
         // self.churn.endpoints_added += 1;
 
-        if let Ok(o) = Observe::try_from(&a) {
+        if let Ok(o) = language().parse::<Observe>(&a) {
             self.index.add_observer(t, &o.pattern, &o.observer);
             // self.churn.observers_added += 1;
             self.handle_map.insert(h, (a, Some(o)));

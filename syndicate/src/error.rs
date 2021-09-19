@@ -1,5 +1,6 @@
 //! Actor errors.
 
+use super::language;
 use super::schemas::internal_protocol::_Any;
 
 #[doc(inline)]
@@ -7,7 +8,8 @@ pub use super::schemas::internal_protocol::Error;
 
 use preserves::value::NestedValue;
 use preserves::value::Value;
-use preserves_schema::support::ParseError;
+use preserves_schema::Codec;
+use preserves_schema::ParseError;
 
 impl std::error::Error for Error {}
 
@@ -42,7 +44,7 @@ pub fn encode_error(result: Result<(), Error>) -> _Any {
         }
         Err(e) => {
             let mut r = Value::record(_Any::symbol("Err"), 1);
-            r.fields_vec_mut().push((&e).into());
+            r.fields_vec_mut().push(language().unparse(&e));
             r.finish().wrap()
         }
     }

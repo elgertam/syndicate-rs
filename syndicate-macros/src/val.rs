@@ -84,18 +84,15 @@ pub fn value_to_value_expr(v: &IOValue) -> TokenStream2 {
     }
 }
 
-pub fn to_value_expr(stx: Stx) -> Result<TokenStream2, &'static str> {
+pub fn to_value_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
     match stx {
         Stx::Atom(v) => Ok(value_to_value_expr(&v)),
-        Stx::Binder(_, _) => Err("Cannot use binder in literal value"),
+        Stx::Binder(_, _, _) => Err("Cannot use binder in literal value"),
         Stx::Discard => Err("Cannot use discard in literal value"),
-        Stx::Subst(e) => Ok(e.into()),
-
-        Stx::Ctor1(_, _) => todo!(),
-        Stx::CtorN(_, _) => todo!(),
+        Stx::Subst(e) => Ok(e.clone().into()),
 
         Stx::Rec(l, fs) =>
-            Ok(emit_record(to_value_expr(*l)?,
+            Ok(emit_record(to_value_expr(&*l)?,
                            &fs.into_iter().map(to_value_expr).collect::<Result<Vec<_>,_>>()?)),
         Stx::Seq(vs) =>
             Ok(emit_seq(&vs.into_iter().map(to_value_expr).collect::<Result<Vec<_>,_>>()?)),

@@ -17,14 +17,14 @@ pub fn lit<T: ToTokens>(e: T) -> TokenStream2 {
             syndicate::schemas::dataspace_patterns::DLit { value: #e })))
 }
 
-fn compile_sequence_members(stxs: Vec<Stx>) -> Result<Vec<TokenStream2>, &'static str> {
-    stxs.into_iter().enumerate().map(|(i, stx)| {
+fn compile_sequence_members(stxs: &Vec<Stx>) -> Result<Vec<TokenStream2>, &'static str> {
+    stxs.iter().enumerate().map(|(i, stx)| {
         let p = to_pattern_expr(stx)?;
         Ok(quote!((#i .into(), #p)))
     }).collect()
 }
 
-fn to_pattern_expr(stx: Stx) -> Result<TokenStream2, &'static str> {
+pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
     #[allow(non_snake_case)]
     let P_: TokenStream2 = quote!(syndicate::schemas::dataspace_patterns);
     #[allow(non_snake_case)]
@@ -35,21 +35,24 @@ fn to_pattern_expr(stx: Stx) -> Result<TokenStream2, &'static str> {
     match stx {
         Stx::Atom(v) =>
             Ok(lit(value_to_value_expr(&v))),
-        Stx::Binder(_, p) => {
-            let pe = to_pattern_expr(*p)?;
-            Ok(quote!(#P_::Pattern::DBind(Box::new(#P_::DBind { pattern: #pe }))))
+        Stx::Binder(_, maybe_ty, maybe_pat) => {
+            let inner_pat_expr = match maybe_pat {
+                Some(p) => to_pattern_expr(&*p)?,
+                None => match maybe_ty {
+                    Some(ty) => quote!(#ty::wildcard_dataspace_pattern()),
+                    None => to_pattern_expr(&Stx::Discard)?,
+                }
+            };
+            Ok(quote!(#P_::Pattern::DBind(Box::new(#P_::DBind { pattern: #inner_pat_expr }))))
         }
         Stx::Subst(e) =>
             Ok(lit(e)),
         Stx::Discard =>
             Ok(quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard)))),
 
-        Stx::Ctor1(_, _) => todo!(),
-        Stx::CtorN(_, _) => todo!(),
-
         Stx::Rec(l, fs) => {
             let arity = fs.len() as u128;
-            let label = to_value_expr(*l)?;
+            let label = to_value_expr(&*l)?;
             let members = compile_sequence_members(fs)?;
             Ok(quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Rec {
                 ctor: Box::new(#P_::CRec { label: #label, arity: #arity .into() }),
@@ -65,9 +68,9 @@ fn to_pattern_expr(stx: Stx) -> Result<TokenStream2, &'static str> {
             }))))
         }
         Stx::Set(stxs) =>
-            Ok(lit(emit_set(&stxs.into_iter().map(to_value_expr).collect::<Result<Vec<_>,_>>()?))),
+            Ok(lit(emit_set(&stxs.iter().map(to_value_expr).collect::<Result<Vec<_>,_>>()?))),
         Stx::Dict(d) => {
-            let members = d.into_iter().map(|(k, v)| {
+            let members = d.iter().map(|(k, v)| {
                 let k = to_value_expr(k)?;
                 let v = to_pattern_expr(v)?;
                 Ok(quote!((#k, #v)))
@@ -82,7 +85,8 @@ fn to_pattern_expr(stx: Stx) -> Result<TokenStream2, &'static str> {
 
 pub fn pattern(src: TokenStream) -> TokenStream {
     let src2 = src.clone();
-    let e = to_pattern_expr(parse_macro_input!(src2 as Stx)).expect("Cannot compile pattern").into();
+    let e = to_pattern_expr(&parse_macro_input!(src2 as Stx))
+        .expect("Cannot compile pattern").into();
     // println!("\n{:#} -->\n{:#}\n", &src, &e);
     e
 }

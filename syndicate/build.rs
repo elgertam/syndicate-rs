@@ -9,16 +9,12 @@ mod syndicate_plugins {
     pub(super) struct PatternPlugin;
 
     impl Plugin for PatternPlugin {
-        fn generate(
+        fn generate_definition(
             &self,
-            m: &mut context::ModuleContext,
+            _m: &mut context::ModuleContext,
             _definition_name: &str,
             _definition: &Definition,
         ) {
-            if m.mode.is_some() {
-                return;
-            }
-
             // TODO: Emit code for building instances of sturdy.Pattern and sturdy.Template
         }
     }
@@ -32,7 +28,7 @@ fn main() -> std::io::Result<()> {
 
     let mut c = CompilerConfig::new(gen_dir, "crate::schemas".to_owned());
     c.plugins.push(Box::new(syndicate_plugins::PatternPlugin));
-    c.module_aliases.insert(vec!["EntityRef".to_owned()], "crate::actor".to_owned());
+    c.add_external_module(ExternalModule::new(vec!["EntityRef".to_owned()], "crate::actor"));
 
     let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
     c.load_schemas_and_bundles(&inputs)?;
