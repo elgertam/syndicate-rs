@@ -19,6 +19,7 @@ use crate::pat;
 struct During {
     turn_stx: Expr,
     ds_stx: Expr,
+    lang_stx: Expr,
     pat_stx: Stx,
     body_stx: Expr,
 }
@@ -33,6 +34,7 @@ impl Parse for During {
         Ok(During {
             turn_stx: input.parse()?,
             ds_stx: comma_parse(input)?,
+            lang_stx: comma_parse(input)?,
             pat_stx: comma_parse(input)?,
             body_stx: comma_parse(input)?,
         })
@@ -57,7 +59,7 @@ impl During {
 
 pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let d = parse_macro_input!(src as During);
-    let During { turn_stx, ds_stx, pat_stx, body_stx } = &d;
+    let During { turn_stx, ds_stx, lang_stx, pat_stx, body_stx } = &d;
     let (varname_stx, type_stx, index_stx) = d.bindings();
     let binding_count = varname_stx.len();
     let pat_stx_expr = match pat::to_pattern_expr(pat_stx) {
@@ -65,11 +67,12 @@ pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
         Err(e) => return Error::new(Span::call_site(), e).to_compile_error().into(),
     };
     (quote_spanned!{Span::mixed_site()=> {
+        let ds = #ds_stx.clone();
         let monitor = syndicate::during::entity(())
-            .on_asserted_facet(|_, t, captures: syndicate::actor::AnyValue| {
+            .on_asserted_facet(move |_, t, captures: syndicate::actor::AnyValue| {
                 if let Some(captures) = captures.value().as_sequence() {
                     if captures.len() == #binding_count {
-                        #(let #varname_stx = match #type_stx::try_from(captures[#index_stx]) {
+                        #(let #varname_stx: #type_stx = match #lang_stx.parse(&captures[#index_stx]) {
                             Ok(v) => v,
                             Err(_) => return Ok(()),
                         };)*
@@ -79,7 +82,7 @@ pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 Ok(())
             })
             .create_cap(#turn_stx);
-        #ds_stx.assert(#turn_stx, &syndicate::schemas::dataspace::Observe {
+        ds.assert(#turn_stx, #lang_stx, &syndicate::schemas::dataspace::Observe {
             pattern: #pat_stx_expr,
             observer: monitor,
         });
