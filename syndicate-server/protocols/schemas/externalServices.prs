@@ -10,8 +10,9 @@ ServiceDependency = <depends-on @depender any @dependee any> .
 DaemonProcess = <daemon @id DaemonId @config DaemonSpec>.
 DaemonId = any .
 DaemonSpec = { argv: [string ...] } & @env DaemonEnv & @dir DaemonDir & @clearEnv ClearEnv .
-DaemonEnv = @present { env: { string: EnvValue ...:... } } / @absent {} .
+DaemonEnv = @present { env: { EnvVariable: EnvValue ...:... } } / @absent {} .
 DaemonDir = @present { dir: string } / @absent {} .
 ClearEnv = @present { clearEnv: bool } / @absent {} .
 
+EnvVariable = @string string / @symbol symbol .
 EnvValue = @set string / @remove #f .
