@@ -6,7 +6,7 @@ use syndicate::actor::*;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 
 use crate::language::language;
-use crate::schemas::external_services::DaemonService;
+use crate::schemas::external_services::{DaemonService, DaemonSpec};
 
 use syndicate_macros::during;
 
@@ -28,14 +28,19 @@ fn run(
     t: &mut Activation,
     config_ds: Arc<Cap>,
     _root_ds: Arc<Cap>,
-    captures: DaemonService,
+    service: DaemonService,
 ) -> ActorResult {
     {
-        let spec = language().unparse(&captures);
+        let spec = language().unparse(&service);
         config_ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
     }
 
-    tracing::info!("daemon {:?}", &captures);
+    let id = service.id.0.clone();
 
-    Ok(())
+    Ok(during!(t, config_ds, language(), <daemon #(id) $config>, |_t| {
+        if let Ok(config) = language().parse::<DaemonSpec>(&config) {
+            tracing::info!("daemon {:?} {:?}", &service, &config);
+        }
+        Ok(())
+    }))
 }
