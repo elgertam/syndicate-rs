@@ -9,10 +9,14 @@ ServiceDependency = <depends-on @depender any @dependee any> .
 
 DaemonProcess = <daemon @id DaemonId @config DaemonSpec>.
 DaemonId = any .
-DaemonSpec = { argv: [string ...] } & @env DaemonEnv & @dir DaemonDir & @clearEnv ClearEnv .
-DaemonEnv = @present { env: { EnvVariable: EnvValue ...:... } } / @absent {} .
-DaemonDir = @present { dir: string } / @absent {} .
-ClearEnv = @present { clearEnv: bool } / @absent {} .
+DaemonSpec = @simple CommandLine / @full FullDaemonSpec .
+FullDaemonSpec = { argv: CommandLine } & @env DaemonEnv & @dir DaemonDir & @clearEnv ClearEnv .
+DaemonEnv = @present { env: { EnvVariable: EnvValue ...:... } } / @invalid { env: any } / @absent {} .
+DaemonDir = @present { dir: string } / @invalid { dir: any } / @absent {} .
+ClearEnv = @present { clearEnv: bool } / @invalid { clearEnv: any } / @absent {} .
 
-EnvVariable = @string string / @symbol symbol .
-EnvValue = @set string / @remove #f .
+CommandLine = @shell string / @full FullCommandLine .
+FullCommandLine = [@program string, @args string ...] .
+
+EnvVariable = @string string / @symbol symbol / @invalid any .
+EnvValue = @set string / @remove #f / @invalid any .
