@@ -62,17 +62,17 @@ fn run(
     _root_ds: Arc<Cap>,
     service: DaemonService,
 ) -> ActorResult {
-    {
-        let spec = language().unparse(&service);
-        config_ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
-    }
+    let spec = language().unparse(&service);
 
-    Ok(during!(t, config_ds, language(), <daemon #(service.id.0) $config>, |t: &mut Activation| {
-        match language().parse::<DaemonSpec>(&config) {
+    Ok(during!(t, config_ds, language(), <daemon #(service.id.0) $config>, {
+        let spec = spec.clone();
+        let config_ds = Arc::clone(&config_ds);
+        |t: &mut Activation| match language().parse::<DaemonSpec>(&config) {
             Ok(config) => {
+                tracing::info!(?config);
                 let config = config.elaborate();
+                let facet = t.facet.clone();
                 t.linked_task(syndicate::name!("subprocess"), async move {
-                    tracing::info!(?config);
                     let argv = config.argv.elaborate();
                     let mut cmd = process::Command::new(argv.program);
                     cmd.args(argv.args);
@@ -131,16 +131,24 @@ fn run(
 
                     tracing::info!(?cmd);
                     let mut child = cmd.spawn()?;
+
+                    facet.activate(
+                        Account::new(syndicate::name!("announce-service-running")),
+                        |t| {
+                            config_ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
+                            Ok(())
+                        })?;
+
                     tracing::info!(status = ?child.wait().await);
 
                     Ok(())
                 });
+                Ok(())
             }
             Err(_) => {
                 tracing::error!(?config, "Invalid DaemonSpec");
                 return cannot_start();
             }
         }
-        Ok(())
     }))
 }
