@@ -5,11 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use syndicate::actor::*;
-use syndicate::during::entity;
 use syndicate::error::Error;
 use syndicate::relay;
-use syndicate::schemas::dataspace::Observe;
-use syndicate::value::NestedValue;
 
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
@@ -18,25 +15,18 @@ use crate::language::language;
 use crate::protocol::run_connection;
 use crate::schemas::internal_services;
 
+use syndicate_macros::during;
+
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        let monitor = entity(())
-            .on_asserted_facet({
-                let ds = Arc::clone(&ds);
-                move |_, t, captures| {
-                    let ds = Arc::clone(&ds);
-                    let gateway = Arc::clone(&gateway);
-                    t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?captures),
-                                 |t| run(t, ds, gateway, captures));
-                    Ok(())
-                }
-            })
-            .create_cap(t);
-        ds.assert(t, language(), &Observe {
-            pattern: syndicate_macros::pattern!{<require-service ${<relay-listener <unix _>>}>},
-            observer: monitor,
-        });
-        Ok(())
+        Ok(during!(t, ds, language(), <require-service $spec: internal_services::UnixRelayListener>,
+                   |t: &mut Activation| {
+                       let ds = Arc::clone(&ds);
+                       let gateway = Arc::clone(&gateway);
+                       t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?spec),
+                                    |t| run(t, ds, gateway, spec));
+                       Ok(())
+                   }))
     });
 }
 
@@ -44,9 +34,8 @@ fn run(
     t: &'_ mut Activation,
     ds: Arc<Cap>,
     gateway: Arc<Cap>,
-    captures: AnyValue,
+    spec: internal_services::UnixRelayListener,
 ) -> ActorResult {
-    let spec: internal_services::UnixRelayListener = language().parse(&captures.value().to_sequence()?[0])?;
     let path_str = spec.addr.path.clone();
     {
         let spec = language().unparse(&spec);

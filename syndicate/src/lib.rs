@@ -6,6 +6,9 @@ pub use preserves::value;
 #[doc(inline)]
 pub use preserves;
 
+#[doc(inline)]
+pub use preserves_schema;
+
 pub mod actor;
 pub mod bag;
 pub mod dataspace;

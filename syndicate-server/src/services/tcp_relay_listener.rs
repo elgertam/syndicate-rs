@@ -4,10 +4,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 use syndicate::actor::*;
-use syndicate::during::entity;
-use syndicate::schemas::dataspace::Observe;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
-use syndicate::value::NestedValue;
 
 use tokio::net::TcpListener;
 
@@ -15,28 +12,21 @@ use crate::language::language;
 use crate::protocol::detect_protocol;
 use crate::schemas::internal_services;
 
+use syndicate_macros::during;
+
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        let monitor = entity(())
-            .on_asserted_facet({
-                let ds = Arc::clone(&ds);
-                move |_, t, captures: AnyValue| {
-                    let ds = Arc::clone(&ds);
-                    let gateway = Arc::clone(&gateway);
-                    Supervisor::start(
-                        t,
-                        syndicate::name!(parent: None, "relay", addr = ?captures),
-                        SupervisorConfiguration::default(),
-                        move |t| run(t, Arc::clone(&ds), Arc::clone(&gateway), captures.clone()));
-                    Ok(())
-                }
-            })
-            .create_cap(t);
-        ds.assert(t, language(), &Observe {
-            pattern: syndicate_macros::pattern!{<require-service ${<relay-listener <tcp _ _>>}>},
-            observer: monitor,
-        });
-        Ok(())
+        Ok(during!(t, ds, language(), <require-service $spec: internal_services::TcpRelayListener>,
+                   |t| {
+                       let ds = Arc::clone(&ds);
+                       let gateway = Arc::clone(&gateway);
+                       Supervisor::start(
+                           t,
+                           syndicate::name!(parent: None, "relay", addr = ?spec),
+                           SupervisorConfiguration::default(),
+                           move |t| run(t, Arc::clone(&ds), Arc::clone(&gateway), spec.clone()));
+                       Ok(())
+                   }))
     });
 }
 
@@ -44,9 +34,8 @@ fn run(
     t: &'_ mut Activation,
     ds: Arc<Cap>,
     gateway: Arc<Cap>,
-    captures: AnyValue,
+    spec: internal_services::TcpRelayListener,
 ) -> ActorResult {
-    let spec: internal_services::TcpRelayListener = language().parse(&captures.value().to_sequence()?[0])?;
     let host = spec.addr.host.clone();
     let port = u16::try_from(&spec.addr.port).map_err(|_| "Invalid TCP port number")?;
     {

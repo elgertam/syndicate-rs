@@ -15,8 +15,6 @@ use std::thread;
 use std::time::Duration;
 
 use syndicate::actor::*;
-use syndicate::during::entity;
-use syndicate::schemas::dataspace::Observe;
 use syndicate::value::BinarySource;
 use syndicate::value::IOBinarySource;
 use syndicate::value::Map;
@@ -29,24 +27,17 @@ use syndicate::value::ViaCodec;
 use crate::language::language;
 use crate::schemas::internal_services;
 
+use syndicate_macros::during;
+
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        let monitor = entity(())
-            .on_asserted_facet({
-                let ds = Arc::clone(&ds);
-                move |_, t, captures| {
-                    let ds = Arc::clone(&ds);
-                    t.spawn_link(syndicate::name!(parent: None, "config", spec = ?captures),
-                                 |t| run(t, ds, captures));
-                    Ok(())
-                }
-            })
-            .create_cap(t);
-        ds.assert(t, language(), &Observe {
-            pattern: syndicate_macros::pattern!{<require-service ${<config-watcher _>}>},
-            observer: monitor,
-        });
-        Ok(())
+        Ok(during!(t, ds, language(), <require-service $spec: internal_services::ConfigWatcher>,
+                   |t: &mut Activation| {
+                       let ds = Arc::clone(&ds);
+                       t.spawn_link(syndicate::name!(parent: None, "config", spec = ?spec),
+                                    |t| run(t, ds, spec));
+                       Ok(())
+                   }))
     });
 }
 
@@ -145,8 +136,7 @@ fn initial_scan(
     }
 }
 
-fn run(t: &mut Activation, ds: Arc<Cap>, captures: AnyValue) -> ActorResult {
-    let spec: internal_services::ConfigWatcher = language().parse(&captures.value().to_sequence()?[0])?;
+fn run(t: &mut Activation, ds: Arc<Cap>, spec: internal_services::ConfigWatcher) -> ActorResult {
     {
         let spec = language().unparse(&spec);
         ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));

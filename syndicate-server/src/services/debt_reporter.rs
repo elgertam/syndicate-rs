@@ -1,37 +1,25 @@
-use preserves_schema::Codec;
-
 use std::sync::Arc;
 
 use syndicate::actor::*;
-use syndicate::during::entity;
-use syndicate::schemas::dataspace::Observe;
+use syndicate::preserves_schema::Codec;
 
 use crate::language::language;
-use crate::schemas::internal_services;
+use crate::schemas::internal_services::DebtReporter;
+
+use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        let monitor = entity(())
-            .on_asserted_facet({
-                let ds = Arc::clone(&ds);
-                move |_, t, _| {
-                    let ds = Arc::clone(&ds);
-                    t.spawn_link(tracing::Span::current(), |t| run(t, ds));
-                    Ok(())
-                }
-            })
-            .create_cap(t);
-        let spec = language().unparse(&internal_services::DebtReporter);
-        ds.assert(t, language(), &Observe {
-            pattern: syndicate_macros::pattern!{<require-service #(spec)>},
-            observer: monitor,
-        });
-        Ok(())
+        Ok(during!(t, ds, language(), <require-service $_spec: DebtReporter>, |t: &mut Activation| {
+            let ds = Arc::clone(&ds);
+            t.spawn_link(tracing::Span::current(), |t| run(t, ds));
+            Ok(())
+        }))
     });
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {
-    let spec = language().unparse(&internal_services::DebtReporter);
+    let spec = language().unparse(&DebtReporter);
     ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
     t.linked_task(syndicate::name!("tick"), async {
         let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));

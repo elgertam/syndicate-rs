@@ -67,12 +67,20 @@ pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
         Err(e) => return Error::new(Span::call_site(), e).to_compile_error().into(),
     };
     (quote_spanned!{Span::mixed_site()=> {
-        let ds = #ds_stx.clone();
+        let __ds = #ds_stx.clone();
+        let __lang = #lang_stx;
         let monitor = syndicate::during::entity(())
             .on_asserted_facet(move |_, t, captures: syndicate::actor::AnyValue| {
-                if let Some(captures) = captures.value().as_sequence() {
+                if let Some(captures) = {
+                    use syndicate::value::NestedValue;
+                    use syndicate::value::Value;
+                    captures.value().as_sequence()
+                }{
                     if captures.len() == #binding_count {
-                        #(let #varname_stx: #type_stx = match #lang_stx.parse(&captures[#index_stx]) {
+                        #(let #varname_stx: #type_stx = match {
+                            use syndicate::preserves_schema::Codec;
+                            __lang.parse(&captures[#index_stx])
+                        } {
                             Ok(v) => v,
                             Err(_) => return Ok(()),
                         };)*
@@ -82,7 +90,7 @@ pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 Ok(())
             })
             .create_cap(#turn_stx);
-        ds.assert(#turn_stx, #lang_stx, &syndicate::schemas::dataspace::Observe {
+        __ds.assert(#turn_stx, __lang, &syndicate::schemas::dataspace::Observe {
             pattern: #pat_stx_expr,
             observer: monitor,
         });
