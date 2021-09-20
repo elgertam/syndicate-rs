@@ -1,47 +1,52 @@
-use std::convert::TryFrom;
+use preserves_schema::Codec;
+
 use std::sync::Arc;
 
 use syndicate::actor::*;
-use syndicate::during::entity;
-use syndicate::schemas::dataspace::Observe;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::value::NestedValue;
 
-use crate::schemas::external_services;
+use crate::language::language;
+use crate::schemas::external_services::DaemonService;
 
 use syndicate_macros::during;
 
+// use syndicate::schemas::dataspace_patterns::*;
+// impl DaemonService {
+//     fn wildcard_dataspace_pattern() -> Pattern {
+//         Pattern::DDiscard(Box::new(DDiscard))
+//     }
+// }
+
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
-    // t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
+    t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
 
-    //     during!(t, config_ds, <require-service $spec: external_services::DaemonService>, |t| {
-    //         let config_ds = Arc::clone(&config_ds);
-    //         let root_ds = Arc::clone(&root_ds);
-    //         Ok(Supervisor::start(
-    //             t,
-    //             syndicate::name!(parent: None, "daemon", service = ?spec_any),
-    //             SupervisorConfiguration::default(),
-    //             move |t| run(t, Arc::clone(&config_ds), Arc::clone(&root_ds), spec.clone())))
-    //     });
+        during!(t, config_ds, language(), <require-service $spec: DaemonService>, |t| {
+            let config_ds = Arc::clone(&config_ds);
+            let root_ds = Arc::clone(&root_ds);
+            Ok(Supervisor::start(
+                t,
+                syndicate::name!(parent: None, "daemon", service = ?spec),
+                SupervisorConfiguration::default(),
+                move |t| run(t, Arc::clone(&config_ds), Arc::clone(&root_ds), spec.clone())))
+        });
 
-    //     Ok(())
-    // });
+        Ok(())
+    });
 }
 
-// fn run(
-//     t: &mut Activation,
-//     config_ds: Arc<Cap>,
-//     _root_ds: Arc<Cap>,
-//     captures: AnyValue,
-// ) -> ActorResult {
-//     let spec = external_services::DaemonService::try_from(&from_any_value(
-//         &captures.value().to_sequence()?[0])?)?;
-//     {
-//         let spec = from_io_value(&spec)?;
-//         config_ds.assert(t, syndicate_macros::template!("<service-running =spec>"));
-//     }
+fn run(
+    t: &mut Activation,
+    config_ds: Arc<Cap>,
+    _root_ds: Arc<Cap>,
+    captures: DaemonService,
+) -> ActorResult {
+    {
+        let spec = language().unparse(&captures);
+        config_ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
+    }
 
-//     tracing::info!("daemon {:?}", &spec);
+    tracing::info!("daemon {:?}", &captures);
 
-//     Ok(())
-// }
+    Ok(())
+}
