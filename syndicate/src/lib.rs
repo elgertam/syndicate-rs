@@ -11,6 +11,7 @@ pub use preserves_schema;
 
 pub mod actor;
 pub mod bag;
+pub mod dataflow;
 pub mod dataspace;
 pub mod during;
 pub mod error;

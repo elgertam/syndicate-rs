@@ -10,6 +10,7 @@ use syndicate::language;
 use syndicate::actor::*;
 use syndicate::during::entity;
 use syndicate::dataspace::Dataspace;
+use syndicate::enclose;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::dataspace_patterns as p;
 use syndicate::value::Map;
@@ -60,17 +61,16 @@ pub fn bench_pub(c: &mut Criterion) {
                     let account = Account::new(syndicate::name!("sender-account"));
                     t.linked_task(syndicate::name!("sender"), async move {
                         for _ in 0..iters {
-                            let ds = Arc::clone(&ds);
-                            external_event(&Arc::clone(&ds.mailbox), &account, Box::new(
-                                move |t| t.with_entity(
+                            external_event(&ds.mailbox, &account, Box::new(
+                                enclose!((ds) move |t| t.with_entity(
                                     &ds,
                                     |t, e| e.message(t, says(AnyValue::new("bench_pub"),
-                                                             Value::ByteString(vec![]).wrap())))))?
+                                                             Value::ByteString(vec![]).wrap()))))))?
                         }
-                        external_event(&Arc::clone(&shutdown.mailbox), &account, Box::new(
-                            move |t| t.with_entity(
+                        external_event(&shutdown.mailbox, &account, Box::new(
+                            enclose!((shutdown) move |t| t.with_entity(
                                 &shutdown,
-                                |t, e| e.message(t, AnyValue::new(true)))))?;
+                                |t, e| e.message(t, AnyValue::new(true))))))?;
                         Ok(())
                     });
                     Ok(())
