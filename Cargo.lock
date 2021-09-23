@@ -1494,6 +1494,8 @@ dependencies = [
  "quote",
  "syn",
  "syndicate",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
