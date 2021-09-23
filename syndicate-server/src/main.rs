@@ -7,6 +7,7 @@ use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::dataspace::*;
+use syndicate::enclose;
 use syndicate::relay;
 use syndicate::schemas::service;
 use syndicate::schemas::transport_address;
@@ -79,12 +80,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if config.inferior {
             tracing::info!("inferior server instance");
-            let root_ds = Arc::clone(&root_ds);
-            t.spawn(syndicate::name!("parent"), move |t| protocol::run_io_relay(
+            t.spawn(syndicate::name!("parent"), enclose!((root_ds) move |t| protocol::run_io_relay(
                 t,
                 relay::Input::Bytes(Box::pin(tokio::io::stdin())),
                 relay::Output::Bytes(Box::pin(tokio::io::stdout())),
-                root_ds));
+                root_ds)));
         }
 
         let server_config_ds = Cap::new(&t.create(Dataspace::new()));

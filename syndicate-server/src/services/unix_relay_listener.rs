@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use syndicate::actor::*;
+use syndicate::enclose;
 use syndicate::error::Error;
 use syndicate::relay;
 
@@ -21,10 +22,8 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
         Ok(during!(t, ds, language(), <require-service $spec: internal_services::UnixRelayListener>,
                    |t: &mut Activation| {
-                       let ds = Arc::clone(&ds);
-                       let gateway = Arc::clone(&gateway);
                        t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?spec),
-                                    |t| run(t, ds, gateway, spec));
+                                    enclose!((ds, gateway) |t| run(t, ds, gateway, spec)));
                        Ok(())
                    }))
     });
@@ -48,12 +47,11 @@ fn run(
         loop {
             let (stream, _addr) = listener.accept().await?;
             let peer = stream.peer_cred()?;
-            let gateway = Arc::clone(&gateway);
             Actor::new().boot(
                 syndicate::name!(parent: parent_span.clone(), "conn",
                                  pid = ?peer.pid().unwrap_or(-1),
                                  uid = peer.uid()),
-                |t| Ok(t.linked_task(
+                enclose!((gateway) |t| Ok(t.linked_task(
                     tracing::Span::current(),
                     {
                         let facet = t.facet.clone();
@@ -65,7 +63,7 @@ fn run(
                                            relay::Output::Bytes(Box::pin(o)),
                                            gateway)
                         }
-                    })));
+                    }))));
         }
     });
     Ok(())

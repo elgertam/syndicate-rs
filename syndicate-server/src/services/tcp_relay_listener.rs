@@ -4,6 +4,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 use syndicate::actor::*;
+use syndicate::enclose;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 
 use tokio::net::TcpListener;
@@ -18,13 +19,12 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
         Ok(during!(t, ds, language(), <require-service $spec: internal_services::TcpRelayListener>,
                    |t| {
-                       let ds = Arc::clone(&ds);
-                       let gateway = Arc::clone(&gateway);
                        Supervisor::start(
                            t,
                            syndicate::name!(parent: None, "relay", addr = ?spec),
                            SupervisorConfiguration::default(),
-                           move |t| run(t, Arc::clone(&ds), Arc::clone(&gateway), spec.clone()));
+                           enclose!((ds, gateway) move |t|
+                                    enclose!((ds, gateway, spec) run(t, ds, gateway, spec))));
                        Ok(())
                    }))
     });
@@ -49,11 +49,10 @@ fn run(
         tracing::info!("listening");
         loop {
             let (stream, addr) = listener.accept().await?;
-            let gateway = Arc::clone(&gateway);
             Actor::new().boot(syndicate::name!(parent: parent_span.clone(), "conn"),
-                              move |t| Ok(t.linked_task(
+                              enclose!((gateway) move |t| Ok(t.linked_task(
                                   tracing::Span::current(),
-                                  detect_protocol(t.facet.clone(), stream, gateway, addr))));
+                                  detect_protocol(t.facet.clone(), stream, gateway, addr)))));
         }
     });
     Ok(())

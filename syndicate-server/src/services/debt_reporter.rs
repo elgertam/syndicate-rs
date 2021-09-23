@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use syndicate::actor::*;
+use syndicate::enclose;
 use syndicate::preserves_schema::Codec;
 
 use crate::language::language;
@@ -11,8 +12,7 @@ use syndicate_macros::during;
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
         Ok(during!(t, ds, language(), <require-service $_spec: DebtReporter>, |t: &mut Activation| {
-            let ds = Arc::clone(&ds);
-            t.spawn_link(tracing::Span::current(), |t| run(t, ds));
+            t.spawn_link(tracing::Span::current(), enclose!((ds) |t| run(t, ds)));
             Ok(())
         }))
     });

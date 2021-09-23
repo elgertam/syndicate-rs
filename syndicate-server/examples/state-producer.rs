@@ -3,6 +3,7 @@ use std::sync::Arc;
 use structopt::StructOpt;
 
 use syndicate::actor::*;
+use syndicate::enclose;
 use syndicate::relay;
 use syndicate::sturdy;
 use syndicate::value::Value;
@@ -34,17 +35,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Value::from(std::process::id()).wrap()).wrap();
                         let handle = syndicate::actor::next_handle();
                         let assert_e = || {
-                            let ds = Arc::clone(&ds);
-                            let presence = presence.clone();
-                            let handle = handle.clone();
-                            external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
-                                move |t| t.with_entity(&ds.underlying, |t, e| e.assert(t, presence, handle))))
+                            external_event(
+                                &Arc::clone(&ds.underlying.mailbox), &account, Box::new(enclose!(
+                                    (ds, presence, handle) move |t| t.with_entity(
+                                        &ds.underlying, |t, e| e.assert(t, presence, handle)))))
                         };
                         let retract_e = || {
-                            let ds = Arc::clone(&ds);
-                            let handle = handle.clone();
-                            external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
-                                move |t| t.with_entity(&ds.underlying, |t, e| e.retract(t, handle))))
+                            external_event(
+                                &Arc::clone(&ds.underlying.mailbox), &account, Box::new(enclose!(
+                                    (ds, handle) move |t| t.with_entity(
+                                        &ds.underlying, |t, e| e.retract(t, handle)))))
                         };
                         assert_e()?;
                         loop {

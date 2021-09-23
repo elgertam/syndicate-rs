@@ -3,6 +3,7 @@ use std::sync::Arc;
 use structopt::StructOpt;
 
 use syndicate::actor::*;
+use syndicate::enclose;
 use syndicate::relay;
 use syndicate::sturdy;
 use syndicate::value::Value;
@@ -49,11 +50,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             account.ensure_clear_funds().await;
                             let mut events: PendingEventQueue = Vec::new();
                             for _ in 0..action_count {
-                                let ds = Arc::clone(&ds);
-                                let padding = padding.clone();
-                                events.push(Box::new(move |t| t.with_entity(
-                                    &ds.underlying,
-                                    |t, e| e.message(t, says(Value::from("producer").wrap(), padding)))));
+                                events.push(Box::new(enclose!((ds, padding) move |t| t.with_entity(
+                                    &ds.underlying, |t, e| e.message(
+                                        t, says(Value::from("producer").wrap(), padding))))));
                             }
                             external_events(&ds.underlying.mailbox, &account, events)?;
                         }

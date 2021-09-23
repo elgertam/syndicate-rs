@@ -15,6 +15,7 @@ use std::thread;
 use std::time::Duration;
 
 use syndicate::actor::*;
+use syndicate::enclose;
 use syndicate::value::BinarySource;
 use syndicate::value::IOBinarySource;
 use syndicate::value::Map;
@@ -33,9 +34,8 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
         Ok(during!(t, ds, language(), <require-service $spec: internal_services::ConfigWatcher>,
                    |t: &mut Activation| {
-                       let ds = Arc::clone(&ds);
                        t.spawn_link(syndicate::name!(parent: None, "config", spec = ?spec),
-                                    |t| run(t, ds, spec));
+                                    enclose!((ds) |t| run(t, ds, spec)));
                        Ok(())
                    }))
     });
