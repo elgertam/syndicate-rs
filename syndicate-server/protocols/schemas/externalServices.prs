@@ -5,8 +5,6 @@ Service = DaemonService .
 
 DaemonService = <daemon @id DaemonId> .
 
-ServiceDependency = <depends-on @depender any @dependee any> .
-
 DaemonProcess = <daemon @id DaemonId @config DaemonSpec>.
 DaemonId = any .
 DaemonSpec = @simple CommandLine / @full FullDaemonSpec .
