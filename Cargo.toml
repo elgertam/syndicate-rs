@@ -15,3 +15,6 @@ members = [
 strip = true
 # debug = true
 # lto = true
+
+[profile.bench]
+debug = true
