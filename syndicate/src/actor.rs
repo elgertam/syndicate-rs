@@ -13,6 +13,7 @@ use super::rewrite::CaveatError;
 use super::rewrite::CheckedCaveat;
 use super::schemas::sturdy;
 
+use preserves::value::ArcValue;
 use preserves::value::Domain;
 use preserves::value::IOValue;
 use preserves::value::Map;
@@ -53,7 +54,7 @@ use tracing::Instrument;
 /// `M`-values can be exchanged among objects, for distributed or
 /// polyglot systems a *lingua franca* has to be chosen. `AnyValue` is
 /// that language.
-pub type AnyValue = super::schemas::internal_protocol::_Any;
+pub type AnyValue = ArcValue<Arc<Cap>>;
 
 /// The type of process-unique actor IDs.
 pub type ActorId = u64;
@@ -236,7 +237,7 @@ pub type PendingEventQueue = Vec<Action>;
 /// values contained in an `Activation` are also sometimes useful.
 ///
 /// This is what other implementations call a "Turn", renamed here to
-/// avoid conflicts with [`crate::schemas::internal_protocol::Turn`].
+/// avoid conflicts with [`crate::schemas::protocol::Turn`].
 pub struct Activation<'activation> {
     /// A reference to the currently active [`Facet`] and the implementation-side state of its
     /// [`Actor`].

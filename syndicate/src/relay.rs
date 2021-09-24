@@ -7,7 +7,7 @@ use crate::during;
 use crate::error::Error;
 use crate::error::error;
 use crate::schemas::gatekeeper;
-use crate::schemas::internal_protocol as P;
+use crate::schemas::protocol as P;
 use crate::schemas::sturdy;
 
 use futures::Sink;
@@ -93,7 +93,7 @@ pub struct TunnelRelay
     inbound_assertions: Map</* remote */ P::Handle, (/* local */ Handle, Vec<Arc<WireSymbol>>)>,
     outbound_assertions: Map<P::Handle, Vec<Arc<WireSymbol>>>,
     membranes: Membranes,
-    pending_outbound: Vec<P::TurnEvent>,
+    pending_outbound: Vec<P::TurnEvent<AnyValue>>,
     self_entity: Arc<Ref<()>>,
     output: UnboundedSender<LoanedItem<Vec<u8>>>,
     output_text: bool,
@@ -251,7 +251,7 @@ impl TunnelRelay {
         result
     }
 
-    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> (Result<P::Packet, ParseError>, usize) {
+    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> (Result<P::Packet<AnyValue>, ParseError>, usize) {
         let mut src = BytesBinarySource::new(&bs);
         let mut dec = ActivatedMembranes {
             turn: t,
@@ -295,7 +295,7 @@ impl TunnelRelay {
         }
     }
 
-    fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet) -> ActorResult {
+    fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<AnyValue>) -> ActorResult {
         tracing::trace!(packet = ?p, "-->");
         match p {
             P::Packet::Error(b) => {
@@ -397,7 +397,7 @@ impl TunnelRelay {
         &mut self,
         _t: &mut Activation,
         remote_oid: sturdy::Oid,
-        event: &P::Event,
+        event: &P::Event<AnyValue>,
     ) -> ActorResult {
         match event {
             P::Event::Assert(b) => {
@@ -436,7 +436,7 @@ impl TunnelRelay {
         Ok(())
     }
 
-    pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet) -> ActorResult {
+    pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet<AnyValue>) -> ActorResult {
         let item = language().unparse(&p);
         tracing::trace!(packet = ?item, "<--");
 
@@ -452,7 +452,7 @@ impl TunnelRelay {
         Ok(())
     }
 
-    pub fn send_event(&mut self, t: &mut Activation, remote_oid: sturdy::Oid, event: P::Event) -> ActorResult {
+    pub fn send_event(&mut self, t: &mut Activation, remote_oid: sturdy::Oid, event: P::Event<AnyValue>) -> ActorResult {
         if self.pending_outbound.is_empty() {
             t.message_for_myself(&self.self_entity, ());
         }
@@ -517,7 +517,7 @@ impl Membranes {
         relay_ref: &TunnelRelayRef,
         src: &'src mut S,
         _read_annotations: bool,
-    ) -> io::Result<P::_Ptr> {
+    ) -> io::Result<Arc<Cap>> {
         let ws = match sturdy::WireRef::deserialize(&mut src.packed(NoEmbeddedDomainCodec))? {
             sturdy::WireRef::Mine{ oid: b } => {
                 let oid = *b;
@@ -549,21 +549,21 @@ impl Membranes {
     }
 }
 
-impl<'a, 'activation, 'm> DomainDecode<P::_Ptr> for ActivatedMembranes<'a, 'activation, 'm> {
+impl<'a, 'activation, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'activation, 'm> {
     fn decode_embedded<'de, 'src, S: BinarySource<'de>>(
         &mut self,
         src: &'src mut S,
         read_annotations: bool,
-    ) -> io::Result<P::_Ptr> {
+    ) -> io::Result<Arc<Cap>> {
         self.membranes.decode_embedded(self.turn, self.tr_ref, src, read_annotations)
     }
 }
 
-impl DomainEncode<P::_Ptr> for Membranes {
+impl DomainEncode<Arc<Cap>> for Membranes {
     fn encode_embedded<W: Writer>(
         &mut self,
         w: &mut W,
-        d: &P::_Ptr,
+        d: &Arc<Cap>,
     ) -> io::Result<()> {
         w.write(&mut NoEmbeddedDomainCodec, &language().unparse(&match self.exported.ref_map.get(d) {
             Some(ws) => sturdy::WireRef::Mine {
