@@ -14,6 +14,7 @@ use syndicate::schemas::transport_address;
 
 use syndicate::value::NestedValue;
 
+mod dependencies;
 mod gatekeeper;
 mod language;
 mod protocol;
@@ -97,20 +98,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let gateway = Cap::guard(Arc::clone(&language().syndicate), t.create(
             syndicate::entity(Arc::clone(&root_ds)).on_asserted(gatekeeper::handle_resolve)));
 
-        services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
-        services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
-        services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
+        dependencies::boot(t, Arc::clone(&server_config_ds));
         services::config_watcher::on_demand(t, Arc::clone(&server_config_ds));
         services::daemon::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&root_ds));
+        services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
+        services::milestone::on_demand(t, Arc::clone(&server_config_ds));
+        services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
+        services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
 
         if config.debt_reporter {
-            server_config_ds.assert(t, language(), &service::RequireService {
+            server_config_ds.assert(t, language(), &service::RunService {
                 service_name: language().unparse(&internal_services::DebtReporter),
             });
         }
 
         for port in config.ports.clone() {
-            server_config_ds.assert(t, language(), &service::RequireService {
+            server_config_ds.assert(t, language(), &service::RunService {
                 service_name: language().unparse(&internal_services::TcpRelayListener {
                     addr: transport_address::Tcp {
                         host: "0.0.0.0".to_owned(),
@@ -121,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         for path in config.sockets.clone() {
-            server_config_ds.assert(t, language(), &service::RequireService {
+            server_config_ds.assert(t, language(), &service::RunService {
                 service_name: language().unparse(&internal_services::UnixRelayListener {
                     addr: transport_address::Unix {
                         path: path.to_str().expect("representable UnixListener path").to_owned(),
@@ -131,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         for path in config.config.clone() {
-            server_config_ds.assert(t, language(), &service::RequireService {
+            server_config_ds.assert(t, language(), &service::RunService {
                 service_name: language().unparse(&internal_services::ConfigWatcher {
                     path: path.to_str().expect("representable ConfigWatcher path").to_owned(),
                 }),

@@ -11,7 +11,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        Ok(during!(t, ds, language(), <require-service $_spec: DebtReporter>, |t: &mut Activation| {
+        Ok(during!(t, ds, language(), <run-service $_spec: DebtReporter>, |t: &mut Activation| {
             t.spawn_link(tracing::Span::current(), enclose!((ds) |t| run(t, ds)));
             Ok(())
         }))

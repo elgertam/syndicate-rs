@@ -20,7 +20,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        Ok(during!(t, ds, language(), <require-service $spec: internal_services::UnixRelayListener>,
+        Ok(during!(t, ds, language(), <run-service $spec: internal_services::UnixRelayListener>,
                    |t: &mut Activation| {
                        t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?spec),
                                     enclose!((ds, gateway) |t| run(t, ds, gateway, spec)));

@@ -17,7 +17,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        Ok(during!(t, ds, language(), <require-service $spec: internal_services::TcpRelayListener>,
+        Ok(during!(t, ds, language(), <run-service $spec: internal_services::TcpRelayListener>,
                    |t| {
                        Supervisor::start(
                            t,

@@ -15,7 +15,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        Ok(during!(t, config_ds, language(), <require-service $spec: DaemonService>, |t| {
+        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService>, |t| {
             Ok(Supervisor::start(
                 t,
                 syndicate::name!(parent: None, "daemon", service = ?spec),
@@ -139,7 +139,8 @@ fn run(
                             Ok(())
                         })?;
 
-                    tracing::info!(status = ?child.wait().await);
+                    let status = child.wait().await;
+                    tracing::info!(?status);
 
                     Ok(())
                 });

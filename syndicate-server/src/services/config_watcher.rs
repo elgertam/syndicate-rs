@@ -32,7 +32,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        Ok(during!(t, ds, language(), <require-service $spec: internal_services::ConfigWatcher>,
+        Ok(during!(t, ds, language(), <run-service $spec: internal_services::ConfigWatcher>,
                    |t: &mut Activation| {
                        t.spawn_link(syndicate::name!(parent: None, "config", spec = ?spec),
                                     enclose!((ds) |t| run(t, ds, spec)));
