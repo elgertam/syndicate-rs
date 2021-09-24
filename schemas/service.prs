@@ -1,5 +1,22 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
+;Asserts that a service should begin (and stay) running after waiting for its dependencies and considering reverse-dependencies, blocks, and so on.
 RequireService = <require-service @serviceName any>.
+
+;Asserts that a service should begin (and stay) running RIGHT NOW, without considering its dependencies.
+RunService = <run-service @serviceName any>.
+
+;Asserts that the service has been started (but is not necessarily ready for use).
+ServiceStarted = <service-started @serviceName any>.
+
+;Asserts that the service is ready for use.
 ServiceRunning = <service-running @serviceName any>.
+
+;Asserts that `depender` can be considered started but not running until `dependee` is satisfied.
+ServiceDependency = <depends-on @depender any @dependee Dependee>.
+;Describes a relationship from a dependent to some a dependee service: has it started? is it ready?
+Dependee = ServiceStarted / ServiceRunning .
+
+;Asserts that the service has the given milestone among its dependencies. If not otherwise specified, a service has the milestone `core` as a dependency.
+ServiceMilestone = <service-milestone @serviceName any @milestone any>.
