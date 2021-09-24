@@ -165,7 +165,7 @@ impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult> Supervisor<Bo
         };
         supervisor.ensure_started(t).unwrap();
         self_ref.become_entity(supervisor);
-        t.on_stop(&self_ref);
+        t.on_stop_notify(&self_ref);
     }
 
     fn enter_state(&mut self, supervisee: Supervisee) {

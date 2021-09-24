@@ -185,7 +185,7 @@ pub trait Entity<M>: Send {
     /// Optional callback for running actions when the entity's owning [Facet] terminates
     /// cleanly. Will not be called in case of abnormal shutdown (crash) of an actor.
     ///
-    /// Programs register an entity's stop hook with [Activation::on_stop].
+    /// Programs register an entity's stop hook with [Activation::on_stop_notify].
     ///
     /// The default implementation does nothing.
     fn stop(&mut self, turn: &mut Activation) -> ActorResult {
@@ -804,15 +804,24 @@ impl<'activation> Activation<'activation> {
     /// Registers the entity `r` in the list of stop actions for the active facet. If the facet
     /// terminates cleanly, `r`'s [`stop`][Entity::stop] will be called.
     ///
-    /// **Note.** If the actor crashes, the stop actions will *not* be called.
+    /// **Note.** If the actor crashes, stop actions will *not* be called.
     ///
     /// Use [`RunningActor::add_exit_hook`] to install a callback that will be called at the
     /// end of the lifetime of the *actor* rather than the facet. (Also, exit hooks are called
     /// no matter whether actor termination was normal or abnormal.)
-    pub fn on_stop<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>) {
+    pub fn on_stop_notify<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>) {
         if let Some(f) = self.active_facet() {
             let r = Arc::clone(r);
             f.stop_actions.push(Box::new(move |t| r.internal_with_entity(|e| e.stop(t))));
+        }
+    }
+
+    /// Registers `action` in the list of stop actions for the active facet. If the facet
+    /// terminates cleanly, `action` will be called. See also notes against
+    /// [`on_stop_notify`][Activation::on_stop_notify].
+    pub fn on_stop<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(&mut self, action: F) {
+        if let Some(f) = self.active_facet() {
+            f.stop_actions.push(Box::new(action));
         }
     }
 
@@ -1918,6 +1927,12 @@ impl<M> Entity<M> for StopOnRetract {
     fn retract(&mut self, t: &mut Activation, _h: Handle) -> ActorResult {
         t.stop();
         Ok(())
+    }
+}
+
+impl<F: Send + FnMut(&mut Activation) -> ActorResult> Entity<Synced> for F {
+    fn message(&mut self, t: &mut Activation, _m: Synced) -> ActorResult {
+        self(t)
     }
 }
 

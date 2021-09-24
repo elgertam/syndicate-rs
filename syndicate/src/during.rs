@@ -175,7 +175,7 @@ where
         let should_register_exit_hook = self.exit_handler.is_some();
         let r = t.create(self);
         if should_register_stop_action {
-            t.on_stop(&r);
+            t.on_stop_notify(&r);
         }
         if should_register_exit_hook {
             t.state.add_exit_hook(&r);
