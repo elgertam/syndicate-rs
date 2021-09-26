@@ -276,12 +276,14 @@ impl TunnelRelay {
     }
 
     fn handle_inbound_datagram(&mut self, t: &mut Activation, bs: &[u8]) -> ActorResult {
+        tracing::trace!(bytes = ?bs, "inbound datagram");
         let item = self.deserialize_one(t, bs).0?;
         self.handle_inbound_packet(t, item)
     }
 
     fn handle_inbound_stream(&mut self, t: &mut Activation, buf: &mut BytesMut) -> ActorResult {
         loop {
+            tracing::trace!(buffer = ?buf, "inbound stream");
             let (result, count) = self.deserialize_one(t, buf);
             match result {
                 Err(ParseError::Preserves(PreservesError::Io(e)))
@@ -296,7 +298,7 @@ impl TunnelRelay {
     }
 
     fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<AnyValue>) -> ActorResult {
-        tracing::trace!(packet = ?p, "-->");
+        tracing::debug!(packet = ?p, "-->");
         match p {
             P::Packet::Error(b) => {
                 tracing::info!(message = ?b.message.clone(),
@@ -438,7 +440,7 @@ impl TunnelRelay {
 
     pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet<AnyValue>) -> ActorResult {
         let item = language().unparse(&p);
-        tracing::trace!(packet = ?item, "<--");
+        tracing::debug!(packet = ?item, "<--");
 
         let bs = if self.output_text {
             let mut s = TextWriter::encode(&mut self.membranes, &item)?;

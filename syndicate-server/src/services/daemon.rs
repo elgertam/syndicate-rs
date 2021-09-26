@@ -131,6 +131,7 @@ fn run(
 
                     tracing::info!(?cmd);
                     let mut child = cmd.spawn()?;
+                    tracing::info!(pid = ?child.id());
 
                     facet.activate(
                         Account::new(syndicate::name!("announce-service-running")),
