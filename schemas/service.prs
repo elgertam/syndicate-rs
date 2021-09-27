@@ -1,22 +1,45 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-;Asserts that a service should begin (and stay) running after waiting for its dependencies and considering reverse-dependencies, blocks, and so on.
+; Asserts that a service should begin (and stay) running after waiting
+; for its dependencies and considering reverse-dependencies, blocks,
+; and so on.
 RequireService = <require-service @serviceName any>.
 
-;Asserts that a service should begin (and stay) running RIGHT NOW, without considering its dependencies.
+; Asserts that a service should begin (and stay) running RIGHT NOW,
+; without considering its dependencies.
 RunService = <run-service @serviceName any>.
 
-;Asserts that the service has been started (but is not necessarily ready for use).
-ServiceStarted = <service-started @serviceName any>.
+; Asserts one or more current states of service `serviceName`. The
+; overall state of the service is the union of asserted `state`s.
+;
+; Only a few combinations make sense:
+;  - `started`
+;  - `started` + `ready`
+;  - `failed`
+;  - `complete`
+;
+ServiceState = <service-state @serviceName any @state State>.
 
-;Asserts that the service is ready for use.
-ServiceRunning = <service-running @serviceName any>.
+; Possible service states.
+State =
+/ ; The service has begun its startup routine, and may or may not be
+  ; ready to take requests from other parties.
+  started
+/ ; The service is ready to take requests from other parties.
+  ; (This state is special in that it is asserted *in addition* to `started`.)
+  ready
+/ ; The service has failed.
+  failed
+/ ; The service has completed execution.
+  complete
+.
 
-;Asserts that `depender` can be considered started but not running until `dependee` is satisfied.
-ServiceDependency = <depends-on @depender any @dependee Dependee>.
-;Describes a relationship from a dependent to some a dependee service: has it started? is it ready?
-Dependee = ServiceStarted / ServiceRunning .
+; Asserts that, when `depender` is `require-service`d, it should not
+; be started until `dependee` has been asserted.
+ServiceDependency = <depends-on @depender any @dependee ServiceState>.
 
-;Asserts that the service has the given milestone among its dependencies. If not otherwise specified, a service has the milestone `core` as a dependency.
-ServiceMilestone = <service-milestone @serviceName any @milestone any>.
+; Asserts that the service is a "core" service. If *not* specified for
+; a service X, the system acts as if `<depends-on X <service-state
+; <milestone core> running>>` were asserted.
+ServiceMilestone = <core-service @serviceName any>.
