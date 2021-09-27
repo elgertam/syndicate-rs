@@ -43,4 +43,4 @@ ServiceDependency = <depends-on @depender any @dependee ServiceState>.
 ; a service X, where X is not `<milestone Y>` for some Y, the system
 ; acts as if `<depends-on X <service-state <milestone core> ready>>`
 ; were asserted.
-ServiceMilestone = <core-service @serviceName any>.
+CoreService = <core-service @serviceName any>.
