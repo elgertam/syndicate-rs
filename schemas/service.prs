@@ -25,14 +25,14 @@ ServiceState = <service-state @serviceName any @state State>.
 State =
 / ; The service has begun its startup routine, and may or may not be
   ; ready to take requests from other parties.
-  started
+  =started
 / ; The service is ready to take requests from other parties.
   ; (This state is special in that it is asserted *in addition* to `started`.)
-  ready
+  =ready
 / ; The service has failed.
-  failed
+  =failed
 / ; The service has completed execution.
-  complete
+  =complete
 .
 
 ; Asserts that, when `depender` is `require-service`d, it should not
