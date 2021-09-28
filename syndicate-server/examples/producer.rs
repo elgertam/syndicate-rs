@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use structopt::StructOpt;
 
 use syndicate::actor::*;
@@ -33,36 +31,29 @@ fn says(who: AnyValue, what: AnyValue) -> AnyValue {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
+    let config = Config::from_args();
+    let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
+    let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
     Actor::new().boot(syndicate::name!("producer"), |t| {
-        let facet = t.facet.clone();
-        let boot_account = Arc::clone(t.account());
-        Ok(t.linked_task(tracing::Span::current(), async move {
-            let config = Config::from_args();
-            let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
-            let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-            facet.activate(boot_account, |t| {
-                relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
-                    let padding: AnyValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
-                    let action_count = config.action_count;
-                    let account = Account::new(syndicate::name!("account"));
-                    t.linked_task(syndicate::name!("sender"), async move {
-                        loop {
-                            account.ensure_clear_funds().await;
-                            let mut events: PendingEventQueue = Vec::new();
-                            for _ in 0..action_count {
-                                events.push(Box::new(enclose!((ds, padding) move |t| t.with_entity(
-                                    &ds.underlying, |t, e| e.message(
-                                        t, says(Value::from("producer").wrap(), padding))))));
-                            }
-                            external_events(&ds.underlying.mailbox, &account, events)?;
-                        }
-                    });
-                    Ok(None)
-                });
-                Ok(())
-            })?;
-            Ok(LinkedTaskTermination::KeepFacet)
-        }))
+        relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
+            let padding: AnyValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
+            let action_count = config.action_count;
+            let account = Account::new(syndicate::name!("account"));
+            t.linked_task(syndicate::name!("sender"), async move {
+                loop {
+                    account.ensure_clear_funds().await;
+                    let mut events: PendingEventQueue = Vec::new();
+                    for _ in 0..action_count {
+                        events.push(Box::new(enclose!((ds, padding) move |t| t.with_entity(
+                            &ds.underlying, |t, e| e.message(
+                                t, says(Value::from("producer").wrap(), padding))))));
+                    }
+                    external_events(&ds.underlying.mailbox, &account, events)?;
+                }
+            });
+            Ok(None)
+        });
+        Ok(())
     }).await??;
     Ok(())
 }
