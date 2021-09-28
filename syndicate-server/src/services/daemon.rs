@@ -81,21 +81,20 @@ impl DaemonProcessInstance {
                 self.start()?;
                 LinkedTaskTermination::Normal
             }
-            RestartPolicy::OnError => {
-                if let None = error_message {
-                    LinkedTaskTermination::KeepFacet
-                } else {
-                    sleep_after_exit().await;
-                    self.start()?;
-                    LinkedTaskTermination::Normal
-                }
-            }
-            RestartPolicy::All => {
+            RestartPolicy::OnError =>
+                match error_message {
+                    None => LinkedTaskTermination::KeepFacet,
+                    Some(_) => {
+                        sleep_after_exit().await;
+                        self.start()?;
+                        LinkedTaskTermination::Normal
+                    }
+                },
+            RestartPolicy::All =>
                 match error_message {
                     None => LinkedTaskTermination::KeepFacet,
                     Some(s) => Err(s.as_str())?,
-                }
-            }
+                },
         })
     }
 
