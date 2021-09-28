@@ -148,15 +148,16 @@ fn run(
         let ready = lifecycle::ready(&spec);
         enclose!((config_ds, unready_configs) move |t| {
             let busy_count = *t.get(&unready_configs);
-            tracing::trace!(?busy_count);
+            tracing::debug!(?busy_count);
             config_ds.update(t, &mut handle, language(), if busy_count == 0 { Some(&ready) } else { None });
             Ok(())
         })
     })?;
 
-    Ok(during!(t, config_ds, language(), <daemon #(service.id.0) $config>, {
+    enclose!((unready_configs) during!(t, config_ds, language(), <daemon #(service.id.0) $config>, {
         let unready_configs = unready_configs.clone();
         |t: &mut Activation| {
+            tracing::debug!(?config, "new unready config");
             counter::adjust(t, &unready_configs, 1);
 
             match language().parse::<DaemonSpec>(&config) {
@@ -256,5 +257,9 @@ fn run(
                 }
             }
         }
-    }))
+    }));
+
+    tracing::debug!("syncing to ds");
+    counter::sync_and_adjust(t, &config_ds.underlying, &unready_configs, -1);
+    Ok(())
 }
