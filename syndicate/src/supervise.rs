@@ -109,11 +109,11 @@ impl Entity<Protocol> for Supervisor
                 } else {
                     self.config.pause_time
                 };
-                t.after(wait_time, Box::new(move |t| {
+                t.after(wait_time, move |t| {
                     tracing::trace!("Sending retry trigger");
                     t.message(&self_ref, Protocol::Retry);
                     Ok(())
-                }));
+                });
             },
         }
         Ok(())
@@ -151,7 +151,7 @@ impl Supervisor {
         let _entry = name.enter();
         tracing::trace!(?config);
         let self_ref = t.create_inert();
-        let state_field = t.field(State::Started);
+        let state_field = t.named_field("supervisee_state", State::Started);
         let mut supervisor = Supervisor {
             self_ref: Arc::clone(&self_ref),
             name: name.clone(),

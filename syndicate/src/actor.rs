@@ -355,8 +355,8 @@ pub struct RunningActor {
 /// values. Use [`Activation::dataflow`] to create a reactive block within a facet that will be
 /// (re-)executed whenever some dependent field changes value.
 ///
-#[derive(Debug)]
 pub struct Field<T: Any + Send> {
+    pub name: String,
     pub field_id: FieldId,
     tx: UnboundedSender<SystemMessage>,
     phantom: PhantomData<T>,
@@ -925,7 +925,7 @@ impl<'activation> Activation<'activation> {
                                 f.linked_tasks.remove(&task_id);
                             }
                             if let LinkedTaskTermination::Normal = result {
-                                t.stop();
+                                t.stop()?;
                             }
                             Ok(())
                         });
@@ -938,18 +938,28 @@ impl<'activation> Activation<'activation> {
 
     /// Executes the given action after the given duration has elapsed (so long as the active
     /// facet still exists at that time).
-    pub fn after(&mut self, duration: time::Duration, a: Action) {
+    pub fn after<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        duration: time::Duration,
+        a: F,
+    ) {
         self.at(time::Instant::now() + duration, a)
     }
 
     /// Executes the given action at the given instant (so long as the active facet still
     /// exists at that time).
-    pub fn at<I: Into<tokio::time::Instant>>(&mut self, instant: I, a: Action) {
+    pub fn at<I: Into<tokio::time::Instant>, F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        instant: I,
+        a: F,
+    ) {
         let account = Arc::clone(self.account());
         let instant = instant.into();
         let facet = self.facet.clone();
-        self.linked_task(crate::name!("Activation::at"), async move {
+        let span = tracing::Span::current().clone();
+        self.linked_task(crate::name!(parent: None, "Activation::at"), async move {
             tokio::time::sleep_until(instant.into()).await;
+            let _entry = span.enter();
             facet.activate(account, a)?;
             Ok(LinkedTaskTermination::KeepFacet)
         });
@@ -1006,7 +1016,9 @@ impl<'activation> Activation<'activation> {
         let f = Facet::new(Some(self.facet.facet_id));
         let facet_id = f.facet_id;
         self.state.facet_nodes.insert(facet_id, f);
-        tracing::trace!(?facet_id, facet_count = ?self.state.facet_nodes.len());
+        tracing::debug!(parent_id = ?self.facet.facet_id,
+                        ?facet_id,
+                        actor_facet_count = ?self.state.facet_nodes.len());
         self.state.facet_children.entry(self.facet.facet_id).or_default().insert(facet_id);
         self.with_facet(true /* TODO: tiny optimisation: "false" would be safe here */, facet_id, move |t| {
             boot(t)?;
@@ -1039,28 +1051,43 @@ impl<'activation> Activation<'activation> {
     }
 
     /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
-    /// commits. If `continuation` is supplied, the facet to be stopped hasn't been stopped at
-    /// the time of the `stop_facet` call, none of the shutdown handlers yields an error, and
-    /// the facet's parent facet is alive, executes `continuation` in the parent facet's
-    /// context.
-    pub fn stop_facet(&mut self, facet_id: FacetId, continuation: Option<Action>) {
+    /// commits.
+    ///
+    /// Then,
+    ///  - if `continuation` is supplied, and
+    ///  - the facet to be stopped hasn't been stopped at the time of the `stop_facet_and_continue` call, and
+    ///  - none of the shutdown handlers yields an error, and
+    ///  - the facet's parent facet is alive,
+    /// executes `continuation` (immediately) in the *parent* facet's context.
+    ///
+    pub fn stop_facet_and_continue<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        facet_id: FacetId,
+        continuation: Option<F>,
+    ) -> ActorResult {
         let maybe_parent_id = self.active_facet().and_then(|f| f.parent_facet_id);
-        self.enqueue_for_myself_at_commit(Box::new(move |t| {
-            t._terminate_facet(facet_id, true)?;
-            if let Some(k) = continuation {
-                if let Some(parent_id) = maybe_parent_id {
-                    t.with_facet(true, parent_id, k)?;
-                }
+        self.enqueue_for_myself_at_commit(Box::new(move |t| t._terminate_facet(facet_id, true)));
+        if let Some(k) = continuation {
+            if let Some(parent_id) = maybe_parent_id {
+                self.with_facet(true, parent_id, k)?;
             }
-            Ok(())
-        }));
+        }
+        Ok(())
+    }
+
+    /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
+    /// commits.
+    ///
+    /// Equivalent to `self.stop_facet_and_continue(facet_id, None)`.
+    pub fn stop_facet(&mut self, facet_id: FacetId) -> ActorResult {
+        self.stop_facet_and_continue::<Action>(facet_id, None)
     }
 
     /// Arranges for the active facet to be stopped cleanly when `self` commits.
     ///
-    /// Equivalent to `self.stop_facet(self.facet.facet_id, None)`.
-    pub fn stop(&mut self) {
-        self.stop_facet(self.facet.facet_id, None)
+    /// Equivalent to `self.stop_facet(self.facet.facet_id)`.
+    pub fn stop(&mut self) -> ActorResult {
+        self.stop_facet(self.facet.facet_id)
     }
 
     fn stop_if_inert(&mut self) {
@@ -1069,7 +1096,7 @@ impl<'activation> Activation<'activation> {
             tracing::trace!("Checking inertness of facet {} from facet {}", facet_id, t.facet.facet_id);
             if t.state.facet_exists_and_is_inert(facet_id) {
                 tracing::trace!(" - facet {} is inert, stopping it", facet_id);
-                t.stop_facet(facet_id, None);
+                t.stop_facet(facet_id)?;
             } else {
                 tracing::trace!(" - facet {} is not inert", facet_id);
             }
@@ -1079,7 +1106,8 @@ impl<'activation> Activation<'activation> {
 
     fn _terminate_facet(&mut self, facet_id: FacetId, alive: bool) -> ActorResult {
         if let Some(mut f) = self.state.facet_nodes.remove(&facet_id) {
-            tracing::debug!("{} termination of {:?}",
+            tracing::debug!(actor_facet_count = ?self.state.facet_nodes.len(),
+                            "{} termination of {:?}",
                             if alive { "living" } else { "post-exit" },
                             facet_id);
             if let Some(p) = f.parent_facet_id {
@@ -1101,9 +1129,13 @@ impl<'activation> Activation<'activation> {
                     // cleanup-actions are performed before parent-facet cleanup-actions.
                     if let Some(p) = parent_facet_id {
                         if t.state.facet_exists_and_is_inert(p) {
+                            tracing::trace!("terminating parent {:?} of facet {:?}", p, facet_id);
                             t._terminate_facet(p, true)?;
+                        } else {
+                            tracing::trace!("not terminating parent {:?} of facet {:?}", p, facet_id);
                         }
                     } else {
+                        tracing::trace!("terminating actor of root facet {:?}", facet_id);
                         t.state.shutdown();
                     }
                 } else {
@@ -1116,16 +1148,22 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    /// Create a new dataflow variable (field) within the active [`Actor`].
-    pub fn field<T: Any + Send>(&mut self, initial_value: T) -> Arc<Field<T>> {
+    /// Create a new named dataflow variable (field) within the active [`Actor`].
+    pub fn named_field<T: Any + Send>(&mut self, name: &str, initial_value: T) -> Arc<Field<T>> {
         let field_id = FieldId::new(NEXT_FIELD_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed))
             .expect("Internal error: Attempt to allocate FieldId of zero. Too many FieldIds allocated. Restart the process.");
         self.state.fields.insert(field_id, Box::new(initial_value));
         Arc::new(Field {
+            name: name.to_owned(),
             field_id,
             tx: self.state.tx.clone(),
             phantom: PhantomData,
         })
+    }
+
+    /// Create a new anonymous dataflow variable (field) within the active [`Actor`].
+    pub fn field<T: Any + Send>(&mut self, initial_value: T) -> Arc<Field<T>> {
+        self.named_field("", initial_value)
     }
 
     /// Retrieve a reference to the current value of a dataflow variable (field); if execution
@@ -1133,8 +1171,8 @@ impl<'activation> Activation<'activation> {
     /// *depending upon* the field.
     ///
     pub fn get<T: Any + Send>(&mut self, field: &Field<T>) -> &T {
-        tracing::trace!(field = ?field.field_id, block = ?self.active_block, "get");
         if let Some(block) = self.active_block {
+            tracing::trace!(?field, ?block, action = "get", "observed");
             self.state.dataflow.record_observation(block, field.field_id);
         }
         let any = self.state.fields.get(&field.field_id)
@@ -1149,12 +1187,13 @@ impl<'activation> Activation<'activation> {
     /// reevaluation of dependent blocks.
     ///
     pub fn get_mut<T: Any + Send>(&mut self, field: &Field<T>) -> &mut T {
-        tracing::trace!(field = ?field.field_id, block = ?self.active_block, "get_mut");
         {
             // Overapproximation.
             if let Some(block) = self.active_block {
+                tracing::trace!(?field, ?block, action = "get_mut", "observed");
                 self.state.dataflow.record_observation(block, field.field_id);
             }
+            tracing::trace!(?field, active_block = ?self.active_block, action = "get_mut", "damaged");
             self.state.dataflow.record_damage(field.field_id);
         }
         let any = self.state.fields.get_mut(&field.field_id)
@@ -1166,7 +1205,7 @@ impl<'activation> Activation<'activation> {
     /// the new value is [`eq`][std::cmp::PartialEq::eq] to the value being overwritten.
     ///
     pub fn set<T: Any + Send>(&mut self, field: &Field<T>, value: T) {
-        tracing::trace!(field = ?field.field_id, block = ?self.active_block, "set");
+        tracing::trace!(?field, active_block = ?self.active_block, action = "set", "damaged");
         // Overapproximation in many cases, since the new value may not produce an
         // observable difference (may be equal to the current value).
         self.state.dataflow.record_damage(field.field_id);
@@ -1213,7 +1252,9 @@ impl<'activation> Activation<'activation> {
                 }
             }
         }
-        tracing::trace!(passes = ?pass_number, "repair_dataflow complete");
+        if pass_number > 0 {
+            tracing::trace!(passes = ?pass_number, "repair_dataflow complete");
+        }
         Ok(pass_number > 0)
     }
 
@@ -1421,7 +1462,7 @@ impl Actor {
         let (tx, rx) = unbounded_channel();
         let actor_id = next_actor_id();
         let root = Facet::new(None);
-        // tracing::trace!(id = actor_id, "Actor::new");
+        tracing::trace!(?actor_id, root_facet_id = ?root.facet_id, "Actor::new");
         let mut st = RunningActor {
             actor_id,
             tx,
@@ -1656,11 +1697,17 @@ impl RunningActor {
     fn facet_exists_and_is_inert(&mut self, facet_id: FacetId) -> bool {
         let no_kids = self.facet_children.get(&facet_id).map(|cs| cs.is_empty()).unwrap_or(true);
         if let Some(f) = self.get_facet(facet_id) {
-            no_kids &&
-                f.outbound_handles.is_empty() &&
-                f.linked_tasks.is_empty() &&
-                f.inert_check_preventers.load(Ordering::Relaxed) == 0
+            // The only outbound handle the root facet of an actor may have is a link
+            // assertion, from [Activation::link]. This is not to be considered a "real"
+            // assertion for purposes of keeping the facet alive!
+            let no_outbound_handles = f.outbound_handles.is_empty();
+            let is_root_facet = f.parent_facet_id.is_none();
+            let no_linked_tasks = f.linked_tasks.is_empty();
+            let no_inert_check_preventers = f.inert_check_preventers.load(Ordering::Relaxed) == 0;
+            tracing::trace!(?facet_id, ?no_kids, ?no_outbound_handles, ?is_root_facet, ?no_linked_tasks, ?no_inert_check_preventers);
+            no_kids && (no_outbound_handles || is_root_facet) && no_linked_tasks && no_inert_check_preventers
         } else {
+            tracing::trace!(?facet_id, exists = ?false);
             false
         }
     }
@@ -1681,6 +1728,12 @@ impl RunningActor {
                     }
                     e.retract(t, handle)
                 }))));
+    }
+}
+
+impl<T: Any + Send> std::fmt::Debug for Field<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "#<Field {:?} {}>", self.name, self.field_id)
     }
 }
 
@@ -1943,8 +1996,7 @@ where
 
 impl<M> Entity<M> for StopOnRetract {
     fn retract(&mut self, t: &mut Activation, _h: Handle) -> ActorResult {
-        t.stop();
-        Ok(())
+        t.stop()
     }
 }
 

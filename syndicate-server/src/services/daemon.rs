@@ -64,73 +64,84 @@ impl CommandLine {
 
 struct DaemonProcessInstance {
     name: tracing::Span,
-    facet: FacetRef,
     cmd: process::Command,
     announce_presumed_readiness: bool,
     unready_configs: Arc<Field<isize>>,
+    completed_processes: Arc<Field<isize>>,
     restart_policy: RestartPolicy,
 }
 
 impl DaemonProcessInstance {
-    async fn handle_exit(self, error_message: Option<String>) -> Result<LinkedTaskTermination, Error> {
-        let delay_ms = if let None = error_message { 200 } else { 1000 };
-        let sleep_after_exit = || tokio::time::sleep(std::time::Duration::from_millis(delay_ms));
-        Ok(match self.restart_policy {
-            RestartPolicy::Always => {
-                sleep_after_exit().await;
-                self.start()?;
-                LinkedTaskTermination::Normal
+    fn handle_exit(self, t: &mut Activation, error_message: Option<String>) -> ActorResult {
+        let delay =
+            std::time::Duration::from_millis(if let None = error_message { 200 } else { 1000 });
+        t.stop_facet_and_continue(t.facet.facet_id, Some(move |t: &mut Activation| {
+            enum NextStep {
+                SleepAndRestart,
+                SignalSuccessfulCompletion,
             }
-            RestartPolicy::OnError =>
-                match error_message {
-                    None => LinkedTaskTermination::KeepFacet,
-                    Some(_) => {
-                        sleep_after_exit().await;
-                        self.start()?;
-                        LinkedTaskTermination::Normal
-                    }
-                },
-            RestartPolicy::All =>
-                match error_message {
-                    None => LinkedTaskTermination::KeepFacet,
-                    Some(s) => Err(s.as_str())?,
-                },
-        })
+            use NextStep::*;
+
+            let next_step = match self.restart_policy {
+                RestartPolicy::Always => SleepAndRestart,
+                RestartPolicy::OnError =>
+                    match error_message {
+                        None => SignalSuccessfulCompletion,
+                        Some(_) => SleepAndRestart,
+                    },
+                RestartPolicy::All =>
+                    match error_message {
+                        None => SignalSuccessfulCompletion,
+                        Some(s) => Err(s.as_str())?,
+                    },
+            };
+
+            match next_step {
+                SleepAndRestart => t.after(delay, |t| self.start(t)),
+                SignalSuccessfulCompletion => {
+                    t.facet(|t| {
+                        let _ = t.prevent_inert_check();
+                        counter::adjust(t, &self.completed_processes, 1);
+                        counter::adjust(t, &self.unready_configs, -1);
+                        Ok(())
+                    })?;
+                    ()
+                }
+            }
+            Ok(())
+        }))
     }
 
-    fn start(mut self) -> ActorResult {
-        tracing::trace!("DaemonProcessInstance start (outer)");
-        self.facet.clone().activate(
-            Account::new(syndicate::name!(parent: self.name.clone(), "instance")), |t| {
-                tracing::trace!("DaemonProcessInstance start (inner)");
-                t.facet(|t| {
-                    tracing::trace!(cmd = ?self.cmd, "starting");
-                    let mut child = match self.cmd.spawn() {
-                        Ok(child) => child,
-                        Err(e) => {
-                            tracing::info!(spawn_err = ?e);
-                            t.linked_task(syndicate::name!(parent: self.name.clone(), "fail"),
-                                          self.handle_exit(Some(format!("{}", e))));
-                            return Ok(());
-                        }
-                    };
-                    tracing::info!(pid = ?child.id(), cmd = ?self.cmd, "started");
+    fn start(mut self, t: &mut Activation) -> ActorResult {
+        t.facet(|t| {
+            tracing::trace!(cmd = ?self.cmd, "starting");
+            let mut child = match self.cmd.spawn() {
+                Ok(child) => child,
+                Err(e) => {
+                    tracing::info!(spawn_err = ?e);
+                    return self.handle_exit(t, Some(format!("{}", e)));
+                }
+            };
+            tracing::info!(pid = ?child.id(), cmd = ?self.cmd, "started");
 
-                    if self.announce_presumed_readiness {
-                        counter::adjust(t, &self.unready_configs, -1);
-                    }
+            if self.announce_presumed_readiness {
+                counter::adjust(t, &self.unready_configs, -1);
+            }
 
-                    t.linked_task(syndicate::name!(parent: self.name.clone(), "wait"), async move {
-                        tracing::trace!("waiting for process exit");
-                        let status = child.wait().await?;
-                        tracing::info!(?status);
-                        self.handle_exit(
-                            if status.success() { None } else { Some(format!("{}", status)) }).await
-                    });
-                    Ok(())
+            let facet = t.facet.clone();
+            t.linked_task(syndicate::name!(parent: self.name.clone(), "wait"), async move {
+                tracing::trace!("waiting for process exit");
+                let status = child.wait().await?;
+                tracing::info!(?status);
+                facet.activate(Account::new(syndicate::name!("instance-terminated")), |t| {
+                    let m = if status.success() { None } else { Some(format!("{}", status)) };
+                    self.handle_exit(t, m)
                 })?;
-                Ok(())
-            })
+                Ok(LinkedTaskTermination::Normal)
+            });
+            Ok(())
+        })?;
+        Ok(())
     }
 }
 
@@ -142,7 +153,10 @@ fn run(
 ) -> ActorResult {
     let spec = language().unparse(&service);
 
-    let unready_configs = t.field(1isize);
+    let total_configs = t.named_field("total_configs", 0isize);
+    let unready_configs = t.named_field("unready_configs", 1isize);
+    let completed_processes = t.named_field("completed_processes", 0isize);
+
     t.dataflow({
         let mut handle = None;
         let ready = lifecycle::ready(&spec);
@@ -154,11 +168,21 @@ fn run(
         })
     })?;
 
-    enclose!((unready_configs) during!(t, config_ds, language(), <daemon #(service.id.0) $config>, {
-        let unready_configs = unready_configs.clone();
-        |t: &mut Activation| {
-            tracing::debug!(?config, "new unready config");
+    t.dataflow(enclose!((completed_processes, total_configs) move |t| {
+        let total = *t.get(&total_configs);
+        let completed = *t.get(&completed_processes);
+        tracing::debug!(total_configs = ?total, completed_processes = ?completed);
+        if total > 0 && total == completed {
+            t.stop()?;
+        }
+        Ok(())
+    }))?;
+
+    enclose!((unready_configs, completed_processes) during!(t, config_ds, language(), <daemon #(service.id.0) $config>, {
+        enclose!((unready_configs, completed_processes) |t: &mut Activation| {
+            tracing::debug!(?config, "new config");
             counter::adjust(t, &unready_configs, 1);
+            counter::adjust(t, &total_configs, 1);
 
             match language().parse::<DaemonSpec>(&config) {
                 Ok(config) => {
@@ -238,15 +262,18 @@ fn run(
                         cmd.stderr(std::process::Stdio::inherit());
                         cmd.kill_on_drop(true);
 
-                        (DaemonProcessInstance {
+                        let process_instance = DaemonProcessInstance {
                             name: tracing::Span::current(),
-                            facet,
                             cmd,
                             announce_presumed_readiness,
                             unready_configs,
+                            completed_processes,
                             restart_policy,
-                        }).start()?;
+                        };
 
+                        facet.activate(Account::new(syndicate::name!("instance-startup")), |t| {
+                            process_instance.start(t)
+                        })?;
                         Ok(LinkedTaskTermination::KeepFacet)
                     });
                     Ok(())
@@ -256,7 +283,7 @@ fn run(
                     return Ok(());
                 }
             }
-        }
+        })
     }));
 
     tracing::debug!("syncing to ds");

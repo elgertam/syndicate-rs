@@ -33,8 +33,7 @@ struct ShutdownEntity;
 
 impl Entity<AnyValue> for ShutdownEntity {
     fn message(&mut self, t: &mut Activation, _m: AnyValue) -> ActorResult {
-        t.stop();
-        Ok(())
+        t.stop()
     }
 }
 
@@ -94,12 +93,7 @@ pub fn bench_pub(c: &mut Criterion) {
                         let ds = Cap::new(&t.create(Dataspace::new()));
 
                         let shutdown = entity(())
-                            .on_asserted(|_, _, _| {
-                                Ok(Some(Box::new(|_, t| {
-                                    t.stop();
-                                    Ok(())
-                                })))
-                            })
+                            .on_asserted(|_, _, _| Ok(Some(Box::new(|_, t| t.stop()))))
                             .create_cap(t);
 
                         ds.assert(t, language(), &Observe {

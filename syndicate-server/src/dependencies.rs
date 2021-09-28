@@ -52,7 +52,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, service_name: AnyValue) -> ActorResult 
         });
     }
 
-    let obstacle_count = t.field(1isize);
+    let obstacle_count = t.named_field("obstacle_count", 1isize);
     t.dataflow(enclose!((obstacle_count) move |t| {
         tracing::trace!(obstacle_count = ?t.get(&obstacle_count));
         Ok(())

@@ -202,8 +202,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: internal_services::ConfigWatcher)
 
         let _ = facet.activate(Account::new(syndicate::name!("termination")), |t| {
             tracing::trace!("linked thread terminating associated facet");
-            t.stop();
-            Ok(())
+            t.stop()
         });
 
         tracing::trace!("linked thread done");

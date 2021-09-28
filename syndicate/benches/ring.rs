@@ -59,7 +59,7 @@ pub fn bench_ring(c: &mut Criterion) {
                 }
 
                 impl Counter {
-                    fn step(&mut self, t: &mut Activation) {
+                    fn step(&mut self, t: &mut Activation) -> ActorResult {
                         if self.remaining_to_send > 0 {
                             self.remaining_to_send -= 1;
                             MESSAGES_SENT.fetch_add(1, Ordering::Relaxed);
@@ -68,20 +68,21 @@ pub fn bench_ring(c: &mut Criterion) {
                             tracing::info!(iters = self.iters,
                                            actors_created = ACTORS_CREATED.load(Ordering::SeqCst),
                                            messages_sent = MESSAGES_SENT.load(Ordering::SeqCst));
-                            t.stop();
+                            t.stop()?;
                             self.tx.send(self.start.elapsed() / ACTOR_COUNT).unwrap()
                         }
+                        Ok(())
                     }
                 }
 
                 impl Entity<()> for Counter {
                     fn message(&mut self, t: &mut Activation, _message: ()) -> ActorResult {
-                        Ok(self.step(t))
+                        self.step(t)
                     }
                 }
 
                 impl Spawner {
-                    fn step(&mut self, t: &mut Activation, next: Arc<Ref<()>>) {
+                    fn step(&mut self, t: &mut Activation, next: Arc<Ref<()>>) -> ActorResult {
                         if self.i < ACTOR_COUNT {
                             let i = self.i;
                             self.i += 1;
@@ -103,15 +104,16 @@ pub fn bench_ring(c: &mut Criterion) {
                                 iters: self.iters,
                                 next,
                             };
-                            c_state.step(t);
+                            c_state.step(t)?;
                             self.c.become_entity(c_state);
                         }
+                        Ok(())
                     }
                 }
 
                 impl Entity<Arc<Ref<()>>> for Spawner {
                     fn message(&mut self, t: &mut Activation, f: Arc<Ref<()>>) -> ActorResult {
-                        Ok(self.step(t, f))
+                        self.step(t, f)
                     }
                 }
 
@@ -125,7 +127,7 @@ pub fn bench_ring(c: &mut Criterion) {
                         i: 1,
                         c: t.create_inert(),
                     };
-                    s.step(t, Arc::clone(&s.c));
+                    s.step(t, Arc::clone(&s.c))?;
                     Arc::clone(&s.self_ref).become_entity(s);
                     Ok(())
                 }).await.unwrap().unwrap();
