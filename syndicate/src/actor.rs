@@ -453,6 +453,16 @@ pub enum RunDisposition {
     Terminate(ActorResult),
 }
 
+/// [Linked tasks][Activation::linked_task] terminate yielding values of this type.
+pub enum LinkedTaskTermination {
+    /// Causes the task's associated [Facet] to be [stop][Activation::stop]ped when the task
+    /// returns.
+    Normal,
+    /// Causes no action to be taken regarding the task's associated [Facet] at the time the
+    /// task returns.
+    KeepFacet,
+}
+
 //---------------------------------------------------------------------------
 
 const BUMP_AMOUNT: u8 = 10;
@@ -874,9 +884,9 @@ impl<'activation> Activation<'activation> {
 
     /// Start a new [linked task][crate::actor#linked-tasks] attached to the active facet. The
     /// task will execute the future "`boot`" to completion unless it is cancelled first (by
-    /// e.g. termination of the owning facet or crashing of the owning actor). Uses `name` for
-    /// log messages emitted by the task.
-    pub fn linked_task<F: 'static + Send + futures::Future<Output = ActorResult>>(
+    /// e.g. termination of the owning facet or crashing of the owning actor). Stops the active
+    /// facet when the linked task completes. Uses `name` for log messages emitted by the task.
+    pub fn linked_task<F: 'static + Send + futures::Future<Output = Result<LinkedTaskTermination, Error>>>(
         &mut self,
         name: tracing::Span,
         boot: F,
@@ -894,21 +904,18 @@ impl<'activation> Activation<'activation> {
                     let result = select! {
                         _ = token.cancelled() => {
                             tracing::trace!(task_id, "linked task cancelled");
-                            Ok(())
+                            LinkedTaskTermination::Normal
                         }
-                        result = boot => {
-                            match &result {
-                                Ok(()) => {
-                                    tracing::trace!(task_id, "linked task normal stop");
-                                    ()
-                                }
-                                Err(e) => {
-                                    tracing::error!(task_id, "linked task error: {}", e);
-                                    let _ = mailbox.tx.send(SystemMessage::Crash(e.clone()));
-                                    ()
-                                }
+                        result = boot => match result {
+                            Ok(t) => {
+                                tracing::trace!(task_id, "linked task normal stop");
+                                t
                             }
-                            result
+                            Err(e) => {
+                                tracing::error!(task_id, "linked task error: {}", e);
+                                let _ = mailbox.tx.send(SystemMessage::Crash(e.clone()));
+                                Err(e)?
+                            }
                         }
                     };
                     let _ = facet.activate(
@@ -917,9 +924,12 @@ impl<'activation> Activation<'activation> {
                                 tracing::trace!(task_id, "cancellation token removed");
                                 f.linked_tasks.remove(&task_id);
                             }
+                            if let LinkedTaskTermination::Normal = result {
+                                t.stop();
+                            }
                             Ok(())
                         });
-                    result
+                    Ok::<(), Error>(())
                 }.instrument(name));
             }
             f.linked_tasks.insert(task_id, token);
@@ -935,12 +945,13 @@ impl<'activation> Activation<'activation> {
     /// Executes the given action at the given instant (so long as the active facet still
     /// exists at that time).
     pub fn at<I: Into<tokio::time::Instant>>(&mut self, instant: I, a: Action) {
-        let facet = self.facet.clone();
         let account = Arc::clone(self.account());
         let instant = instant.into();
+        let facet = self.facet.clone();
         self.linked_task(crate::name!("Activation::at"), async move {
             tokio::time::sleep_until(instant.into()).await;
-            facet.activate(account, a)
+            facet.activate(account, a)?;
+            Ok(LinkedTaskTermination::KeepFacet)
         });
     }
 
@@ -995,6 +1006,7 @@ impl<'activation> Activation<'activation> {
         let f = Facet::new(Some(self.facet.facet_id));
         let facet_id = f.facet_id;
         self.state.facet_nodes.insert(facet_id, f);
+        tracing::trace!(?facet_id, facet_count = ?self.state.facet_nodes.len());
         self.state.facet_children.entry(self.facet.facet_id).or_default().insert(facet_id);
         self.with_facet(true /* TODO: tiny optimisation: "false" would be safe here */, facet_id, move |t| {
             boot(t)?;
@@ -1027,9 +1039,10 @@ impl<'activation> Activation<'activation> {
     }
 
     /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
-    /// commits. If `continuation` is supplied, the facet to be stopped hasn't been stopped
-    /// yet, none of the shutdown handlers yields an error, and the facet's parent facet is
-    /// alive, executes `continuation` in the parent facet's context.
+    /// commits. If `continuation` is supplied, the facet to be stopped hasn't been stopped at
+    /// the time of the `stop_facet` call, none of the shutdown handlers yields an error, and
+    /// the facet's parent facet is alive, executes `continuation` in the parent facet's
+    /// context.
     pub fn stop_facet(&mut self, facet_id: FacetId, continuation: Option<Action>) {
         let maybe_parent_id = self.active_facet().and_then(|f| f.parent_facet_id);
         self.enqueue_for_myself_at_commit(Box::new(move |t| {
@@ -1860,6 +1873,11 @@ impl Cap {
         if let Some(m) = self.rewrite(m.unparse(literals)) {
             t.message(&self.underlying, m)
         }
+    }
+
+    /// Synchronizes with the reference underlying the cap.
+    pub fn sync(&self, t: &mut Activation, peer: Arc<Ref<Synced>>) {
+        t.sync(&self.underlying, peer)
     }
 }
 

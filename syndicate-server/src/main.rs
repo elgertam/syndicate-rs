@@ -14,9 +14,11 @@ use syndicate::schemas::transport_address;
 
 use syndicate::value::NestedValue;
 
+mod counter;
 mod dependencies;
 mod gatekeeper;
 mod language;
+mod lifecycle;
 mod protocol;
 mod services;
 

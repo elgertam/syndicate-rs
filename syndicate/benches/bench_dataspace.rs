@@ -71,7 +71,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             enclose!((shutdown) move |t| t.with_entity(
                                 &shutdown,
                                 |t, e| e.message(t, AnyValue::new(true))))))?;
-                        Ok(())
+                        Ok(LinkedTaskTermination::KeepFacet)
                     });
                     Ok(())
                 }).await.unwrap().unwrap();
@@ -167,7 +167,7 @@ pub fn bench_pub(c: &mut Criterion) {
                                             &ds.underlying,
                                             |t, e| e.message(t, AnyValue::new(true)))))?;
                                 }
-                                Ok(())
+                                Ok(LinkedTaskTermination::KeepFacet)
                             });
                             Ok(())
                         });

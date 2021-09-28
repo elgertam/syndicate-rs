@@ -1,5 +1,3 @@
-use preserves_schema::Codec;
-
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,42 +6,43 @@ use syndicate::actor::*;
 use syndicate::enclose;
 use syndicate::error::Error;
 use syndicate::relay;
+use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
 
 use crate::language::language;
+use crate::lifecycle;
 use crate::protocol::run_connection;
-use crate::schemas::internal_services;
+use crate::schemas::internal_services::UnixRelayListener;
 
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        Ok(during!(t, ds, language(), <run-service $spec: internal_services::UnixRelayListener>,
-                   |t: &mut Activation| {
-                       t.spawn_link(syndicate::name!(parent: None, "relay", addr = ?spec),
-                                    enclose!((ds, gateway) |t| run(t, ds, gateway, spec)));
-                       Ok(())
-                   }))
+        Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener>, |t| {
+            Supervisor::start(
+                t,
+                syndicate::name!(parent: None, "relay", addr = ?spec),
+                SupervisorConfiguration::default(),
+                enclose!((ds, spec) lifecycle::updater(ds, spec)),
+                enclose!((ds, gateway) move |t|
+                         enclose!((ds, gateway, spec) run(t, ds, gateway, spec))))
+        }))
     });
 }
 
-fn run(
-    t: &'_ mut Activation,
-    ds: Arc<Cap>,
-    gateway: Arc<Cap>,
-    spec: internal_services::UnixRelayListener,
-) -> ActorResult {
+fn run(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>, spec: UnixRelayListener) -> ActorResult {
     let path_str = spec.addr.path.clone();
-    {
-        let spec = language().unparse(&spec);
-        ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
-    }
     let parent_span = tracing::Span::current();
+    let facet = t.facet.clone();
     t.linked_task(syndicate::name!("listener"), async move {
         let listener = bind_unix_listener(&PathBuf::from(path_str)).await?;
-        tracing::info!("listening");
+        facet.activate(Account::new(syndicate::name!("readiness")), |t| {
+            tracing::info!("listening");
+            ds.assert(t, language(), &lifecycle::ready(&spec));
+            Ok(())
+        })?;
         loop {
             let (stream, _addr) = listener.accept().await?;
             let peer = stream.peer_cred()?;
@@ -61,7 +60,8 @@ fn run(
                             run_connection(facet,
                                            relay::Input::Bytes(Box::pin(i)),
                                            relay::Output::Bytes(Box::pin(o)),
-                                           gateway)
+                                           gateway)?;
+                            Ok(LinkedTaskTermination::KeepFacet)
                         }
                     }))));
         }

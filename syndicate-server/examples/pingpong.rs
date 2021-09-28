@@ -210,14 +210,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 external_events(&ds.underlying.mailbox, &account, events)?
                             }
-                            Ok(())
+                            Ok(LinkedTaskTermination::KeepFacet)
                         });
                     }
 
                     Ok(None)
                 });
                 Ok(())
-            })
+            })?;
+            Ok(LinkedTaskTermination::KeepFacet)
         }))
     }).await??;
     Ok(())

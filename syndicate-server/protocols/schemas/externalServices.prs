@@ -8,13 +8,35 @@ DaemonService = <daemon @id DaemonId> .
 DaemonProcess = <daemon @id DaemonId @config DaemonSpec>.
 DaemonId = any .
 DaemonSpec = @simple CommandLine / @full FullDaemonSpec .
-FullDaemonSpec = { argv: CommandLine } & @env DaemonEnv & @dir DaemonDir & @clearEnv ClearEnv .
+FullDaemonSpec =
+  & { argv: CommandLine }
+  & @env DaemonEnv
+  & @dir DaemonDir
+  & @clearEnv ClearEnv
+  & @readyOnStart ReadyOnStart
+  & @restart RestartField
+.
 DaemonEnv = @present { env: { EnvVariable: EnvValue ...:... } } / @invalid { env: any } / @absent {} .
 DaemonDir = @present { dir: string } / @invalid { dir: any } / @absent {} .
 ClearEnv = @present { clearEnv: bool } / @invalid { clearEnv: any } / @absent {} .
+ReadyOnStart = @present { readyOnStart: bool } / @invalid { readyOnStart: any } / @absent {} .
+RestartField = @present { restart: RestartPolicy } / @invalid { restart: any } / @absent {} .
 
 CommandLine = @shell string / @full FullCommandLine .
 FullCommandLine = [@program string, @args string ...] .
 
 EnvVariable = @string string / @symbol symbol / @invalid any .
 EnvValue = @set string / @remove #f / @invalid any .
+
+RestartPolicy =
+/ ; Whether the process terminates normally or abnormally, restart it
+  ; without affecting any peer processes within the service.
+  =always
+/ ; If the process terminates normally, leave everything alone; if it
+  ; terminates abnormally, restart it without affecting peers.
+  @onError =on-error
+/ ; If the process terminates normally, leave everything alone; if it
+  ; terminates abnormally, restart the whole daemon (all processes
+  ; within the daemon).
+  =all
+.

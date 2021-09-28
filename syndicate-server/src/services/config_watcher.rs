@@ -3,8 +3,6 @@ use notify::Watcher;
 use notify::RecursiveMode;
 use notify::watcher;
 
-use preserves_schema::Codec;
-
 use std::fs;
 use std::future;
 use std::io;
@@ -16,6 +14,7 @@ use std::time::Duration;
 
 use syndicate::actor::*;
 use syndicate::enclose;
+use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::value::BinarySource;
 use syndicate::value::IOBinarySource;
 use syndicate::value::Map;
@@ -26,18 +25,21 @@ use syndicate::value::Set;
 use syndicate::value::ViaCodec;
 
 use crate::language::language;
+use crate::lifecycle;
 use crate::schemas::internal_services;
 
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
-        Ok(during!(t, ds, language(), <run-service $spec: internal_services::ConfigWatcher>,
-                   |t: &mut Activation| {
-                       t.spawn_link(syndicate::name!(parent: None, "config", spec = ?spec),
-                                    enclose!((ds) |t| run(t, ds, spec)));
-                       Ok(())
-                   }))
+        Ok(during!(t, ds, language(), <run-service $spec: internal_services::ConfigWatcher>, |t| {
+            Supervisor::start(
+                t,
+                syndicate::name!(parent: None, "config", spec = ?spec),
+                SupervisorConfiguration::default(),
+                enclose!((ds, spec) lifecycle::updater(ds, spec)),
+                enclose!((ds) move |t| enclose!((ds, spec) run(t, ds, spec))))
+        }))
     });
 }
 
@@ -137,11 +139,7 @@ fn initial_scan(
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: internal_services::ConfigWatcher) -> ActorResult {
-    {
-        let spec = language().unparse(&spec);
-        ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
-    }
-    let path = fs::canonicalize(spec.path)?;
+    let path = fs::canonicalize(spec.path.clone())?;
 
     tracing::info!("watching {:?}", &path);
     let (tx, rx) = channel();
@@ -157,6 +155,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: internal_services::ConfigWatcher)
             let root_path = path.clone().into();
             facet.activate(Account::new(syndicate::name!("initial_scan")), |t| {
                 initial_scan(t, &mut path_state, &ds, &root_path);
+                ds.assert(t, language(), &lifecycle::ready(&spec));
                 Ok(())
             }).unwrap();
             tracing::trace!("initial_scan complete");
@@ -213,7 +212,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: internal_services::ConfigWatcher)
     t.linked_task(syndicate::name!("cancel-wait"), async move {
         future::pending::<()>().await;
         drop(watcher);
-        Ok(())
+        Ok(LinkedTaskTermination::KeepFacet)
     });
 
     Ok(())

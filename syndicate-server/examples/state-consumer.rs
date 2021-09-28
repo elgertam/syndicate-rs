@@ -84,7 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(None)
                 });
                 Ok(())
-            })
+            })?;
+            Ok(LinkedTaskTermination::KeepFacet)
         }))
     }).await??;
     Ok(())

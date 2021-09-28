@@ -8,8 +8,12 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::actor::*;
+use crate::enclose;
+use crate::schemas::service::State;
 
-enum Protocol<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult> {
+pub type Boot = Box<dyn Send + FnMut(&mut Activation) -> ActorResult>;
+
+enum Protocol {
     SuperviseeStarted, // assertion
     BootFunction(Boot), // message
     Retry, // message
@@ -30,25 +34,17 @@ pub struct SupervisorConfiguration {
     pub restart_policy: RestartPolicy,
 }
 
-pub struct Supervisor<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult> {
-    self_ref: Arc<Ref<Protocol<Boot>>>,
+pub struct Supervisor {
+    self_ref: Arc<Ref<Protocol>>,
     name: tracing::Span,
     config: SupervisorConfiguration,
     boot_fn: Option<Boot>,
     restarts: VecDeque<Instant>,
-    supervisee: Supervisee,
+    state: Arc<Field<State>>,
     ac_ref: Option<ActorRef>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Supervisee {
-    NotRunning,
-    Booting,
-    Running,
-    Recovering,
-}
-
-impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult> std::fmt::Debug for Protocol<Boot> {
+impl std::fmt::Debug for Protocol {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Protocol::SuperviseeStarted => write!(f, "Protocol::SuperviseeStarted"),
@@ -65,17 +61,16 @@ impl Default for SupervisorConfiguration {
             period: Duration::from_secs(5),
             pause_time: Duration::from_millis(200),
             sleep_time: Duration::from_secs(10),
-            restart_policy: RestartPolicy::Always,
+            restart_policy: RestartPolicy::OnErrorOnly,
         }
     }
 }
 
-impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult>
-    Entity<Protocol<Boot>> for Supervisor<Boot>
+impl Entity<Protocol> for Supervisor
 {
-    fn assert(&mut self, _t: &mut Activation, m: Protocol<Boot>, _h: Handle) -> ActorResult {
+    fn assert(&mut self, t: &mut Activation, m: Protocol, _h: Handle) -> ActorResult {
         match m {
-            Protocol::SuperviseeStarted => self.enter_state(Supervisee::Booting),
+            Protocol::SuperviseeStarted => t.set(&self.state, State::Started),
             _ => (),
         }
         Ok(())
@@ -92,11 +87,12 @@ impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult>
         match exit_status {
             Ok(()) if self.config.restart_policy == RestartPolicy::OnErrorOnly => {
                 tracing::trace!("Not restarting: normal exit, restart_policy is OnErrorOnly");
-                self.enter_state(Supervisee::NotRunning);
+                t.set(&self.state, State::Complete);
             },
             _ => {
                 tracing::trace!("Restarting: restart_policy is Always or exit was abnormal");
-                self.enter_state(Supervisee::Recovering);
+                t.set(&self.state,
+                      if exit_status.is_ok() { State::Complete } else { State::Failed });
                 let now = Instant::now();
                 let oldest_to_keep = now - self.config.period;
                 self.restarts.push_back(now);
@@ -114,6 +110,7 @@ impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult>
                     self.config.pause_time
                 };
                 t.after(wait_time, Box::new(move |t| {
+                    tracing::trace!("Sending retry trigger");
                     t.message(&self_ref, Protocol::Retry);
                     Ok(())
                 }));
@@ -122,15 +119,13 @@ impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult>
         Ok(())
     }
 
-    fn message(&mut self, t: &mut Activation, m: Protocol<Boot>) -> ActorResult {
+    fn message(&mut self, t: &mut Activation, m: Protocol) -> ActorResult {
         match m {
             Protocol::BootFunction(b) => {
-                self.enter_state(Supervisee::Running);
                 self.boot_fn = Some(b);
                 Ok(())
             }
             Protocol::Retry => {
-                self.enter_state(Supervisee::NotRunning);
                 self.ensure_started(t)
             }
             _ => Ok(())
@@ -144,40 +139,47 @@ impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult>
     }
 }
 
-impl<Boot: 'static + Send + FnMut(&mut Activation) -> ActorResult> Supervisor<Boot> {
-    pub fn start(
+impl Supervisor {
+    pub fn start<C: 'static + Send + FnMut(&mut Activation, State) -> ActorResult,
+                 B: 'static + Send + FnMut(&mut Activation) -> ActorResult>(
         t: &mut Activation,
         name: tracing::Span,
         config: SupervisorConfiguration,
-        boot_fn: Boot,
-    ) {
+        mut state_cb: C,
+        boot_fn: B,
+    ) -> ActorResult {
         let _entry = name.enter();
         tracing::trace!(?config);
         let self_ref = t.create_inert();
+        let state_field = t.field(State::Started);
         let mut supervisor = Supervisor {
             self_ref: Arc::clone(&self_ref),
             name: name.clone(),
             config,
-            boot_fn: Some(boot_fn),
+            boot_fn: Some(Box::new(boot_fn)),
             restarts: VecDeque::new(),
-            supervisee: Supervisee::NotRunning,
+            state: Arc::clone(&state_field),
             ac_ref: None,
         };
-        supervisor.ensure_started(t).unwrap();
+        supervisor.ensure_started(t)?;
+        t.dataflow(enclose!((name) move |t| {
+            let state = t.get(&state_field).clone();
+            {
+                let _entry = name.enter();
+                tracing::debug!(?state);
+            }
+            state_cb(t, state)
+        }))?;
         self_ref.become_entity(supervisor);
         t.on_stop_notify(&self_ref);
-    }
-
-    fn enter_state(&mut self, supervisee: Supervisee) {
-        let _entry = self.name.enter();
-        tracing::info!("{:?} --> {:?}", self.supervisee, supervisee);
-        self.supervisee = supervisee;
+        Ok(())
     }
 
     fn ensure_started(&mut self, t: &mut Activation) -> ActorResult {
         match self.boot_fn.take() {
             None => {
                 let _entry = self.name.enter();
+                t.set(&self.state, State::Failed);
                 tracing::error!("Cannot restart supervisee, because it panicked at startup")
             }
             Some(mut boot_fn) => {

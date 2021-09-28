@@ -600,14 +600,14 @@ async fn input_loop(
     facet: FacetRef,
     i: Input,
     relay: TunnelRelayRef,
-) -> ActorResult {
+) -> Result<LinkedTaskTermination, Error> {
     let account = Account::new(crate::name!("input-loop"));
     match i {
         Input::Packets(mut src) => {
             loop {
                 account.ensure_clear_funds().await;
                 match src.next().await {
-                    None => return facet.activate(Arc::clone(&account), |t| Ok(t.state.shutdown())),
+                    None => return Ok(LinkedTaskTermination::Normal),
                     Some(bs) => facet.activate(Arc::clone(&account), |t| {
                         let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
@@ -626,13 +626,13 @@ async fn input_loop(
                     Ok(n) => n,
                     Err(e) =>
                         if e.kind() == io::ErrorKind::ConnectionReset {
-                            return facet.activate(Arc::clone(&account), |t| Ok(t.state.shutdown()));
+                            return Ok(LinkedTaskTermination::Normal);
                         } else {
                             return Err(e)?;
                         },
                 };
                 match n {
-                    0 => return facet.activate(Arc::clone(&account), |t| Ok(t.state.shutdown())),
+                    0 => return Ok(LinkedTaskTermination::Normal),
                     _ => facet.activate(Arc::clone(&account), |t| {
                         let mut g = relay.lock().expect("unpoisoned");
                         let tr = g.as_mut().expect("initialized");
@@ -647,11 +647,11 @@ async fn input_loop(
 async fn output_loop(
     mut o: Output,
     mut output_rx: UnboundedReceiver<LoanedItem<Vec<u8>>>,
-) -> ActorResult {
+) -> Result<LinkedTaskTermination, Error> {
     loop {
         match output_rx.recv().await {
             None =>
-                return Ok(()),
+                return Ok(LinkedTaskTermination::KeepFacet),
             Some(mut loaned_item) => {
                 match &mut o {
                     Output::Packets(sink) => sink.send(std::mem::take(&mut loaned_item.item)).await?,

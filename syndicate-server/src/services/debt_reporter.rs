@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
-use syndicate::preserves_schema::Codec;
 
 use crate::language::language;
+use crate::lifecycle;
 use crate::schemas::internal_services::DebtReporter;
 
 use syndicate_macros::during;
@@ -19,8 +19,8 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {
-    let spec = language().unparse(&DebtReporter);
-    ds.assert(t, &(), &syndicate_macros::template!("<service-running =spec>"));
+    ds.assert(t, language(), &lifecycle::started(&DebtReporter));
+    ds.assert(t, language(), &lifecycle::ready(&DebtReporter));
     t.linked_task(syndicate::name!("tick"), async {
         let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
         loop {
