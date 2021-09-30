@@ -25,7 +25,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {
         let mut timer = tokio::time::interval(core::time::Duration::from_secs(1));
         loop {
             timer.tick().await;
-            for (id, (name, debt)) in syndicate::actor::ACCOUNTS.read().unwrap().iter() {
+            for (id, (name, debt)) in syndicate::actor::ACCOUNTS.read().iter() {
                 let _enter = name.enter();
                 tracing::info!(id, debt = ?debt.load(std::sync::atomic::Ordering::Relaxed));
             }

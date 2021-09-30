@@ -13,6 +13,9 @@ use super::rewrite::CaveatError;
 use super::rewrite::CheckedCaveat;
 use super::schemas::sturdy;
 
+use parking_lot::Mutex;
+use parking_lot::RwLock;
+
 use preserves::value::ArcValue;
 use preserves::value::Domain;
 use preserves::value::IOValue;
@@ -31,8 +34,6 @@ use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time;
@@ -576,49 +577,47 @@ impl FacetRef {
     ) -> ActorResult where
         F: FnOnce(&mut Activation) -> RunDisposition,
     {
-        match self.actor.state.lock() {
-            Err(_) => panicked_err(),
-            Ok(mut g) => match &mut *g {
-                ActorState::Terminated { exit_status } =>
-                    Err(error("Could not activate terminated actor",
-                              encode_error((**exit_status).clone()))),
-                ActorState::Running(state) => {
-                    tracing::trace!(actor_id=?self.actor.actor_id, "activate");
-                    let mut activation = Activation::make(self, account, state);
-                    let f_result = f(&mut activation);
-                    let result = match activation.restore_invariants(f_result) {
-                        RunDisposition::Continue => Ok(()),
-                        RunDisposition::Terminate(exit_status) => {
-                            if exit_status.is_err() {
-                                activation.clear();
-                            }
-                            drop(activation);
-                            let exit_status = Arc::new(exit_status);
-                            let mut t = Activation::make(&self.actor.facet_ref(state.root),
-                                                         Account::new(crate::name!("shutdown")),
-                                                         state);
-                            if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok()) {
-                                // This can only occur as the result of an internal error in this file's code.
-                                tracing::error!(?err, "unexpected error from terminate_facet");
-                                panic!("Unexpected error result from terminate_facet");
-                            }
-                            // TODO: The linked_tasks are being cancelled above ^ when their Facets drop.
-                            // TODO: We don't want that: we want (? do we?) exit hooks to run before linked_tasks are cancelled.
-                            // TODO: Example: send an error message in an exit_hook that is processed and delivered by a linked_task.
-                            for action in std::mem::take(&mut t.state.exit_hooks) {
-                                if let Err(err) = action(&mut t, &exit_status) {
-                                    tracing::error!(?err, "error in exit hook");
-                                }
-                            }
-                            *g = ActorState::Terminated {
-                                exit_status: Arc::clone(&exit_status),
-                            };
-                            (*exit_status).clone()
+        let mut g = self.actor.state.lock();
+        match &mut *g {
+            ActorState::Terminated { exit_status } =>
+                Err(error("Could not activate terminated actor",
+                          encode_error((**exit_status).clone()))),
+            ActorState::Running(state) => {
+                tracing::trace!(actor_id=?self.actor.actor_id, "activate");
+                let mut activation = Activation::make(self, account, state);
+                let f_result = f(&mut activation);
+                let result = match activation.restore_invariants(f_result) {
+                    RunDisposition::Continue => Ok(()),
+                    RunDisposition::Terminate(exit_status) => {
+                        if exit_status.is_err() {
+                            activation.clear();
                         }
-                    };
-                    tracing::trace!(actor_id=?self.actor.actor_id, "deactivate");
-                    result
-                }
+                        drop(activation);
+                        let exit_status = Arc::new(exit_status);
+                        let mut t = Activation::make(&self.actor.facet_ref(state.root),
+                                                     Account::new(crate::name!("shutdown")),
+                                                     state);
+                        if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok()) {
+                            // This can only occur as the result of an internal error in this file's code.
+                            tracing::error!(?err, "unexpected error from terminate_facet");
+                            panic!("Unexpected error result from terminate_facet");
+                        }
+                        // TODO: The linked_tasks are being cancelled above ^ when their Facets drop.
+                        // TODO: We don't want that: we want (? do we?) exit hooks to run before linked_tasks are cancelled.
+                        // TODO: Example: send an error message in an exit_hook that is processed and delivered by a linked_task.
+                        for action in std::mem::take(&mut t.state.exit_hooks) {
+                            if let Err(err) = action(&mut t, &exit_status) {
+                                tracing::error!(?err, "error in exit hook");
+                            }
+                        }
+                        *g = ActorState::Terminated {
+                            exit_status: Arc::clone(&exit_status),
+                        };
+                        (*exit_status).clone()
+                    }
+                };
+                tracing::trace!(actor_id=?self.actor.actor_id, "deactivate");
+                result
             }
         }
     }
@@ -1345,7 +1344,7 @@ impl Account {
     pub fn new(name: tracing::Span) -> Arc<Self> {
         let id = NEXT_ACCOUNT_ID.fetch_add(1, Ordering::Relaxed);
         let debt = Arc::new(AtomicI64::new(0));
-        ACCOUNTS.write().unwrap().insert(id, (name, Arc::clone(&debt)));
+        ACCOUNTS.write().insert(id, (name, Arc::clone(&debt)));
         Arc::new(Account {
             id,
             debt,
@@ -1388,7 +1387,7 @@ impl Account {
 
 impl Drop for Account {
     fn drop(&mut self) {
-        ACCOUNTS.write().unwrap().remove(&self.id);
+        ACCOUNTS.write().remove(&self.id);
     }
 }
 
@@ -1552,7 +1551,7 @@ impl Actor {
                     SystemMessage::ReleaseField(field_id) => {
                         tracing::trace!(actor_id = ?self.ac_ref.actor_id,
                                         "SystemMessage::ReleaseField({})", field_id);
-                        self.ac_ref.access(|s| if let ActorState::Running(ra) = s.unwrap() {
+                        self.ac_ref.access(|s| if let ActorState::Running(ra) = s {
                             ra.fields.remove(&field_id);
                         })
                     }
@@ -1611,19 +1610,12 @@ impl Facet {
     }
 }
 
-fn panicked_err() -> ActorResult {
-    Err(error("Actor panicked", AnyValue::new(false)))
-}
-
 impl ActorRef {
     /// Uses an internal mutex to access the internal state: takes the
     /// lock, calls `f` with the internal state, releases the lock,
     /// and returns the result of `f`.
-    pub fn access<R, F: FnOnce(Option<&mut ActorState>) -> R>(&self, f: F) -> R {
-        match self.state.lock() {
-            Err(_) => f(None),
-            Ok(mut g) => f(Some(&mut *g)),
-        }
+    pub fn access<R, F: FnOnce(&mut ActorState) -> R>(&self, f: F) -> R {
+        f(&mut *self.state.lock())
     }
 
     /// Retrieves the exit status of the denoted actor. If it is still
@@ -1631,12 +1623,10 @@ impl ActorRef {
     /// exited normally, or `Some(Err(_))` if it terminated
     /// abnormally.
     pub fn exit_status(&self) -> Option<ActorResult> {
-        self.access(|s| s.map_or_else(
-            || Some(panicked_err()),
-            |state| match state {
-                ActorState::Running(_) => None,
-                ActorState::Terminated { exit_status } => Some((**exit_status).clone()),
-            }))
+        self.access(|state| match state {
+            ActorState::Running(_) => None,
+            ActorState::Terminated { exit_status } => Some((**exit_status).clone()),
+        })
     }
 
     fn facet_ref(&self, facet_id: FacetId) -> FacetRef {
@@ -1647,7 +1637,7 @@ impl ActorRef {
     }
 
     fn root_facet_id(&self) -> FacetId {
-        self.access(|s| match s.expect("Actor missing its state") {
+        self.access(|s| match s {
             ActorState::Terminated { .. } => panic!("Actor unexpectedly in terminated state"),
             ActorState::Running(ra) => ra.root, // what a lot of work to get this one number
         })
@@ -1796,7 +1786,7 @@ impl<M> Ref<M> {
     ///
     /// Panics if this `Ref` has already been given a behaviour.
     pub fn become_entity<E: 'static + Entity<M>>(&self, e: E) {
-        let mut g = self.target.lock().expect("unpoisoned");
+        let mut g = self.target.lock();
         if g.is_some() {
             panic!("Double initialization of Ref");
         }
@@ -1804,7 +1794,7 @@ impl<M> Ref<M> {
     }
 
     fn internal_with_entity<R, F: FnOnce(&mut dyn Entity<M>) -> R>(&self, f: F) -> R {
-        let mut g = self.target.lock().expect("unpoisoned");
+        let mut g = self.target.lock();
         f(g.as_mut().expect("initialized").as_mut())
     }
 }

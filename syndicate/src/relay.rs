@@ -15,6 +15,8 @@ use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
 
+use parking_lot::Mutex;
+
 use preserves::error::Error as PreservesError;
 use preserves::error::is_eof_io_error;
 use preserves::value::BinarySource;
@@ -37,7 +39,6 @@ use preserves_schema::ParseError;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
@@ -244,7 +245,7 @@ impl TunnelRelay {
         let result = initial_oid.map(
             |io| Arc::clone(&tr.membranes.import_oid(t, &tr_ref, io).inc_ref().obj));
         dump_membranes!(tr.membranes);
-        *tr_ref.lock().unwrap() = Some(tr);
+        *tr_ref.lock() = Some(tr);
         t.linked_task(crate::name!("writer"), output_loop(o, output_rx));
         t.linked_task(crate::name!("reader"), input_loop(t.facet.clone(), i, tr_ref));
         t.state.add_exit_hook(&self_entity);
@@ -373,7 +374,7 @@ impl TunnelRelay {
                             impl Entity<Synced> for SyncPeer {
                                 fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
                                     self.peer.message(t, &(), &AnyValue::new(true));
-                                    let mut g = self.relay_ref.lock().expect("unpoisoned");
+                                    let mut g = self.relay_ref.lock();
                                     let tr = g.as_mut().expect("initialized");
                                     tr.membranes.release(std::mem::take(&mut self.pins));
                                     dump_membranes!(tr.membranes);
@@ -609,7 +610,7 @@ async fn input_loop(
                 match src.next().await {
                     None => return Ok(LinkedTaskTermination::Normal),
                     Some(bs) => facet.activate(Arc::clone(&account), |t| {
-                        let mut g = relay.lock().expect("unpoisoned");
+                        let mut g = relay.lock();
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_datagram(t, &bs?)
                     })?,
@@ -634,7 +635,7 @@ async fn input_loop(
                 match n {
                     0 => return Ok(LinkedTaskTermination::Normal),
                     _ => facet.activate(Arc::clone(&account), |t| {
-                        let mut g = relay.lock().expect("unpoisoned");
+                        let mut g = relay.lock();
                         let tr = g.as_mut().expect("initialized");
                         tr.handle_inbound_stream(t, &mut buf)
                     })?,
@@ -667,7 +668,7 @@ async fn output_loop(
 
 impl Entity<()> for TunnelRefEntity {
     fn message(&mut self, t: &mut Activation, _m: ()) -> ActorResult {
-        let mut g = self.relay_ref.lock().expect("unpoisoned");
+        let mut g = self.relay_ref.lock();
         let tr = g.as_mut().expect("initialized");
         let events = std::mem::take(&mut tr.pending_outbound);
         tr.send_packet(&t.account(), events.len(), P::Packet::Turn(Box::new(P::Turn(events.clone()))))?;
@@ -680,7 +681,7 @@ impl Entity<()> for TunnelRefEntity {
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
         if let Err(e) = &**exit_status {
             let e = e.clone();
-            let mut g = self.relay_ref.lock().expect("unpoisoned");
+            let mut g = self.relay_ref.lock();
             let tr = g.as_mut().expect("initialized");
             tr.send_packet(&t.account(), 1, P::Packet::Error(Box::new(e)))?;
         }
@@ -690,32 +691,28 @@ impl Entity<()> for TunnelRefEntity {
 
 impl Entity<AnyValue> for RelayEntity {
     fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
-        let mut g = self.relay_ref.lock().expect("unpoisoned");
-        let tr = g.as_mut().expect("initialized");
-        tr.send_event(t, self.oid.clone(), P::Event::Assert(Box::new(P::Assert {
-            assertion: P::Assertion(a),
-            handle: P::Handle(h.into()),
-        })))
+        self.relay_ref.lock().as_mut().expect("initialized")
+            .send_event(t, self.oid.clone(), P::Event::Assert(Box::new(P::Assert {
+                assertion: P::Assertion(a),
+                handle: P::Handle(h.into()),
+            })))
     }
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
-        let mut g = self.relay_ref.lock().expect("unpoisoned");
-        let tr = g.as_mut().expect("initialized");
-        tr.send_event(t, self.oid.clone(), P::Event::Retract(Box::new(P::Retract {
-            handle: P::Handle(h.into()),
-        })))
+        self.relay_ref.lock().as_mut().expect("initialized")
+            .send_event(t, self.oid.clone(), P::Event::Retract(Box::new(P::Retract {
+                handle: P::Handle(h.into()),
+            })))
     }
     fn message(&mut self, t: &mut Activation, m: AnyValue) -> ActorResult {
-        let mut g = self.relay_ref.lock().expect("unpoisoned");
-        let tr = g.as_mut().expect("initialized");
-        tr.send_event(t, self.oid.clone(), P::Event::Message(Box::new(P::Message {
-            body: P::Assertion(m)
-        })))
+        self.relay_ref.lock().as_mut().expect("initialized")
+            .send_event(t, self.oid.clone(), P::Event::Message(Box::new(P::Message {
+                body: P::Assertion(m)
+            })))
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
-        let mut g = self.relay_ref.lock().expect("unpoisoned");
-        let tr = g.as_mut().expect("initialized");
-        tr.send_event(t, self.oid.clone(), P::Event::Sync(Box::new(P::Sync {
-            peer: Cap::guard(Arc::new(()), peer)
-        })))
+        self.relay_ref.lock().as_mut().expect("initialized")
+            .send_event(t, self.oid.clone(), P::Event::Sync(Box::new(P::Sync {
+                peer: Cap::guard(Arc::new(()), peer)
+            })))
     }
 }
