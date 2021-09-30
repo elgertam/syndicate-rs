@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
-use syndicate::error::Error;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 
 use tokio::process;
@@ -30,10 +29,6 @@ pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
     });
 }
 
-fn cannot_start<R>() -> Result<R, Error> {
-    Err("Cannot start daemon process")?
-}
-
 impl Process {
     fn elaborate(self) -> FullProcess {
         match self {
@@ -42,10 +37,83 @@ impl Process {
                 env: ProcessEnv::Absent,
                 dir: ProcessDir::Absent,
                 clear_env: ClearEnv::Absent,
+            },
+            Process::Full(spec) => *spec,
+        }
+    }
+}
+
+impl FullProcess {
+    fn build_command(&self) -> Option<process::Command> {
+        let argv = self.argv.clone().elaborate();
+        let mut cmd = process::Command::new(argv.program);
+        cmd.args(argv.args);
+        match &self.dir {
+            ProcessDir::Present { dir } => { cmd.current_dir(dir); () },
+            ProcessDir::Absent => (),
+            ProcessDir::Invalid { dir } => {
+                tracing::error!(?dir, "Invalid working directory");
+                return None;
+            }
+        }
+        match &self.clear_env {
+            ClearEnv::Present { clear_env: true } => { cmd.env_clear(); () },
+            ClearEnv::Present { clear_env: false } => (),
+            ClearEnv::Absent => (),
+            ClearEnv::Invalid { clear_env } => {
+                tracing::error!(?clear_env, "Invalid clearEnv setting");
+                return None;
+            }
+        }
+        match &self.env {
+            ProcessEnv::Present { env } => {
+                for (k, v) in env {
+                    if let Some(env_variable) = match k {
+                        EnvVariable::String(k) => Some(k),
+                        EnvVariable::Symbol(k) => Some(k),
+                        EnvVariable::Invalid(env_variable) => {
+                            tracing::error!(?env_variable,
+                                            "Invalid environment variable name");
+                            return None;
+                        }
+                    } {
+                        match v {
+                            EnvValue::Set(value) => { cmd.env(env_variable, value); () }
+                            EnvValue::Remove => { cmd.env_remove(env_variable); () }
+                            EnvValue::Invalid(value) => {
+                                tracing::error!(?env_variable, ?value,
+                                                "Invalid environment variable value");
+                                return None;
+                            }
+                        }
+                    }
+                }
+            }
+            ProcessEnv::Absent => (),
+            ProcessEnv::Invalid { env } => {
+                tracing::error!(?env, "Invalid daemon environment");
+                return None;
+            }
+        }
+
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::inherit());
+        cmd.stderr(std::process::Stdio::inherit());
+        cmd.kill_on_drop(true);
+
+        Some(cmd)
+    }
+}
+
+impl DaemonProcessSpec {
+    fn elaborate(self) -> FullDaemonProcess {
+        match self {
+            DaemonProcessSpec::Simple(command_line) => FullDaemonProcess {
+                process: Process::Simple(command_line).elaborate(),
                 ready_on_start: ReadyOnStart::Absent,
                 restart: RestartField::Absent,
             },
-            Process::Full(spec) => *spec,
+            DaemonProcessSpec::Full(spec) => *spec,
         }
     }
 }
@@ -62,7 +130,7 @@ impl CommandLine {
     }
 }
 
-struct ProcessInstance {
+struct DaemonInstance {
     name: tracing::Span,
     cmd: process::Command,
     announce_presumed_readiness: bool,
@@ -71,7 +139,7 @@ struct ProcessInstance {
     restart_policy: RestartPolicy,
 }
 
-impl ProcessInstance {
+impl DaemonInstance {
     fn handle_exit(self, t: &mut Activation, error_message: Option<String>) -> ActorResult {
         let delay =
             std::time::Duration::from_millis(if let None = error_message { 200 } else { 1000 });
@@ -184,68 +252,20 @@ fn run(
             counter::adjust(t, &unready_configs, 1);
             counter::adjust(t, &total_configs, 1);
 
-            match language().parse::<Process>(&config) {
+            match language().parse::<DaemonProcessSpec>(&config) {
                 Ok(config) => {
                     tracing::info!(?config);
                     let config = config.elaborate();
                     let facet = t.facet.clone();
                     t.linked_task(syndicate::name!("subprocess"), async move {
-                        let argv = config.argv.elaborate();
-                        let mut cmd = process::Command::new(argv.program);
-                        cmd.args(argv.args);
-                        match config.dir {
-                            ProcessDir::Present { dir } => { cmd.current_dir(dir); () },
-                            ProcessDir::Absent => (),
-                            ProcessDir::Invalid { dir } => {
-                                tracing::error!(?dir, "Invalid working directory");
-                                return cannot_start();
-                            }
-                        }
-                        match config.clear_env {
-                            ClearEnv::Present { clear_env: true } => { cmd.env_clear(); () },
-                            ClearEnv::Present { clear_env: false } => (),
-                            ClearEnv::Absent => (),
-                            ClearEnv::Invalid { clear_env } => {
-                                tracing::error!(?clear_env, "Invalid clearEnv setting");
-                                return cannot_start();
-                            }
-                        }
-                        match config.env {
-                            ProcessEnv::Present { env } => {
-                                for (k, v) in env {
-                                    if let Some(env_variable) = match k {
-                                        EnvVariable::String(k) => Some(k),
-                                        EnvVariable::Symbol(k) => Some(k),
-                                        EnvVariable::Invalid(env_variable) => {
-                                            tracing::error!(?env_variable,
-                                                            "Invalid environment variable name");
-                                            return cannot_start();
-                                        }
-                                    } {
-                                        match v {
-                                            EnvValue::Set(value) => { cmd.env(env_variable, value); () }
-                                            EnvValue::Remove => { cmd.env_remove(env_variable); () }
-                                            EnvValue::Invalid(value) => {
-                                                tracing::error!(?env_variable, ?value,
-                                                                "Invalid environment variable value");
-                                                return cannot_start();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            ProcessEnv::Absent => (),
-                            ProcessEnv::Invalid { env } => {
-                                tracing::error!(?env, "Invalid daemon environment");
-                                return cannot_start();
-                            }
-                        }
+                        let cmd = config.process.build_command().ok_or("Cannot start daemon process")?;
+
                         let announce_presumed_readiness = match config.ready_on_start {
                             ReadyOnStart::Present { ready_on_start } => ready_on_start,
                             ReadyOnStart::Absent => true,
                             ReadyOnStart::Invalid { ready_on_start } => {
                                 tracing::error!(?ready_on_start, "Invalid readyOnStart value");
-                                return cannot_start();
+                                Err("Invalid readyOnStart value")?
                             }
                         };
                         let restart_policy = match config.restart {
@@ -253,16 +273,11 @@ fn run(
                             RestartField::Absent => RestartPolicy::All,
                             RestartField::Invalid { restart } => {
                                 tracing::error!(?restart, "Invalid restart value");
-                                return cannot_start();
+                                Err("Invalid restart value")?
                             }
                         };
 
-                        cmd.stdin(std::process::Stdio::null());
-                        cmd.stdout(std::process::Stdio::inherit());
-                        cmd.stderr(std::process::Stdio::inherit());
-                        cmd.kill_on_drop(true);
-
-                        let process_instance = ProcessInstance {
+                        let daemon_instance = DaemonInstance {
                             name: tracing::Span::current(),
                             cmd,
                             announce_presumed_readiness,
@@ -272,7 +287,7 @@ fn run(
                         };
 
                         facet.activate(Account::new(syndicate::name!("instance-startup")), |t| {
-                            process_instance.start(t)
+                            daemon_instance.start(t)
                         })?;
                         Ok(LinkedTaskTermination::KeepFacet)
                     });

@@ -4,7 +4,12 @@ embeddedType EntityRef.Cap .
 Service = DaemonService .
 
 DaemonService = <daemon @id any> .
-DaemonProcess = <daemon @id any @config Process>.
+DaemonProcess = <daemon @id any @config DaemonProcessSpec>.
+
+DaemonProcessSpec = @simple CommandLine / @full FullDaemonProcess .
+FullDaemonProcess = @process FullProcess & @readyOnStart ReadyOnStart & @restart RestartField .
+ReadyOnStart = @present { readyOnStart: bool } / @invalid { readyOnStart: any } / @absent {} .
+RestartField = @present { restart: RestartPolicy } / @invalid { restart: any } / @absent {} .
 
 Process = @simple CommandLine / @full FullProcess .
 FullProcess =
@@ -12,14 +17,10 @@ FullProcess =
   & @env ProcessEnv
   & @dir ProcessDir
   & @clearEnv ClearEnv
-  & @readyOnStart ReadyOnStart
-  & @restart RestartField
 .
 ProcessEnv = @present { env: { EnvVariable: EnvValue ...:... } } / @invalid { env: any } / @absent {} .
 ProcessDir = @present { dir: string } / @invalid { dir: any } / @absent {} .
 ClearEnv = @present { clearEnv: bool } / @invalid { clearEnv: any } / @absent {} .
-ReadyOnStart = @present { readyOnStart: bool } / @invalid { readyOnStart: any } / @absent {} .
-RestartField = @present { restart: RestartPolicy } / @invalid { restart: any } / @absent {} .
 
 CommandLine = @shell string / @full FullCommandLine .
 FullCommandLine = [@program string, @args string ...] .
