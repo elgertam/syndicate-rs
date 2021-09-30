@@ -1053,9 +1053,9 @@ checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 
 [[package]]
 name = "preserves"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb9b4e6da51a363e60d03c2e5a2c6fd2cc501f52415c72779fd2238f28c95fc1"
+checksum = "7a0086a724d53b7e1e0f2859296a571b508190c6bbcfe18a29f6e9222ee0db53"
 dependencies = [
  "base64",
  "dtoa",
@@ -1067,9 +1067,9 @@ dependencies = [
 
 [[package]]
 name = "preserves-schema"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7fa4b81122d3bf688629f1b9c97af5061b6a1410eb805f69a836bdd1095b8ed"
+checksum = "75771c28e2614f6456123b18ee55afb61e0b1b5b12fbe088fd6384cc9623a72c"
 dependencies = [
  "convert_case",
  "glob",
