@@ -34,18 +34,18 @@ fn cannot_start<R>() -> Result<R, Error> {
     Err("Cannot start daemon process")?
 }
 
-impl DaemonSpec {
-    fn elaborate(self) -> FullDaemonSpec {
+impl Process {
+    fn elaborate(self) -> FullProcess {
         match self {
-            DaemonSpec::Simple(command_line) => FullDaemonSpec {
+            Process::Simple(command_line) => FullProcess {
                 argv: *command_line,
-                env: DaemonEnv::Absent,
-                dir: DaemonDir::Absent,
+                env: ProcessEnv::Absent,
+                dir: ProcessDir::Absent,
                 clear_env: ClearEnv::Absent,
                 ready_on_start: ReadyOnStart::Absent,
                 restart: RestartField::Absent,
             },
-            DaemonSpec::Full(spec) => *spec,
+            Process::Full(spec) => *spec,
         }
     }
 }
@@ -62,7 +62,7 @@ impl CommandLine {
     }
 }
 
-struct DaemonProcessInstance {
+struct ProcessInstance {
     name: tracing::Span,
     cmd: process::Command,
     announce_presumed_readiness: bool,
@@ -71,7 +71,7 @@ struct DaemonProcessInstance {
     restart_policy: RestartPolicy,
 }
 
-impl DaemonProcessInstance {
+impl ProcessInstance {
     fn handle_exit(self, t: &mut Activation, error_message: Option<String>) -> ActorResult {
         let delay =
             std::time::Duration::from_millis(if let None = error_message { 200 } else { 1000 });
@@ -178,13 +178,13 @@ fn run(
         Ok(())
     }))?;
 
-    enclose!((unready_configs, completed_processes) during!(t, config_ds, language(), <daemon #(service.id.0) $config>, {
+    enclose!((unready_configs, completed_processes) during!(t, config_ds, language(), <daemon #(service.id) $config>, {
         enclose!((unready_configs, completed_processes) |t: &mut Activation| {
             tracing::debug!(?config, "new config");
             counter::adjust(t, &unready_configs, 1);
             counter::adjust(t, &total_configs, 1);
 
-            match language().parse::<DaemonSpec>(&config) {
+            match language().parse::<Process>(&config) {
                 Ok(config) => {
                     tracing::info!(?config);
                     let config = config.elaborate();
@@ -194,9 +194,9 @@ fn run(
                         let mut cmd = process::Command::new(argv.program);
                         cmd.args(argv.args);
                         match config.dir {
-                            DaemonDir::Present { dir } => { cmd.current_dir(dir); () },
-                            DaemonDir::Absent => (),
-                            DaemonDir::Invalid { dir } => {
+                            ProcessDir::Present { dir } => { cmd.current_dir(dir); () },
+                            ProcessDir::Absent => (),
+                            ProcessDir::Invalid { dir } => {
                                 tracing::error!(?dir, "Invalid working directory");
                                 return cannot_start();
                             }
@@ -211,7 +211,7 @@ fn run(
                             }
                         }
                         match config.env {
-                            DaemonEnv::Present { env } => {
+                            ProcessEnv::Present { env } => {
                                 for (k, v) in env {
                                     if let Some(env_variable) = match k {
                                         EnvVariable::String(k) => Some(k),
@@ -234,8 +234,8 @@ fn run(
                                     }
                                 }
                             }
-                            DaemonEnv::Absent => (),
-                            DaemonEnv::Invalid { env } => {
+                            ProcessEnv::Absent => (),
+                            ProcessEnv::Invalid { env } => {
                                 tracing::error!(?env, "Invalid daemon environment");
                                 return cannot_start();
                             }
@@ -262,7 +262,7 @@ fn run(
                         cmd.stderr(std::process::Stdio::inherit());
                         cmd.kill_on_drop(true);
 
-                        let process_instance = DaemonProcessInstance {
+                        let process_instance = ProcessInstance {
                             name: tracing::Span::current(),
                             cmd,
                             announce_presumed_readiness,
@@ -279,7 +279,7 @@ fn run(
                     Ok(())
                 }
                 Err(_) => {
-                    tracing::error!(?config, "Invalid DaemonSpec");
+                    tracing::error!(?config, "Invalid Process specification");
                     return Ok(());
                 }
             }

@@ -3,21 +3,20 @@ embeddedType EntityRef.Cap .
 
 Service = DaemonService .
 
-DaemonService = <daemon @id DaemonId> .
+DaemonService = <daemon @id any> .
+DaemonProcess = <daemon @id any @config Process>.
 
-DaemonProcess = <daemon @id DaemonId @config DaemonSpec>.
-DaemonId = any .
-DaemonSpec = @simple CommandLine / @full FullDaemonSpec .
-FullDaemonSpec =
+Process = @simple CommandLine / @full FullProcess .
+FullProcess =
   & { argv: CommandLine }
-  & @env DaemonEnv
-  & @dir DaemonDir
+  & @env ProcessEnv
+  & @dir ProcessDir
   & @clearEnv ClearEnv
   & @readyOnStart ReadyOnStart
   & @restart RestartField
 .
-DaemonEnv = @present { env: { EnvVariable: EnvValue ...:... } } / @invalid { env: any } / @absent {} .
-DaemonDir = @present { dir: string } / @invalid { dir: any } / @absent {} .
+ProcessEnv = @present { env: { EnvVariable: EnvValue ...:... } } / @invalid { env: any } / @absent {} .
+ProcessDir = @present { dir: string } / @invalid { dir: any } / @absent {} .
 ClearEnv = @present { clearEnv: bool } / @invalid { clearEnv: any } / @absent {} .
 ReadyOnStart = @present { readyOnStart: bool } / @invalid { readyOnStart: any } / @absent {} .
 RestartField = @present { restart: RestartPolicy } / @invalid { restart: any } / @absent {} .
