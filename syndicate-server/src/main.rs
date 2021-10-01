@@ -143,6 +143,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
+        t.spawn(tracing::Span::current(), enclose!((root_ds) move |t| {
+            let n_unknown: AnyValue = AnyValue::symbol("-");
+            let n_pid: AnyValue = AnyValue::symbol("pid");
+            let n_line: AnyValue = AnyValue::symbol("line");
+            let n_service: AnyValue = AnyValue::symbol("service");
+            let n_stream: AnyValue = AnyValue::symbol("stream");
+            let e = syndicate::during::entity(())
+                .on_message(move |(), _t, captures: AnyValue| {
+                    if let Some(mut d) = captures.value_owned().into_sequence().and_then(
+                        |s| s.into_iter().next().and_then(|d| d.value_owned().into_dictionary()))
+                    {
+                        let pid = d.remove(&n_pid).unwrap_or_else(|| n_unknown.clone());
+                        let line = d.remove(&n_line).unwrap_or_else(|| n_unknown.clone());
+                        let service = d.remove(&n_service).unwrap_or_else(|| n_unknown.clone());
+                        let stream = d.remove(&n_stream).unwrap_or_else(|| n_unknown.clone());
+                        if d.is_empty() {
+                            tracing::info!(?stream, ?service, ?pid, message = ?line);
+                        } else {
+                            tracing::info!(?stream, ?service, ?pid, data = ?d, message = ?line);
+                        }
+                    }
+                    Ok(())
+                })
+                .create_cap(t);
+            root_ds.assert(t, language(), &syndicate::schemas::dataspace::Observe {
+                pattern: syndicate_macros::pattern!(<log $>),
+                observer: e,
+            });
+            Ok(())
+        }));
+
         Ok(())
     }).await??;
 
