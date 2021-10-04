@@ -133,6 +133,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
+ "time",
  "winapi 0.3.9",
 ]
 
@@ -1096,9 +1097,9 @@ checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
 
 [[package]]
 name = "preserves"
-version = "2.1.1"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b43cf73db6e750654d441b642f2b638ed1ac43a3068d401dae04cd4da7b319f"
+checksum = "c604be1e4ddac999d7c3d81ca9f7912a33a1234f5394fb902315f8cee25645cd"
 dependencies = [
  "base64",
  "dtoa",
@@ -1110,9 +1111,9 @@ dependencies = [
 
 [[package]]
 name = "preserves-schema"
-version = "2.1.1"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b88b030244936c9b68b802a7969700604dba0defe1e6e28c6056ccd84ead948"
+checksum = "e1e7d339a003cb3e6852e6793b34d34c811f134d0b54b839d6b360f7c692b924"
 dependencies = [
  "convert_case",
  "glob",
@@ -1546,6 +1547,7 @@ dependencies = [
 name = "syndicate-server"
 version = "0.12.0"
 dependencies = [
+ "chrono",
  "futures",
  "lazy_static",
  "notify",
@@ -1612,6 +1614,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8018d24e04c95ac8790716a5987d0fec4f8b27249ffa0f7d33f1369bdfb88cbd"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "time"
+version = "0.1.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca8a50ef2360fbd1eeb0ecd46795a87a19024eb4b53c5dc916ca1fd95fe62438"
+dependencies = [
+ "libc",
+ "winapi 0.3.9",
 ]
 
 [[package]]

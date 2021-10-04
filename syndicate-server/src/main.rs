@@ -151,24 +151,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let n_stream: AnyValue = AnyValue::symbol("stream");
             let e = syndicate::during::entity(())
                 .on_message(move |(), _t, captures: AnyValue| {
-                    if let Some(mut d) = captures.value_owned().into_sequence().and_then(
-                        |s| s.into_iter().next().and_then(|d| d.value_owned().into_dictionary()))
-                    {
-                        let pid = d.remove(&n_pid).unwrap_or_else(|| n_unknown.clone());
-                        let line = d.remove(&n_line).unwrap_or_else(|| n_unknown.clone());
-                        let service = d.remove(&n_service).unwrap_or_else(|| n_unknown.clone());
-                        let stream = d.remove(&n_stream).unwrap_or_else(|| n_unknown.clone());
-                        if d.is_empty() {
-                            tracing::info!(?stream, ?service, ?pid, message = ?line);
-                        } else {
-                            tracing::info!(?stream, ?service, ?pid, data = ?d, message = ?line);
+                    if let Some(captures) = captures.value_owned().into_sequence() {
+                        let mut captures = captures.into_iter();
+                        let timestamp = captures.next()
+                            .and_then(|t| t.value_owned().into_string())
+                            .unwrap_or_else(|| "-".to_owned());
+                        if let Some(mut d) = captures.next()
+                            .and_then(|d| d.value_owned().into_dictionary())
+                        {
+                            let pid = d.remove(&n_pid).unwrap_or_else(|| n_unknown.clone());
+                            let service = d.remove(&n_service).unwrap_or_else(|| n_unknown.clone());
+                            let line = d.remove(&n_line).unwrap_or_else(|| n_unknown.clone());
+                            let stream = d.remove(&n_stream).unwrap_or_else(|| n_unknown.clone());
+                            let message = format!("{} {:?}[{:?}] {:?}: {:?}",
+                                                  timestamp,
+                                                  service,
+                                                  pid,
+                                                  stream,
+                                                  line);
+                            if d.is_empty() {
+                                tracing::info!(target: "", message = %message);
+                            } else {
+                                tracing::info!(target: "", data = ?d, message = %message);
+                            }
                         }
                     }
                     Ok(())
                 })
                 .create_cap(t);
             root_ds.assert(t, language(), &syndicate::schemas::dataspace::Observe {
-                pattern: syndicate_macros::pattern!(<log $>),
+                pattern: syndicate_macros::pattern!(<log $ $>),
                 observer: e,
             });
             Ok(())

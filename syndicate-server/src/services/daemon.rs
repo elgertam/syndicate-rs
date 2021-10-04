@@ -150,6 +150,7 @@ impl DaemonInstance {
         let delay =
             std::time::Duration::from_millis(if let None = error_message { 200 } else { 1000 });
         t.stop_facet_and_continue(t.facet.facet_id, Some(move |t: &mut Activation| {
+            #[derive(Debug)]
             enum NextStep {
                 SleepAndRestart,
                 SignalSuccessfulCompletion,
@@ -159,16 +160,24 @@ impl DaemonInstance {
             let next_step = match self.restart_policy {
                 RestartPolicy::Always => SleepAndRestart,
                 RestartPolicy::OnError =>
-                    match error_message {
+                    match &error_message {
                         None => SignalSuccessfulCompletion,
                         Some(_) => SleepAndRestart,
                     },
                 RestartPolicy::All =>
-                    match error_message {
+                    match &error_message {
                         None => SignalSuccessfulCompletion,
-                        Some(s) => Err(s.as_str())?,
+                        Some(s) => {
+                            tracing::error!(cmd = ?self.cmd, next_step = %"RestartDaemon", message = %s);
+                            Err(s.as_str())?
+                        }
                     },
             };
+
+            match error_message {
+                Some(m) => tracing::error!(cmd = ?self.cmd, ?next_step, message = %m),
+                None => tracing::info!(cmd = ?self.cmd, ?next_step),
+            }
 
             match next_step {
                 SleepAndRestart => t.after(delay, |t| self.start(t)),
@@ -213,10 +222,11 @@ impl DaemonInstance {
                         Ok(s) => AnyValue::new(s),
                         Err(_) => AnyValue::bytestring(buf),
                     };
+                    let now = AnyValue::new(chrono::Utc::now().to_rfc3339());
                     facet.activate(Account::new(tracing::Span::current()),
                                    enclose!((pid, service, kind) |t| {
                                        log_ds.message(t, &(), &syndicate_macros::template!(
-                                           "<log {
+                                           "<log =now {
                                               pid: =pid,
                                               service: =service,
                                               stream: =kind,
@@ -236,12 +246,12 @@ impl DaemonInstance {
             let mut child = match self.cmd.spawn() {
                 Ok(child) => child,
                 Err(e) => {
-                    tracing::info!(spawn_err = ?e);
+                    tracing::debug!(spawn_err = ?e);
                     return self.handle_exit(t, Some(format!("{}", e)));
                 }
             };
             let pid = child.id();
-            tracing::info!(?pid, cmd = ?self.cmd, "started");
+            tracing::debug!(?pid, cmd = ?self.cmd, "started");
 
             let facet = t.facet.clone();
 
@@ -257,7 +267,7 @@ impl DaemonInstance {
                 enclose!((facet) async move {
                     tracing::trace!("waiting for process exit");
                     let status = child.wait().await?;
-                    tracing::info!(?status);
+                    tracing::debug!(?status);
                     facet.activate(Account::new(syndicate::name!("instance-terminated")), |t| {
                         let m = if status.success() { None } else { Some(format!("{}", status)) };
                         self.handle_exit(t, m)
