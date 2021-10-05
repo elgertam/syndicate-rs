@@ -257,27 +257,12 @@ impl DaemonInstance {
             }
 
             match self.protocol {
+                Protocol::TextSyndicate => relay_facet(t, &mut child, true)?,
+                Protocol::BinarySyndicate => relay_facet(t, &mut child, false)?,
                 Protocol::None => {
                     if let Some(r) = child.stdout.take() {
                         self.log(t, facet.clone(), pid, r, "stdout");
                     }
-                }
-                Protocol::Syndicate => {
-                    t.facet(|t| {
-                        use syndicate::relay;
-                        use syndicate::schemas::sturdy;
-
-                        let to_child = child.stdin.take().expect("pipe to child");
-                        let from_child = child.stdout.take().expect("pipe from child");
-                        let i = relay::Input::Bytes(Box::pin(from_child));
-                        let o = relay::Output::Bytes(Box::pin(to_child));
-
-                        let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())))
-                            .ok_or("initial capability reference unavailable")?;
-
-                        tracing::info!(?cap);
-                        Ok(())
-                    })?;
                 }
             }
 
@@ -301,6 +286,25 @@ impl DaemonInstance {
         })?;
         Ok(())
     }
+}
+
+fn relay_facet(t: &mut Activation, child: &mut process::Child, output_text: bool) -> ActorResult {
+    use syndicate::relay;
+    use syndicate::schemas::sturdy;
+
+    let to_child = child.stdin.take().expect("pipe to child");
+    let from_child = child.stdout.take().expect("pipe from child");
+
+    let i = relay::Input::Bytes(Box::pin(from_child));
+    let o = relay::Output::Bytes(Box::pin(to_child));
+
+    t.facet(|t| {
+       let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text)
+            .ok_or("initial capability reference unavailable")?;
+       tracing::info!(?cap);
+       Ok(())
+    })?;
+    Ok(())
 }
 
 fn run(
@@ -376,8 +380,10 @@ fn run(
                         };
 
                         cmd.stdin(match &protocol {
-                            Protocol::None => std::process::Stdio::null(),
-                            Protocol::Syndicate => std::process::Stdio::piped(),
+                            Protocol::None =>
+                                std::process::Stdio::null(),
+                            Protocol::TextSyndicate | Protocol::BinarySyndicate =>
+                                std::process::Stdio::piped(),
                         });
                         cmd.stdout(std::process::Stdio::piped());
                         cmd.stderr(std::process::Stdio::piped());

@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
     let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
     Actor::new().boot(syndicate::name!("state-producer"), |t| {
-        relay::connect_stream(t, i, o, sturdyref, (), move |_state, t, ds| {
+        relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
             let account = Account::new(syndicate::name!("account"));
             t.linked_task(syndicate::name!("sender"), async move {
                 let presence: AnyValue = Value::simple_record1(

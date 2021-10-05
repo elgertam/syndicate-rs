@@ -45,7 +45,8 @@ RestartPolicy =
 Protocol =
 / ; stdin is /dev/null, output and error are logged
   =none
-/ ; stdin and stdout are Syndicate-protocol channels
-  =syndicate
+/ ; stdin and stdout are *binary* Syndicate-protocol channels
+  @binarySyndicate =application/syndicate
+/ ; stdin and stdout are *text* Syndicate-protocol channels
+  @textSyndicate =text/syndicate
 .
-

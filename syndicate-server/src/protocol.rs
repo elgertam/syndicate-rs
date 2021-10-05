@@ -32,7 +32,7 @@ pub fn run_io_relay(
 ) -> ActorResult {
     let exit_listener = t.create(ExitListener);
     t.state.add_exit_hook(&exit_listener);
-    relay::TunnelRelay::run(t, i, o, Some(initial_ref), None);
+    relay::TunnelRelay::run(t, i, o, Some(initial_ref), None, false);
     Ok(())
 }
 

@@ -178,6 +178,7 @@ pub fn connect_stream<I, O, E, F>(
     t: &mut Activation,
     i: I,
     o: O,
+    output_text: bool,
     sturdyref: sturdy::SturdyRef,
     initial_state: E,
     mut f: F,
@@ -189,7 +190,7 @@ pub fn connect_stream<I, O, E, F>(
 {
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
-    let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into()))).unwrap();
+    let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text).unwrap();
     let main_entity = t.create(during::entity(initial_state).on_asserted(move |state, t, a: AnyValue| {
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
@@ -219,6 +220,7 @@ impl TunnelRelay {
         o: Output,
         initial_ref: Option<Arc<Cap>>,
         initial_oid: Option<sturdy::Oid>,
+        output_text: bool,
     ) -> Option<Arc<Cap>> {
         let (output_tx, output_rx) = unbounded_channel();
         let tr_ref = Arc::new(Mutex::new(None));
@@ -228,7 +230,7 @@ impl TunnelRelay {
         let mut tr = TunnelRelay {
             self_ref: Arc::clone(&tr_ref),
             output: output_tx,
-            output_text: false,
+            output_text,
             inbound_assertions: Map::new(),
             outbound_assertions: Map::new(),
             membranes: Membranes {

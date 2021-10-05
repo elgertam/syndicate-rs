@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
     let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
     Actor::new().boot(syndicate::name!("state-consumer"), |t| {
-        relay::connect_stream(t, i, o, sturdyref, (), |_state, t, ds| {
+        relay::connect_stream(t, i, o, false, sturdyref, (), |_state, t, ds| {
             let consumer = {
                 #[derive(Default)]
                 struct State {
