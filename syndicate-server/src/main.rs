@@ -45,35 +45,38 @@ struct ServerConfig {
 
     #[structopt(short = "c", long)]
     config: Vec<PathBuf>,
+
+    #[structopt(long)]
+    no_banner: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    syndicate::convenient_logging()?;
-
     let config = Arc::new(ServerConfig::from_args());
 
-    {
+    syndicate::convenient_logging()?;
+
+    if !config.no_banner && !config.inferior {
         const BRIGHT_GREEN: &str = "\x1b[92m";
         const RED: &str = "\x1b[31m";
         const GREEN: &str = "\x1b[32m";
         const NORMAL: &str = "\x1b[0m";
         const BRIGHT_YELLOW: &str = "\x1b[93m";
 
-        tracing::info!(r"{}    ______   {}", GREEN, NORMAL);
-        tracing::info!(r"{}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        tracing::info!(r"{}  /  {},{}__/{}  \ {}                         ____           __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
-        tracing::info!(r"{} /{}\__/  \{},{}  \{}   _______  ______  ____/ /_/________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
-        tracing::info!(r"{} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        tracing::info!(r"{}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
-        tracing::info!(r"{}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
-        tracing::info!(r"                  /____/");
-        tracing::info!(r"");
-        tracing::info!(r" {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
-        tracing::info!(r"");
-        tracing::info!(r" documentation & reference material: https://syndicate-lang.org/");
-        tracing::info!(r" source code & bugs: https://git.syndicate-lang.org/syndicate-lang/syndicate-rs");
-        tracing::info!(r"");
+        eprintln!(r"{}    ______   {}", GREEN, NORMAL);
+        eprintln!(r"{}   /    {}\_{}\{}  ", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        eprintln!(r"{}  /  {},{}__/{}  \ {}                         ____           __", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        eprintln!(r"{} /{}\__/  \{},{}  \{}   _______  ______  ____/ /_/________  / /____", GREEN, BRIGHT_GREEN, RED, GREEN, NORMAL);
+        eprintln!(r"{} \{}/  \__/   {}/{}  / ___/ / / / __ \/ __  / / ___/ __ \/ __/ _ \", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        eprintln!(r"{}  \  {}'{}  \__{}/ {} _\_ \/ /_/ / / / / /_/ / / /__/ /_/ / /_/  __/", GREEN, RED, BRIGHT_GREEN, GREEN, NORMAL);
+        eprintln!(r"{}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
+        eprintln!(r"                  /____/");
+        eprintln!(r"");
+        eprintln!(r" {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
+        eprintln!(r"");
+        eprintln!(r" documentation & reference material: https://syndicate-lang.org/");
+        eprintln!(r" source code & bugs: https://git.syndicate-lang.org/syndicate-lang/syndicate-rs");
+        eprintln!(r"");
     }
 
     tracing::trace!("startup");
