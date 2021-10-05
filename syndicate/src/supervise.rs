@@ -109,6 +109,7 @@ impl Entity<Protocol> for Supervisor
                 } else {
                     self.config.pause_time
                 };
+                tracing::trace!(?wait_time, "sleeping");
                 t.after(wait_time, move |t| {
                     tracing::trace!("Sending retry trigger");
                     t.message(&self_ref, Protocol::Retry);
