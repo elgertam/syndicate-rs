@@ -506,8 +506,10 @@ preserves_schema::support::lazy_static! {
     };
 
     #[doc(hidden)]
-    pub static ref ACCOUNTS: RwLock<Map<u64, (tracing::Span, Arc<AtomicI64>)>> =
-        RwLock::new(Map::new());
+    pub static ref ACCOUNTS: RwLock<Map<u64, (tracing::Span, Arc<AtomicI64>)>> = Default::default();
+
+    #[doc(hidden)]
+    pub static ref ACTORS: RwLock<Map<ActorId, (tracing::Span, ActorRef)>> = Default::default();
 }
 
 impl TryFrom<&AnyValue> for Synced {
@@ -1476,13 +1478,8 @@ impl Actor {
             root: root.facet_id,
         };
         st.facet_nodes.insert(root.facet_id, root);
-        Actor {
-            rx,
-            ac_ref: ActorRef {
-                actor_id,
-                state: Arc::new(Mutex::new(ActorState::Running(st))),
-            },
-        }
+        let ac_ref = ActorRef { actor_id, state: Arc::new(Mutex::new(ActorState::Running(st))) };
+        Actor { rx, ac_ref }
     }
 
     fn link(self, t_parent: &mut Activation) -> Self {
@@ -1506,6 +1503,7 @@ impl Actor {
         name: tracing::Span,
         boot: F,
     ) -> ActorHandle {
+        ACTORS.write().insert(self.ac_ref.actor_id, (name.clone(), self.ac_ref.clone()));
         name.record("actor_id", &self.ac_ref.actor_id);
         tokio::spawn(async move {
             tracing::trace!("start");
@@ -1744,6 +1742,7 @@ impl<T: Any + Send> Drop for Field<T> {
 impl Drop for Actor {
     fn drop(&mut self) {
         self.rx.close();
+        ACTORS.write().remove(&self.ac_ref.actor_id);
         tracing::trace!(actor_id = ?self.ac_ref.actor_id, "Actor::drop");
     }
 }
