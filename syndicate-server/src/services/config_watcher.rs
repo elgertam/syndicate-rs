@@ -144,7 +144,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: internal_services::ConfigWatcher)
     tracing::info!("watching {:?}", &path);
     let (tx, rx) = channel();
 
-    let mut watcher = watcher(tx, Duration::from_secs(1)).map_err(convert_notify_error)?;
+    let mut watcher = watcher(tx, Duration::from_millis(100)).map_err(convert_notify_error)?;
     watcher.watch(&path, RecursiveMode::Recursive).map_err(convert_notify_error)?;
 
     let facet = t.facet.clone();
