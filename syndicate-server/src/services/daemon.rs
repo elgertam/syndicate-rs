@@ -99,12 +99,7 @@ impl FullProcess {
                 return None;
             }
         }
-
-        cmd.stdin(std::process::Stdio::null());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
-
         Some(cmd)
     }
 }
@@ -116,6 +111,7 @@ impl DaemonProcessSpec {
                 process: Process::Simple(command_line).elaborate(),
                 ready_on_start: ReadyOnStart::Absent,
                 restart: RestartField::Absent,
+                protocol: ProtocolField::Absent,
             },
             DaemonProcessSpec::Full(spec) => *spec,
         }
@@ -143,6 +139,7 @@ struct DaemonInstance {
     unready_configs: Arc<Field<isize>>,
     completed_processes: Arc<Field<isize>>,
     restart_policy: RestartPolicy,
+    protocol: Protocol,
 }
 
 impl DaemonInstance {
@@ -255,8 +252,34 @@ impl DaemonInstance {
 
             let facet = t.facet.clone();
 
-            if let Some(r) = child.stdout.take() { self.log(t, facet.clone(), pid, r, "stdout"); }
-            if let Some(r) = child.stderr.take() { self.log(t, facet.clone(), pid, r, "stderr"); }
+            if let Some(r) = child.stderr.take() {
+                self.log(t, facet.clone(), pid, r, "stderr");
+            }
+
+            match self.protocol {
+                Protocol::None => {
+                    if let Some(r) = child.stdout.take() {
+                        self.log(t, facet.clone(), pid, r, "stdout");
+                    }
+                }
+                Protocol::Syndicate => {
+                    t.facet(|t| {
+                        use syndicate::relay;
+                        use syndicate::schemas::sturdy;
+
+                        let to_child = child.stdin.take().expect("pipe to child");
+                        let from_child = child.stdout.take().expect("pipe from child");
+                        let i = relay::Input::Bytes(Box::pin(from_child));
+                        let o = relay::Output::Bytes(Box::pin(to_child));
+
+                        let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())))
+                            .ok_or("initial capability reference unavailable")?;
+
+                        tracing::info!(?cap);
+                        Ok(())
+                    })?;
+                }
+            }
 
             if self.announce_presumed_readiness {
                 counter::adjust(t, &self.unready_configs, -1);
@@ -325,7 +348,7 @@ fn run(
                     let config = config.elaborate();
                     let facet = t.facet.clone();
                     t.linked_task(syndicate::name!("subprocess"), async move {
-                        let cmd = config.process.build_command().ok_or("Cannot start daemon process")?;
+                        let mut cmd = config.process.build_command().ok_or("Cannot start daemon process")?;
 
                         let announce_presumed_readiness = match config.ready_on_start {
                             ReadyOnStart::Present { ready_on_start } => ready_on_start,
@@ -343,6 +366,21 @@ fn run(
                                 Err("Invalid restart value")?
                             }
                         };
+                        let protocol = match config.protocol {
+                            ProtocolField::Present { protocol } => *protocol,
+                            ProtocolField::Absent => Protocol::None,
+                            ProtocolField::Invalid { protocol } => {
+                                tracing::error!(?protocol, "Invalid protocol value");
+                                Err("Invalid protocol value")?
+                            }
+                        };
+
+                        cmd.stdin(match &protocol {
+                            Protocol::None => std::process::Stdio::null(),
+                            Protocol::Syndicate => std::process::Stdio::piped(),
+                        });
+                        cmd.stdout(std::process::Stdio::piped());
+                        cmd.stderr(std::process::Stdio::piped());
 
                         let daemon_instance = DaemonInstance {
                             log_ds: root_ds,
@@ -353,6 +391,7 @@ fn run(
                             unready_configs,
                             completed_processes,
                             restart_policy,
+                            protocol,
                         };
 
                         facet.activate(Account::new(syndicate::name!("instance-startup")), |t| {

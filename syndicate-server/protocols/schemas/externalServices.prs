@@ -7,9 +7,10 @@ DaemonService = <daemon @id any> .
 DaemonProcess = <daemon @id any @config DaemonProcessSpec>.
 
 DaemonProcessSpec = @simple CommandLine / @full FullDaemonProcess .
-FullDaemonProcess = @process FullProcess & @readyOnStart ReadyOnStart & @restart RestartField .
+FullDaemonProcess = @process FullProcess & @readyOnStart ReadyOnStart & @restart RestartField & @protocol ProtocolField .
 ReadyOnStart = @present { readyOnStart: bool } / @invalid { readyOnStart: any } / @absent {} .
 RestartField = @present { restart: RestartPolicy } / @invalid { restart: any } / @absent {} .
+ProtocolField = @present { protocol: Protocol } / @invalid { protocol: any } / @absent {} .
 
 Process = @simple CommandLine / @full FullProcess .
 FullProcess =
@@ -40,3 +41,11 @@ RestartPolicy =
   ; within the daemon).
   =all
 .
+
+Protocol =
+/ ; stdin is /dev/null, output and error are logged
+  =none
+/ ; stdin and stdout are Syndicate-protocol channels
+  =syndicate
+.
+
