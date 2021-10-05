@@ -21,6 +21,7 @@ mod language;
 mod lifecycle;
 mod protocol;
 mod services;
+mod ui;
 
 mod schemas {
     include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
@@ -46,6 +47,9 @@ struct ServerConfig {
     #[structopt(short = "c", long)]
     config: Vec<PathBuf>,
 
+    #[structopt(short = "u", long)]
+    ui: bool,
+
     #[structopt(long)]
     no_banner: bool,
 }
@@ -54,7 +58,11 @@ struct ServerConfig {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(ServerConfig::from_args());
 
-    syndicate::convenient_logging()?;
+    if config.ui {
+        ui::start()?;
+    } else {
+        syndicate::convenient_logging()?;
+    }
 
     if !config.no_banner && !config.inferior {
         const BRIGHT_GREEN: &str = "\x1b[92m";
