@@ -7,17 +7,14 @@ use preserves_schema::Codec;
 use structopt::StructOpt;
 
 use syndicate::schemas::Language;
-use syndicate::schemas::gatekeeper;
 use syndicate::schemas::protocol as P;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
 use syndicate::value::BinarySource;
 use syndicate::value::BytesBinarySource;
 use syndicate::value::IOValue;
-use syndicate::value::NestedValue;
 use syndicate::value::PackedWriter;
 use syndicate::value::Reader;
-use syndicate::value::Value;
 
 use std::io::Read;
 use std::io::Write;

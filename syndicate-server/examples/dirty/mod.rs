@@ -7,7 +7,6 @@ use syndicate::sturdy;
 use syndicate::value::IOValue;
 use syndicate::value::NestedValue;
 use syndicate::value::PackedWriter;
-use syndicate::value::Value;
 
 use std::io::Read;
 use std::io::Write;
