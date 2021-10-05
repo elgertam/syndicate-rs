@@ -1,0 +1,67 @@
+//! I am a low-level hack intended to shovel bytes out the gate as
+//! quickly as possible, so that the producer isn't the bottleneck in
+//! single-producer/single-consumer broker throughput measurement.
+
+use preserves_schema::Codec;
+
+use structopt::StructOpt;
+
+use syndicate::schemas::Language;
+use syndicate::schemas::protocol as P;
+use syndicate::value::IOValue;
+use syndicate::value::PackedWriter;
+use syndicate::value::Value;
+
+use std::io::Write;
+use std::net::TcpStream;
+
+mod dirty;
+
+#[derive(Clone, Debug, StructOpt)]
+pub struct Config {
+    #[structopt(short = "a", default_value = "1")]
+    action_count: u32,
+
+    #[structopt(short = "b", default_value = "0")]
+    bytes_padding: usize,
+
+    #[structopt(short = "d", default_value = "b4b303726566b10973796e646963617465b584b210a6480df5306611ddd0d3882b546e197784")]
+    dataspace: String,
+}
+
+#[inline]
+fn says(who: IOValue, what: IOValue) -> IOValue {
+    let mut r = Value::simple_record("Says", 2);
+    r.fields_vec_mut().push(who);
+    r.fields_vec_mut().push(what);
+    r.finish().wrap()
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::from_args();
+
+    let mut stream = TcpStream::connect("127.0.0.1:8001")?;
+    dirty::dirty_resolve(&mut stream, &config.dataspace)?;
+
+    let padding: IOValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
+    let mut events = Vec::new();
+    for _ in 0 .. config.action_count {
+        events.push(P::TurnEvent::<IOValue> {
+            oid: P::Oid(1.into()),
+            event: P::Event::Message(Box::new(P::Message {
+                body: P::Assertion(says(Value::from("producer").wrap(), padding.clone())),
+            })),
+        });
+    }
+    let turn = P::Turn(events);
+
+    let mut buf: Vec<u8> = vec![];
+    let iolang = Language::<IOValue>::default();
+    while buf.len() < 16384 {
+        buf.extend(&PackedWriter::encode_iovalue(&iolang.unparse(&turn))?);
+    }
+
+    loop {
+        stream.write_all(&buf)?;
+    }
+}

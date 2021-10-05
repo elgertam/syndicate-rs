@@ -1,2 +1,2 @@
 #!/bin/sh
-while true; do ../target/release/examples/consumer "$@"; sleep 2; done
+while true; do ../target/release/examples/dirty-consumer "$@"; sleep 2; done
