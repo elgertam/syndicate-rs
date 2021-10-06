@@ -1009,7 +1009,8 @@ impl<'activation> Activation<'activation> {
     }
 
     /// Create a new subfacet of the currently-active facet. Runs `boot` in the new facet's
-    /// context. If `boot` returns leaving the new facet [inert][Facet#inert-facets],
+    /// context. If `boot` returns leaving the new facet [inert][Facet#inert-facets], the new
+    /// facet is [stopped][Activation::stop_facet].
     pub fn facet<F: FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
         boot: F,
