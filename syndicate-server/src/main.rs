@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             syndicate::entity(Arc::clone(&root_ds)).on_asserted(gatekeeper::handle_resolve)));
 
         dependencies::boot(t, Arc::clone(&server_config_ds));
-        services::config_watcher::on_demand(t, Arc::clone(&server_config_ds));
+        services::config_watcher::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&root_ds));
         services::daemon::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&root_ds));
         services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
         services::milestone::on_demand(t, Arc::clone(&server_config_ds));

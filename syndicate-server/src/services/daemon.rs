@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
+use syndicate::schemas::service;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::value::NestedValue;
 
@@ -131,6 +132,7 @@ impl CommandLine {
 }
 
 struct DaemonInstance {
+    config_ds: Arc<Cap>,
     log_ds: Arc<Cap>,
     service: AnyValue,
     name: tracing::Span,
@@ -257,8 +259,8 @@ impl DaemonInstance {
             }
 
             match self.protocol {
-                Protocol::TextSyndicate => relay_facet(t, &mut child, true)?,
-                Protocol::BinarySyndicate => relay_facet(t, &mut child, false)?,
+                Protocol::TextSyndicate => self.relay_facet(t, &mut child, true)?,
+                Protocol::BinarySyndicate => self.relay_facet(t, &mut child, false)?,
                 Protocol::None => {
                     if let Some(r) = child.stdout.take() {
                         self.log(t, facet.clone(), pid, r, "stdout");
@@ -286,25 +288,29 @@ impl DaemonInstance {
         })?;
         Ok(())
     }
-}
 
-fn relay_facet(t: &mut Activation, child: &mut process::Child, output_text: bool) -> ActorResult {
-    use syndicate::relay;
-    use syndicate::schemas::sturdy;
+    fn relay_facet(&self, t: &mut Activation, child: &mut process::Child, output_text: bool) -> ActorResult {
+        use syndicate::relay;
+        use syndicate::schemas::sturdy;
 
-    let to_child = child.stdin.take().expect("pipe to child");
-    let from_child = child.stdout.take().expect("pipe from child");
+        let to_child = child.stdin.take().expect("pipe to child");
+        let from_child = child.stdout.take().expect("pipe from child");
 
-    let i = relay::Input::Bytes(Box::pin(from_child));
-    let o = relay::Output::Bytes(Box::pin(to_child));
+        let i = relay::Input::Bytes(Box::pin(from_child));
+        let o = relay::Output::Bytes(Box::pin(to_child));
 
-    t.facet(|t| {
-       let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text)
-            .ok_or("initial capability reference unavailable")?;
-       tracing::info!(?cap);
-       Ok(())
-    })?;
-    Ok(())
+        t.facet(|t| {
+            let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text)
+                .ok_or("initial capability reference unavailable")?;
+            tracing::info!(?cap);
+            self.config_ds.assert(t, language(), &service::ServiceObject {
+                service_name: self.service.clone(),
+                object: AnyValue::domain(cap),
+            });
+            Ok(())
+        })?;
+        Ok(())
+    }
 }
 
 fn run(
@@ -340,80 +346,83 @@ fn run(
         Ok(())
     }))?;
 
-    enclose!((unready_configs, completed_processes) during!(t, config_ds, language(), <daemon #(service.id) $config>, {
-        enclose!((spec, root_ds, unready_configs, completed_processes) |t: &mut Activation| {
-            tracing::debug!(?config, "new config");
-            counter::adjust(t, &unready_configs, 1);
-            counter::adjust(t, &total_configs, 1);
+    enclose!((config_ds, unready_configs, completed_processes)
+             during!(t, config_ds.clone(), language(), <daemon #(service.id) $config>, {
+                 enclose!((spec, config_ds, root_ds, unready_configs, completed_processes)
+                          |t: &mut Activation| {
+                              tracing::debug!(?config, "new config");
+                              counter::adjust(t, &unready_configs, 1);
+                              counter::adjust(t, &total_configs, 1);
 
-            match language().parse::<DaemonProcessSpec>(&config) {
-                Ok(config) => {
-                    tracing::info!(?config);
-                    let config = config.elaborate();
-                    let facet = t.facet.clone();
-                    t.linked_task(syndicate::name!("subprocess"), async move {
-                        let mut cmd = config.process.build_command().ok_or("Cannot start daemon process")?;
+                              match language().parse::<DaemonProcessSpec>(&config) {
+                                  Ok(config) => {
+                                      tracing::info!(?config);
+                                      let config = config.elaborate();
+                                      let facet = t.facet.clone();
+                                      t.linked_task(syndicate::name!("subprocess"), async move {
+                                          let mut cmd = config.process.build_command().ok_or("Cannot start daemon process")?;
 
-                        let announce_presumed_readiness = match config.ready_on_start {
-                            ReadyOnStart::Present { ready_on_start } => ready_on_start,
-                            ReadyOnStart::Absent => true,
-                            ReadyOnStart::Invalid { ready_on_start } => {
-                                tracing::error!(?ready_on_start, "Invalid readyOnStart value");
-                                Err("Invalid readyOnStart value")?
-                            }
-                        };
-                        let restart_policy = match config.restart {
-                            RestartField::Present { restart } => *restart,
-                            RestartField::Absent => RestartPolicy::All,
-                            RestartField::Invalid { restart } => {
-                                tracing::error!(?restart, "Invalid restart value");
-                                Err("Invalid restart value")?
-                            }
-                        };
-                        let protocol = match config.protocol {
-                            ProtocolField::Present { protocol } => *protocol,
-                            ProtocolField::Absent => Protocol::None,
-                            ProtocolField::Invalid { protocol } => {
-                                tracing::error!(?protocol, "Invalid protocol value");
-                                Err("Invalid protocol value")?
-                            }
-                        };
+                                          let announce_presumed_readiness = match config.ready_on_start {
+                                              ReadyOnStart::Present { ready_on_start } => ready_on_start,
+                                              ReadyOnStart::Absent => true,
+                                              ReadyOnStart::Invalid { ready_on_start } => {
+                                                  tracing::error!(?ready_on_start, "Invalid readyOnStart value");
+                                                  Err("Invalid readyOnStart value")?
+                                              }
+                                          };
+                                          let restart_policy = match config.restart {
+                                              RestartField::Present { restart } => *restart,
+                                              RestartField::Absent => RestartPolicy::All,
+                                              RestartField::Invalid { restart } => {
+                                                  tracing::error!(?restart, "Invalid restart value");
+                                                  Err("Invalid restart value")?
+                                              }
+                                          };
+                                          let protocol = match config.protocol {
+                                              ProtocolField::Present { protocol } => *protocol,
+                                              ProtocolField::Absent => Protocol::None,
+                                              ProtocolField::Invalid { protocol } => {
+                                                  tracing::error!(?protocol, "Invalid protocol value");
+                                                  Err("Invalid protocol value")?
+                                              }
+                                          };
 
-                        cmd.stdin(match &protocol {
-                            Protocol::None =>
-                                std::process::Stdio::null(),
-                            Protocol::TextSyndicate | Protocol::BinarySyndicate =>
-                                std::process::Stdio::piped(),
-                        });
-                        cmd.stdout(std::process::Stdio::piped());
-                        cmd.stderr(std::process::Stdio::piped());
+                                          cmd.stdin(match &protocol {
+                                              Protocol::None =>
+                                                  std::process::Stdio::null(),
+                                              Protocol::TextSyndicate | Protocol::BinarySyndicate =>
+                                                  std::process::Stdio::piped(),
+                                          });
+                                          cmd.stdout(std::process::Stdio::piped());
+                                          cmd.stderr(std::process::Stdio::piped());
 
-                        let daemon_instance = DaemonInstance {
-                            log_ds: root_ds,
-                            service: spec,
-                            name: tracing::Span::current(),
-                            cmd,
-                            announce_presumed_readiness,
-                            unready_configs,
-                            completed_processes,
-                            restart_policy,
-                            protocol,
-                        };
+                                          let daemon_instance = DaemonInstance {
+                                              config_ds,
+                                              log_ds: root_ds,
+                                              service: spec,
+                                              name: tracing::Span::current(),
+                                              cmd,
+                                              announce_presumed_readiness,
+                                              unready_configs,
+                                              completed_processes,
+                                              restart_policy,
+                                              protocol,
+                                          };
 
-                        facet.activate(Account::new(syndicate::name!("instance-startup")), |t| {
-                            daemon_instance.start(t)
-                        })?;
-                        Ok(LinkedTaskTermination::KeepFacet)
-                    });
-                    Ok(())
-                }
-                Err(_) => {
-                    tracing::error!(?config, "Invalid Process specification");
-                    return Ok(());
-                }
-            }
-        })
-    }));
+                                          facet.activate(Account::new(syndicate::name!("instance-startup")), |t| {
+                                              daemon_instance.start(t)
+                                          })?;
+                                          Ok(LinkedTaskTermination::KeepFacet)
+                                      });
+                                      Ok(())
+                                  }
+                                  Err(_) => {
+                                      tracing::error!(?config, "Invalid Process specification");
+                                      return Ok(());
+                                  }
+                              }
+                          })
+             }));
 
     tracing::debug!("syncing to ds");
     counter::sync_and_adjust(t, &config_ds.underlying, &unready_configs, -1);
