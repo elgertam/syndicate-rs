@@ -21,6 +21,11 @@ RunService = <run-service @serviceName any>.
 ;
 ServiceState = <service-state @serviceName any @state State>.
 
+; A running service publishes zero or more of these. The details of
+; the object vary by service.
+;
+ServiceObject = <service-object @serviceName any @object any>.
+
 ; Possible service states.
 State =
 / ; The service has begun its startup routine, and may or may not be
