@@ -654,8 +654,8 @@ impl<'t> Parser<'t> {
                     self.drop();
 
                     if s.len() > 0 {
-                        let m = format!("Invalid use of pattern binder in target: {:?}", self.peek());
-                        return self.error(m);
+                        return self.error(format!(
+                            "Invalid use of pattern binder in target: ?{}", s));
                     }
 
                     if self.ateof() {
