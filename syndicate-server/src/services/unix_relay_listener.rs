@@ -18,7 +18,7 @@ use crate::schemas::internal_services::UnixRelayListener;
 
 use syndicate_macros::during;
 
-pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
+pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
         Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener>, |t| {
             Supervisor::start(
@@ -26,13 +26,12 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
                 syndicate::name!(parent: None, "relay", addr = ?spec),
                 SupervisorConfiguration::default(),
                 enclose!((ds, spec) lifecycle::updater(ds, spec)),
-                enclose!((ds, gateway) move |t|
-                         enclose!((ds, gateway, spec) run(t, ds, gateway, spec))))
+                enclose!((ds) move |t| enclose!((ds, spec) run(t, ds, spec))))
         }))
     });
 }
 
-fn run(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>, spec: UnixRelayListener) -> ActorResult {
+fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult {
     let path_str = spec.addr.path.clone();
     let parent_span = tracing::Span::current();
     let facet = t.facet.clone();
@@ -46,24 +45,23 @@ fn run(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>, spec: UnixRelayListe
         loop {
             let (stream, _addr) = listener.accept().await?;
             let peer = stream.peer_cred()?;
+            let gatekeeper = spec.gatekeeper.clone();
             Actor::new().boot(
                 syndicate::name!(parent: parent_span.clone(), "conn",
                                  pid = ?peer.pid().unwrap_or(-1),
                                  uid = peer.uid()),
-                enclose!((gateway) |t| Ok(t.linked_task(
-                    tracing::Span::current(),
-                    {
-                        let facet = t.facet.clone();
-                        async move {
-                            tracing::info!(protocol = %"unix");
-                            let (i, o) = stream.into_split();
-                            run_connection(facet,
-                                           relay::Input::Bytes(Box::pin(i)),
-                                           relay::Output::Bytes(Box::pin(o)),
-                                           gateway)?;
-                            Ok(LinkedTaskTermination::KeepFacet)
-                        }
-                    }))));
+                |t| Ok(t.linked_task(tracing::Span::current(), {
+                    let facet = t.facet.clone();
+                    async move {
+                        tracing::info!(protocol = %"unix");
+                        let (i, o) = stream.into_split();
+                        run_connection(facet,
+                                       relay::Input::Bytes(Box::pin(i)),
+                                       relay::Output::Bytes(Box::pin(o)),
+                                       gatekeeper)?;
+                        Ok(LinkedTaskTermination::KeepFacet)
+                    }
+                })));
         }
     });
     Ok(())

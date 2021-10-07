@@ -14,7 +14,7 @@ use crate::schemas::internal_services::TcpRelayListener;
 
 use syndicate_macros::during;
 
-pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
+pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
         Ok(during!(t, ds, language(), <run-service $spec: TcpRelayListener>, |t| {
             Supervisor::start(
@@ -22,13 +22,12 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>) {
                 syndicate::name!(parent: None, "relay", addr = ?spec),
                 SupervisorConfiguration::default(),
                 enclose!((ds, spec) lifecycle::updater(ds, spec)),
-                enclose!((ds, gateway) move |t|
-                         enclose!((ds, gateway, spec) run(t, ds, gateway, spec))))
+                enclose!((ds) move |t| enclose!((ds, spec) run(t, ds, spec))))
         }))
     });
 }
 
-fn run(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>, spec: TcpRelayListener) -> ActorResult {
+fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult {
     let host = spec.addr.host.clone();
     let port = u16::try_from(&spec.addr.port).map_err(|_| "Invalid TCP port number")?;
     let parent_span = tracing::Span::current();
@@ -43,15 +42,16 @@ fn run(t: &mut Activation, ds: Arc<Cap>, gateway: Arc<Cap>, spec: TcpRelayListen
         })?;
         loop {
             let (stream, addr) = listener.accept().await?;
+            let gatekeeper = spec.gatekeeper.clone();
             Actor::new().boot(
                 syndicate::name!(parent: parent_span.clone(), "conn"),
-                enclose!((gateway) move |t| Ok(t.linked_task(tracing::Span::current(), {
+                move |t| Ok(t.linked_task(tracing::Span::current(), {
                     let facet = t.facet.clone();
                     async move {
-                        detect_protocol(facet, stream, gateway, addr).await?;
+                        detect_protocol(facet, stream, gatekeeper, addr).await?;
                         Ok(LinkedTaskTermination::KeepFacet)
                     }
-                }))));
+                })));
         }
     });
     Ok(())

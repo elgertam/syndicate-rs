@@ -3,6 +3,7 @@ use crate::schemas::dataspace_patterns::*;
 use preserves::value::NestedValue;
 
 use std::convert::TryFrom;
+use std::convert::TryInto;
 
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum PathStep {
@@ -23,6 +24,10 @@ pub struct PatternAnalysis {
     pub const_paths: Paths,
     pub const_values: _Any,
     pub capture_paths: Paths,
+}
+
+struct PatternMatcher<N: NestedValue> {
+    captures: Vec<N>,
 }
 
 impl PatternAnalysis {
@@ -74,6 +79,84 @@ impl Analyzer {
                 let DLit { value } = &**b;
                 self.const_paths.push(path.clone());
                 self.const_values.push(value.clone());
+            }
+        }
+    }
+}
+
+impl<N: NestedValue> Pattern<N> {
+    pub fn match_value(&self, value: &N) -> Option<Vec<N>> {
+        let mut matcher = PatternMatcher::new();
+        if matcher.run(self, value) {
+            Some(matcher.captures)
+        } else {
+            None
+        }
+    }
+}
+
+impl<N: NestedValue> PatternMatcher<N> {
+    fn new() -> Self {
+        PatternMatcher {
+            captures: Vec::new(),
+        }
+    }
+
+    fn run(&mut self, pattern: &Pattern<N>, value: &N) -> bool {
+        match pattern {
+            Pattern::DDiscard(_) => true,
+            Pattern::DBind(b) => {
+                self.captures.push(value.clone());
+                self.run(&b.pattern, value)
+            }
+            Pattern::DLit(b) => value == &b.value,
+            Pattern::DCompound(b) => match &**b {
+                DCompound::Rec { ctor, members } => {
+                    let arity = (&ctor.arity).try_into().expect("reasonable arity");
+                    match value.value().as_record(Some(arity)) {
+                        None => false,
+                        Some(r) => {
+                            for (i, p) in members.iter() {
+                                let i: usize = i.try_into().expect("reasonable index");
+                                if !self.run(p, &r.fields()[i]) {
+                                    return false;
+                                }
+                            }
+                            true
+                        }
+                    }
+                }
+                DCompound::Arr { ctor, members } => {
+                    let arity: usize = (&ctor.arity).try_into().expect("reasonable arity");
+                    match value.value().as_sequence() {
+                        None => false,
+                        Some(vs) => {
+                            if vs.len() != arity {
+                                return false;
+                            }
+                            for (i, p) in members.iter() {
+                                let i: usize = i.try_into().expect("reasonable index");
+                                if !self.run(p, &vs[i]) {
+                                    return false;
+                                }
+                            }
+                            true
+                        }
+                    }
+                }
+                DCompound::Dict { ctor: _, members } => {
+                    match value.value().as_dictionary() {
+                        None => false,
+                        Some(entries) => {
+                            for (k, p) in members.iter() {
+                                if !entries.get(k).map(|v| self.run(p, v)).unwrap_or(false) {
+                                    return false;
+                                }
+                            }
+                            true
+                        }
+                    }
+                }
             }
         }
     }

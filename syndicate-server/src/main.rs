@@ -12,6 +12,7 @@ use syndicate::relay;
 use syndicate::schemas::service;
 use syndicate::schemas::transport_address;
 
+use syndicate::value::Map;
 use syndicate::value::NestedValue;
 
 mod counter;
@@ -20,6 +21,7 @@ mod gatekeeper;
 mod language;
 mod lifecycle;
 mod protocol;
+mod script;
 mod services;
 
 mod schemas {
@@ -82,34 +84,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::trace!("startup");
 
     Actor::new().boot(tracing::Span::current(), move |t| {
-        let root_ds = Cap::new(&t.create(Dataspace::new()));
+        let server_config_ds = Cap::new(&t.create(Dataspace::new()));
+        let log_ds = Cap::new(&t.create(Dataspace::new()));
 
         if config.inferior {
             tracing::info!("inferior server instance");
-            t.spawn(syndicate::name!("parent"), enclose!((root_ds) move |t| protocol::run_io_relay(
-                t,
-                relay::Input::Bytes(Box::pin(tokio::io::stdin())),
-                relay::Output::Bytes(Box::pin(tokio::io::stdout())),
-                root_ds)));
+            t.spawn(syndicate::name!("parent"), enclose!((server_config_ds) move |t| {
+                protocol::run_io_relay(t,
+                                       relay::Input::Bytes(Box::pin(tokio::io::stdin())),
+                                       relay::Output::Bytes(Box::pin(tokio::io::stdout())),
+                                       server_config_ds)
+            }));
         }
 
-        let server_config_ds = Cap::new(&t.create(Dataspace::new()));
+        let gatekeeper = Cap::guard(Arc::clone(&language().syndicate), t.create(
+            syndicate::entity(Arc::clone(&server_config_ds))
+                .on_asserted(gatekeeper::handle_resolve)));
 
-        gatekeeper::bind(t, &root_ds, AnyValue::new("syndicate"), [0; 16],
-                         Arc::clone(&root_ds));
-        gatekeeper::bind(t, &root_ds, AnyValue::new("server-config"), [0; 16],
-                         Arc::clone(&server_config_ds));
-
-        let gateway = Cap::guard(Arc::clone(&language().syndicate), t.create(
-            syndicate::entity(Arc::clone(&root_ds)).on_asserted(gatekeeper::handle_resolve)));
+        let mut env = Map::new();
+        env.insert("config".to_owned(), AnyValue::domain(Arc::clone(&server_config_ds)));
+        env.insert("log".to_owned(), AnyValue::domain(Arc::clone(&log_ds)));
+        env.insert("gatekeeper".to_owned(), AnyValue::domain(Arc::clone(&gatekeeper)));
 
         dependencies::boot(t, Arc::clone(&server_config_ds));
-        services::config_watcher::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&root_ds));
-        services::daemon::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&root_ds));
+        services::config_watcher::on_demand(t, Arc::clone(&server_config_ds));
+        services::daemon::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&log_ds));
         services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
         services::milestone::on_demand(t, Arc::clone(&server_config_ds));
-        services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
-        services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&gateway));
+        services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds));
+        services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds));
 
         if config.debt_reporter {
             server_config_ds.assert(t, language(), &service::RunService {
@@ -123,7 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     addr: transport_address::Tcp {
                         host: "0.0.0.0".to_owned(),
                         port: (port as i32).into(),
-                    }
+                    },
+                    gatekeeper: gatekeeper.clone(),
                 }),
             });
         }
@@ -133,7 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 service_name: language().unparse(&internal_services::UnixRelayListener {
                     addr: transport_address::Unix {
                         path: path.to_str().expect("representable UnixListener path").to_owned(),
-                    }
+                    },
+                    gatekeeper: gatekeeper.clone(),
                 }),
             });
         }
@@ -142,11 +147,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             server_config_ds.assert(t, language(), &service::RunService {
                 service_name: language().unparse(&internal_services::ConfigWatcher {
                     path: path.to_str().expect("representable ConfigWatcher path").to_owned(),
+                    env: internal_services::ConfigEnv(env.clone()),
                 }),
             });
         }
 
-        t.spawn(tracing::Span::current(), enclose!((root_ds) move |t| {
+        t.spawn(tracing::Span::current(), enclose!((log_ds) move |t| {
             let n_unknown: AnyValue = AnyValue::symbol("-");
             let n_pid: AnyValue = AnyValue::symbol("pid");
             let n_line: AnyValue = AnyValue::symbol("line");
@@ -182,7 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(())
                 })
                 .create_cap(t);
-            root_ds.assert(t, language(), &syndicate::schemas::dataspace::Observe {
+            log_ds.assert(t, language(), &syndicate::schemas::dataspace::Observe {
                 pattern: syndicate_macros::pattern!(<log $ $>),
                 observer: e,
             });

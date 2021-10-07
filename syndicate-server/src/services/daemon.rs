@@ -222,18 +222,23 @@ impl DaemonInstance {
                         Err(_) => AnyValue::bytestring(buf),
                     };
                     let now = AnyValue::new(chrono::Utc::now().to_rfc3339());
-                    facet.activate(Account::new(tracing::Span::current()),
-                                   enclose!((pid, service, kind) |t| {
-                                       log_ds.message(t, &(), &syndicate_macros::template!(
-                                           "<log =now {
-                                              pid: =pid,
-                                              service: =service,
-                                              stream: =kind,
-                                              line: =buf,
-                                            }>"));
-                                       Ok(())
-                                   }))?;
+                    if facet.activate(
+                        Account::new(tracing::Span::current()),
+                        enclose!((pid, service, kind) |t| {
+                            log_ds.message(t, &(), &syndicate_macros::template!(
+                                "<log =now {
+                                             pid: =pid,
+                                             service: =service,
+                                             stream: =kind,
+                                             line: =buf,
+                                           }>"));
+                            Ok(())
+                        })).is_err()
+                    {
+                        break;
+                    }
                 }
+                Ok(LinkedTaskTermination::Normal)
             });
             Ok(())
         });
