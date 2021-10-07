@@ -50,6 +50,10 @@ pub enum Instruction {
         target: String,
         template: AnyValue,
     },
+    Message {
+        target: String,
+        template: AnyValue,
+    },
     React {
         target: String,
         pattern_template: AnyValue,
@@ -375,6 +379,9 @@ impl Env {
             Instruction::Assert { target, template } => {
                 self.lookup_target(target)?.assert(t, &(), &self.instantiate_value(template)?);
             }
+            Instruction::Message { target, template } => {
+                self.lookup_target(target)?.message(t, &(), &self.instantiate_value(template)?);
+            }
             Instruction::React { target, pattern_template, body } => {
                 let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
                 let observer = during::entity(self.clone())
@@ -697,6 +704,15 @@ impl<'t> Parser<'t> {
                         } else {
                             return self.error("Invalid let statement");
                         }
+                    } else if s == "!" {
+                        self.drop();
+                        if self.ateof() {
+                            return self.error("Missing payload after '!'");
+                        }
+                        return Parsed::Value(Instruction::Message {
+                            target: target.to_owned(),
+                            template: self.shift(),
+                        });
                     } else {
                         /* fall through */
                     }
