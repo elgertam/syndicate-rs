@@ -179,9 +179,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                   stream,
                                                   line);
                             if d.is_empty() {
-                                tracing::info!(target: "", message = %message);
+                                tracing::info!(target: "", "{}", message);
                             } else {
-                                tracing::info!(target: "", data = ?d, message = %message);
+                                tracing::info!(target: "",  "{} {:?}", message, d);
                             }
                         }
                     }
