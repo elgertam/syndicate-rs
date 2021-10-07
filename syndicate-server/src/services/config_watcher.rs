@@ -481,7 +481,7 @@ fn run(
                     }
                 }
                 for facet_id in to_stop.into_iter() {
-                    t.stop_facet(facet_id)?;
+                    t.stop_facet(facet_id);
                 }
                 Ok(())
             }).unwrap()
@@ -507,7 +507,7 @@ fn run(
 
         let _ = facet.activate(Account::new(syndicate::name!("termination")), |t| {
             tracing::trace!("linked thread terminating associated facet");
-            t.stop()
+            Ok(t.stop())
         });
 
         tracing::trace!("linked thread done");

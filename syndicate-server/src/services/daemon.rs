@@ -341,7 +341,7 @@ fn run(
         let completed = *t.get(&completed_processes);
         tracing::debug!(total_configs = ?total, completed_processes = ?completed);
         if total > 0 && total == completed {
-            t.stop()?;
+            t.stop();
         }
         Ok(())
     }))?;

@@ -118,7 +118,7 @@ where
                 let _ = t.prevent_inert_check();
                 assertion_handler(state, t, a)
             })?;
-            Ok(Some(Box::new(move |_state, t| t.stop_facet(facet_id))))
+            Ok(Some(Box::new(move |_state, t| Ok(t.stop_facet(facet_id)))))
         }))
     }
 

@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             t.dataflow(enclose!((current_value) move |t| {
                 if *t.get(&current_value) == 1000000 {
-                    t.stop()?;
+                    t.stop();
                 }
                 Ok(())
             }))?;
@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         *count = *count - 1;
                         if *count == 0 {
                             tracing::info!("box state retracted");
-                            t.stop()?;
+                            t.stop();
                         }
                         Ok(())
                     })))

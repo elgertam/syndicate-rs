@@ -68,7 +68,7 @@ pub fn bench_ring(c: &mut Criterion) {
                             tracing::info!(iters = self.iters,
                                            actors_created = ACTORS_CREATED.load(Ordering::SeqCst),
                                            messages_sent = MESSAGES_SENT.load(Ordering::SeqCst));
-                            t.stop()?;
+                            t.stop();
                             self.tx.send(self.start.elapsed() / ACTOR_COUNT).unwrap()
                         }
                         Ok(())

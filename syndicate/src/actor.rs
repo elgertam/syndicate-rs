@@ -926,7 +926,7 @@ impl<'activation> Activation<'activation> {
                                 f.linked_tasks.remove(&task_id);
                             }
                             if let LinkedTaskTermination::Normal = result {
-                                t.stop()?;
+                                t.stop();
                             }
                             Ok(())
                         });
@@ -1080,15 +1080,17 @@ impl<'activation> Activation<'activation> {
     /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
     /// commits.
     ///
-    /// Equivalent to `self.stop_facet_and_continue(facet_id, None)`.
-    pub fn stop_facet(&mut self, facet_id: FacetId) -> ActorResult {
+    /// Equivalent to `self.stop_facet_and_continue(facet_id, None)`, except that the lack of a
+    /// continuation means that there's no need for this method to return `ActorResult`.
+    pub fn stop_facet(&mut self, facet_id: FacetId) {
         self.stop_facet_and_continue::<Action>(facet_id, None)
+            .expect("Non-failing stop_facet_and_continue")
     }
 
     /// Arranges for the active facet to be stopped cleanly when `self` commits.
     ///
     /// Equivalent to `self.stop_facet(self.facet.facet_id)`.
-    pub fn stop(&mut self) -> ActorResult {
+    pub fn stop(&mut self) {
         self.stop_facet(self.facet.facet_id)
     }
 
@@ -1098,7 +1100,7 @@ impl<'activation> Activation<'activation> {
             tracing::trace!("Checking inertness of facet {} from facet {}", facet_id, t.facet.facet_id);
             if t.state.facet_exists_and_is_inert(facet_id) {
                 tracing::trace!(" - facet {} is inert, stopping it", facet_id);
-                t.stop_facet(facet_id)?;
+                t.stop_facet(facet_id);
             } else {
                 tracing::trace!(" - facet {} is not inert", facet_id);
             }
@@ -1986,7 +1988,7 @@ where
 
 impl<M> Entity<M> for StopOnRetract {
     fn retract(&mut self, t: &mut Activation, _h: Handle) -> ActorResult {
-        t.stop()
+        Ok(t.stop())
     }
 }
 
