@@ -66,8 +66,7 @@ fn process_existing_file(
             for e in errors {
                 tracing::error!(path = ?env.path, message = %e);
             }
-            Err(io::Error::new(io::ErrorKind::InvalidData,
-                               format!("Parse of {:?} failed", env.path)))
+            Ok(None)
         }
     }
 }
@@ -116,7 +115,7 @@ fn scan_file(
             true
         },
         Err(e) => {
-            tracing::debug!("scan_file: {:?}: {:?}", &path, e);
+            tracing::error!("scan_file: {:?}: {:?}", &path, e);
             false
         }
     }

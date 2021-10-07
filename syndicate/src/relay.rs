@@ -316,7 +316,7 @@ impl TunnelRelay {
                         Some(ws) =>
                             ws.inc_ref(),
                         None => {
-                            tracing::warn!(
+                            tracing::debug!(
                                 event = ?language().unparse(&P::TurnEvent { oid, event }),
                                 "Cannot deliver event: nonexistent oid");
                             return Ok(());
