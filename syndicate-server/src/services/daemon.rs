@@ -25,7 +25,7 @@ pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
         Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService>, |t| {
             Supervisor::start(
                 t,
-                syndicate::name!(parent: None, "daemon", service = ?spec),
+                syndicate::name!(parent: None, "daemon", id = ?spec.id),
                 SupervisorConfiguration::default(),
                 enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
                 enclose!((config_ds, root_ds) move |t|

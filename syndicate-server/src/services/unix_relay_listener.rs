@@ -78,7 +78,7 @@ async fn bind_unix_listener(path: &PathBuf) -> Result<UnixListener, Error> {
                 Ok(_probe) => Err(e)?, // Someone's already there! Give up.
                 Err(f) if f.kind() == io::ErrorKind::ConnectionRefused => {
                     // Try to steal the socket.
-                    tracing::info!("Cleaning stale socket");
+                    tracing::debug!("Cleaning stale socket");
                     std::fs::remove_file(path)?;
                     Ok(UnixListener::bind(path)?)
                 }

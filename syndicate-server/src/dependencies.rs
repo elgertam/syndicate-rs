@@ -18,7 +18,7 @@ use syndicate_macros::during;
 pub fn boot(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(syndicate::name!("tracker", module = module_path!()), move |t| {
         Ok(during!(t, ds, language(), <require-service $spec>, |t: &mut Activation| {
-            tracing::info!(?spec, "tracking dependencies");
+            tracing::debug!(?spec, "tracking dependencies");
             t.spawn_link(syndicate::name!(parent: None, "tracker", spec = ?spec),
                          enclose!((ds) |t| run(t, ds, spec)));
             Ok(())

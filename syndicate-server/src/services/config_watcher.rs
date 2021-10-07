@@ -36,7 +36,7 @@ pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>) {
         Ok(during!(t, config_ds, language(), <run-service $spec: internal_services::ConfigWatcher>, |t| {
             Supervisor::start(
                 t,
-                syndicate::name!(parent: None, "config", spec = ?spec),
+                syndicate::name!(parent: None, "config", path = ?spec.path),
                 SupervisorConfiguration::default(),
                 enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
                 enclose!((config_ds) move |t| enclose!((config_ds, spec) run(t, config_ds, spec))))
@@ -163,14 +163,17 @@ fn run(
     let path = fs::canonicalize(spec.path.clone())?;
     let env = script::Env::new(path, spec.env.0.clone());
 
-    tracing::info!("watching {:?}", &env.path);
+    tracing::info!(?env);
     let (tx, rx) = channel();
 
     let mut watcher = watcher(tx, Duration::from_millis(100)).map_err(convert_notify_error)?;
     watcher.watch(&env.path, RecursiveMode::Recursive).map_err(convert_notify_error)?;
 
     let facet = t.facet.clone();
+    let span = tracing::Span::current();
     thread::spawn(move || {
+        let _entry = span.enter();
+
         let mut path_state: Map<PathBuf, FacetId> = Map::new();
 
         {
