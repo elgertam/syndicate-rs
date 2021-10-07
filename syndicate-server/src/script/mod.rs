@@ -74,6 +74,7 @@ pub enum Expr {
         template: AnyValue,
     },
     Dataspace,
+    Timestamp,
 }
 
 #[derive(Debug, Clone)]
@@ -426,6 +427,7 @@ impl Env {
         match e {
             Expr::Template { template } => self.instantiate_value(template),
             Expr::Dataspace => Ok(AnyValue::domain(Cap::new(&t.create(Dataspace::new())))),
+            Expr::Timestamp => Ok(AnyValue::new(chrono::Utc::now().to_rfc3339())),
         }
     }
 
@@ -761,6 +763,11 @@ impl<'t> Parser<'t> {
         if self.peek() == &Value::symbol("dataspace") {
             self.drop();
             return Some(Expr::Dataspace);
+        }
+
+        if self.peek() == &Value::symbol("timestamp") {
+            self.drop();
+            return Some(Expr::Timestamp);
         }
 
         return Some(Expr::Template{ template: self.shift() });
