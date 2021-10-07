@@ -96,13 +96,17 @@ fn is_hidden(path: &PathBuf) -> bool {
     }
 }
 
+fn should_process(path: &PathBuf) -> bool {
+    path.file_name().and_then(|n| n.to_str()).map(|n| n.ends_with(".pr")).unwrap_or(false)
+}
+
 fn scan_file(
     t: &mut Activation,
     path_state: &mut Map<PathBuf, FacetId>,
     env: script::Env,
 ) -> bool {
     let path = env.path.clone();
-    if is_hidden(&path) {
+    if is_hidden(&path) || !should_process(&path) {
         return true;
     }
     tracing::trace!("scan_file: scanning {:?}", &path);
