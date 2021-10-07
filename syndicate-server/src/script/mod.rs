@@ -54,7 +54,12 @@ pub enum Instruction {
         target: String,
         template: AnyValue,
     },
-    React {
+    During {
+        target: String,
+        pattern_template: AnyValue,
+        body: Box<Instruction>,
+    },
+    OnMessage {
         target: String,
         pattern_template: AnyValue,
         body: Box<Instruction>,
@@ -375,6 +380,21 @@ impl Env {
         }
     }
 
+    fn bind_and_run(
+        &self,
+        t: &mut Activation,
+        binding_names: &Vec<String>,
+        captures: AnyValue,
+        body: &Instruction,
+    ) -> ActorResult {
+        if let Some(captures) = captures.value_owned().into_sequence() {
+            let mut env = self.clone();
+            env.extend(binding_names, captures);
+            env.safe_eval(t, body);
+        }
+        Ok(())
+    }
+
     pub fn eval(&mut self, t: &mut Activation, i: &Instruction) -> io::Result<()> {
         match i {
             Instruction::Assert { target, template } => {
@@ -383,18 +403,22 @@ impl Env {
             Instruction::Message { target, template } => {
                 self.lookup_target(target)?.message(t, &(), &self.instantiate_value(template)?);
             }
-            Instruction::React { target, pattern_template, body } => {
+            Instruction::During { target, pattern_template, body } => {
                 let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
                 let observer = during::entity(self.clone())
-                    .on_asserted_facet(enclose!(
-                        (binding_names, body) move |env, t, captures: AnyValue| {
-                            if let Some(captures) = captures.value_owned().into_sequence() {
-                                let mut env = env.clone();
-                                env.extend(&binding_names, captures);
-                                env.safe_eval(t, &*body);
-                            }
-                            Ok(())
-                        }))
+                    .on_asserted_facet(enclose!((binding_names, body) move |env, t, cs: AnyValue| {
+                        env.bind_and_run(t, &binding_names, cs, &*body) }))
+                    .create_cap(t);
+                self.lookup_target(target)?.assert(t, language(), &dataspace::Observe {
+                    pattern,
+                    observer,
+                });
+            }
+            Instruction::OnMessage { target, pattern_template, body } => {
+                let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
+                let observer = during::entity(self.clone())
+                    .on_message(enclose!((binding_names, body) move |env, t, cs: AnyValue| {
+                        env.bind_and_run(t, &binding_names, cs, &*body) }))
                     .create_cap(t);
                 self.lookup_target(target)?.assert(t, language(), &dataspace::Observe {
                     pattern,
@@ -653,10 +677,14 @@ impl<'t> Parser<'t> {
                 Symbolic::Binder(s) => {
                     self.drop();
 
-                    if s.len() > 0 {
-                        return self.error(format!(
-                            "Invalid use of pattern binder in target: ?{}", s));
-                    }
+                    let ctor = match s.as_ref() {
+                        "" => |target, pattern_template, body| {
+                            Instruction::During { target, pattern_template, body } },
+                        "?" => |target, pattern_template, body| {
+                            Instruction::OnMessage { target, pattern_template, body } },
+                        _ => return self.error(format!(
+                            "Invalid use of pattern binder in target: ?{}", s)),
+                    };
 
                     if self.ateof() {
                         return self.error("Missing pattern and instruction in react");
@@ -671,11 +699,9 @@ impl<'t> Parser<'t> {
                         Parsed::Skip =>
                             Parsed::Skip,
                         Parsed::Value(body) =>
-                            Parsed::Value(Instruction::React {
-                                target: target.to_owned(),
-                                pattern_template,
-                                body: Box::new(body),
-                            }),
+                            Parsed::Value(ctor(target.to_owned(),
+                                               pattern_template,
+                                               Box::new(body))),
                     };
                 }
                 Symbolic::Discard => {
