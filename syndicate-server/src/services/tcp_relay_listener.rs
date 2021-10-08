@@ -15,7 +15,7 @@ use crate::schemas::internal_services::TcpRelayListener;
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
+    t.spawn(syndicate::name!("tcp_relay_listener"), move |t| {
         Ok(during!(t, ds, language(), <run-service $spec: TcpRelayListener>, |t| {
             Supervisor::start(
                 t,

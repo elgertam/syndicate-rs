@@ -1018,7 +1018,7 @@ impl<'activation> Activation<'activation> {
         let f = Facet::new(Some(self.facet.facet_id));
         let facet_id = f.facet_id;
         self.state.facet_nodes.insert(facet_id, f);
-        tracing::debug!(parent_id = ?self.facet.facet_id,
+        tracing::trace!(parent_id = ?self.facet.facet_id,
                         ?facet_id,
                         actor_facet_count = ?self.state.facet_nodes.len());
         self.state.facet_children.entry(self.facet.facet_id).or_default().insert(facet_id);
@@ -1110,7 +1110,7 @@ impl<'activation> Activation<'activation> {
 
     fn _terminate_facet(&mut self, facet_id: FacetId, alive: bool) -> ActorResult {
         if let Some(mut f) = self.state.facet_nodes.remove(&facet_id) {
-            tracing::debug!(actor_facet_count = ?self.state.facet_nodes.len(),
+            tracing::trace!(actor_facet_count = ?self.state.facet_nodes.len(),
                             "{} termination of {:?}",
                             if alive { "living" } else { "post-exit" },
                             facet_id);
@@ -1455,6 +1455,7 @@ impl PartialOrd for Mailbox {
 
 impl Drop for Mailbox {
     fn drop(&mut self) {
+        tracing::debug!("Last reference to mailbox of actor id {:?} was dropped", self.actor_id);
         let _ = self.tx.send(SystemMessage::Release);
         ()
     }
@@ -1646,6 +1647,12 @@ impl ActorRef {
 
     fn root_facet_ref(&self) -> FacetRef {
         self.facet_ref(self.root_facet_id())
+    }
+}
+
+impl std::fmt::Debug for ActorRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "#<ActorRef {}>", self.actor_id)
     }
 }
 

@@ -16,10 +16,10 @@ use crate::schemas::internal_services;
 use syndicate_macros::during;
 
 pub fn boot(t: &mut Activation, ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("tracker", module = module_path!()), move |t| {
+    t.spawn(syndicate::name!("dependencies"), move |t| {
         Ok(during!(t, ds, language(), <require-service $spec>, |t: &mut Activation| {
             tracing::debug!(?spec, "tracking dependencies");
-            t.spawn_link(syndicate::name!(parent: None, "tracker", spec = ?spec),
+            t.spawn_link(syndicate::name!(parent: None, "dependencies", spec = ?spec),
                          enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }))

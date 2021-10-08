@@ -21,7 +21,7 @@ use crate::schemas::external_services::*;
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
+    t.spawn(syndicate::name!("daemon"), move |t| {
         Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService>, |t| {
             Supervisor::start(
                 t,

@@ -10,7 +10,7 @@ use crate::schemas::internal_services::DebtReporter;
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("on_demand", module = module_path!()), move |t| {
+    t.spawn(syndicate::name!("debt_reporter"), move |t| {
         Ok(during!(t, ds, language(), <run-service $_spec: DebtReporter>, |t: &mut Activation| {
             t.spawn_link(tracing::Span::current(), enclose!((ds) |t| run(t, ds)));
             Ok(())
