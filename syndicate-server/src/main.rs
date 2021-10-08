@@ -198,5 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }).await??;
 
+    wait_for_all_actors_to_stop(std::time::Duration::from_secs(2)).await;
+
     Ok(())
 }
