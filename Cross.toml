@@ -1,0 +1,6 @@
+[build.env]
+# Both of these are needed to workaround https://github.com/rust-embedded/cross/issues/598
+passthrough = [
+    "RUSTFLAGS",
+    "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS",
+]
