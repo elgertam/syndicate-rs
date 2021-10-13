@@ -64,6 +64,9 @@ pub enum Instruction {
         pattern_template: AnyValue,
         body: Box<Instruction>,
     },
+    OnStop {
+        body: Box<Instruction>,
+    },
     Sequence {
         instructions: Vec<Instruction>,
     },
@@ -425,6 +428,10 @@ impl Env {
                     observer,
                 });
             }
+            Instruction::OnStop { body } => {
+                let mut env = self.clone();
+                t.on_stop(enclose!((body) move |t| Ok(env.eval(t, &*body)?)));
+            }
             Instruction::Sequence { instructions } => {
                 for i in instructions {
                     self.eval(t, i)?;
@@ -682,6 +689,12 @@ impl<'t> Parser<'t> {
                             Instruction::During { target, pattern_template, body } },
                         "?" => |target, pattern_template, body| {
                             Instruction::OnMessage { target, pattern_template, body } },
+                        "-" => match self.parse(target) {
+                            Parsed::Value(i) => return Parsed::Value(Instruction::OnStop {
+                                body: Box::new(i),
+                            }),
+                            other => return other,
+                        },
                         _ => return self.error(format!(
                             "Invalid use of pattern binder in target: ?{}", s)),
                     };
