@@ -319,7 +319,7 @@ impl TunnelRelay {
                             tracing::debug!(
                                 event = ?language().unparse(&P::TurnEvent { oid, event }),
                                 "Cannot deliver event: nonexistent oid");
-                            return Ok(());
+                            continue;
                         }
                     };
                     let mut pins = vec![target.clone()];
