@@ -56,6 +56,11 @@ static-%:
 # etc, ready on my system despite being otherwise able to rely on
 # cross. I think. It's a bit confusing.
 
+x86_64-binary: x86_64-binary-release
+
+x86_64-binary-release:
+	cross build --target x86_64-unknown-linux-musl --release --all-targets --features vendored-openssl
+
 arm-binary: arm-binary-release
 
 arm-binary-release:
