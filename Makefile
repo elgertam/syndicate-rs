@@ -61,12 +61,12 @@ x86_64-binary: x86_64-binary-release
 x86_64-binary-release:
 	cross build --target x86_64-unknown-linux-musl --release --all-targets --features vendored-openssl
 
-arm-binary: arm-binary-release
+armv7-binary: armv7-binary-release
 
-arm-binary-release:
+armv7-binary-release:
 	cross build --target=armv7-unknown-linux-musleabihf --release --all-targets --features vendored-openssl
 
-arm-binary-debug:
+armv7-binary-debug:
 	cross build --target=armv7-unknown-linux-musleabihf --all-targets --features vendored-openssl
 
 # Hack to workaround https://github.com/rust-embedded/cross/issues/598
