@@ -281,7 +281,7 @@ impl Env {
 
     fn lookup(&self, s: &str, what: &'static str) -> io::Result<AnyValue> {
         if s == "." {
-            Ok(AnyValue::new(self.bindings.iter().map(|(k, v)| (AnyValue::new(k), v.clone()))
+            Ok(AnyValue::new(self.bindings.iter().map(|(k, v)| (AnyValue::symbol(k), v.clone()))
                              .collect::<Map<AnyValue, AnyValue>>()))
         } else {
             Ok(self.bindings.get(s).ok_or_else(
