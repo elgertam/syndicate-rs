@@ -83,6 +83,7 @@ pub enum Expr {
     },
     Dataspace,
     Timestamp,
+    Facet,
 }
 
 #[derive(Debug, Clone)]
@@ -105,9 +106,28 @@ enum Symbolic {
     Bare(String),
 }
 
+struct FacetHandle;
+
 impl<T> Default for Parsed<T> {
     fn default() -> Self {
         Parsed::Skip
+    }
+}
+
+impl FacetHandle {
+    fn new() -> Self {
+        FacetHandle
+    }
+}
+
+impl Entity<AnyValue> for FacetHandle {
+    fn message(&mut self, t: &mut Activation, body: AnyValue) -> ActorResult {
+        if let Some("stop") = body.value().as_symbol().map(|s| s.as_str()) {
+            t.stop();
+            return Ok(())
+        }
+        tracing::warn!(?body, "Unrecognised message sent to FacetHandle");
+        return Ok(())
     }
 }
 
@@ -421,7 +441,9 @@ impl Env {
                 let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
                 let observer = during::entity(self.clone())
                     .on_message(enclose!((binding_names, body) move |env, t, cs: AnyValue| {
-                        env.bind_and_run(t, &binding_names, cs, &*body) }))
+                        t.facet(|t| env.bind_and_run(t, &binding_names, cs, &*body))?;
+                        Ok(())
+                    }))
                     .create_cap(t);
                 self.lookup_target(target)?.assert(t, language(), &dataspace::Observe {
                     pattern,
@@ -459,6 +481,7 @@ impl Env {
             Expr::Template { template } => self.instantiate_value(template),
             Expr::Dataspace => Ok(AnyValue::domain(Cap::new(&t.create(Dataspace::new())))),
             Expr::Timestamp => Ok(AnyValue::new(chrono::Utc::now().to_rfc3339())),
+            Expr::Facet => Ok(AnyValue::domain(Cap::new(&t.create(FacetHandle::new())))),
         }
     }
 
@@ -807,6 +830,11 @@ impl<'t> Parser<'t> {
         if self.peek() == &Value::symbol("timestamp") {
             self.drop();
             return Some(Expr::Timestamp);
+        }
+
+        if self.peek() == &Value::symbol("facet") {
+            self.drop();
+            return Some(Expr::Facet);
         }
 
         return Some(Expr::Template{ template: self.shift() });
