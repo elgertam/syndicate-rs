@@ -1111,9 +1111,9 @@ dependencies = [
 
 [[package]]
 name = "preserves-schema"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1e7d339a003cb3e6852e6793b34d34c811f134d0b54b839d6b360f7c692b924"
+checksum = "076adb1abc1b7842f40d9fb83d5c108ac4b5a30f56001c6ae85746fedec65c96"
 dependencies = [
  "convert_case",
  "glob",
