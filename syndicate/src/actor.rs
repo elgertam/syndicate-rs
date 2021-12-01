@@ -596,22 +596,7 @@ impl FacetRef {
                         }
                         drop(activation);
                         let exit_status = Arc::new(exit_status);
-                        let mut t = Activation::make(&self.actor.facet_ref(state.root),
-                                                     Account::new(crate::name!("shutdown")),
-                                                     state);
-                        if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok()) {
-                            // This can only occur as the result of an internal error in this file's code.
-                            tracing::error!(?err, "unexpected error from terminate_facet");
-                            panic!("Unexpected error result from terminate_facet");
-                        }
-                        // TODO: The linked_tasks are being cancelled above ^ when their Facets drop.
-                        // TODO: We don't want that: we want (? do we?) exit hooks to run before linked_tasks are cancelled.
-                        // TODO: Example: send an error message in an exit_hook that is processed and delivered by a linked_task.
-                        for action in std::mem::take(&mut t.state.exit_hooks) {
-                            if let Err(err) = action(&mut t, &exit_status) {
-                                tracing::error!(?err, "error in exit hook");
-                            }
-                        }
+                        state.cleanup(&self.actor, &exit_status);
                         *g = ActorState::Terminated {
                             exit_status: Arc::clone(&exit_status),
                         };
@@ -1727,6 +1712,25 @@ impl RunningActor {
                     e.retract(t, handle)
                 }))));
     }
+
+    fn cleanup(&mut self, ac_ref: &ActorRef, exit_status: &Arc<ActorResult>) {
+        let mut t = Activation::make(&ac_ref.facet_ref(self.root),
+                                     Account::new(crate::name!("cleanup")),
+                                     self);
+        if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok()) {
+            // This can only occur as the result of an internal error in this file's code.
+            tracing::error!(?err, "unexpected error from terminate_facet");
+            panic!("Unexpected error result from terminate_facet");
+        }
+        // TODO: The linked_tasks are being cancelled above ^ when their Facets drop.
+        // TODO: We don't want that: we want (? do we?) exit hooks to run before linked_tasks are cancelled.
+        // TODO: Example: send an error message in an exit_hook that is processed and delivered by a linked_task.
+        for action in std::mem::take(&mut t.state.exit_hooks) {
+            if let Err(err) = action(&mut t, &exit_status) {
+                tracing::error!(?err, "error in exit hook");
+            }
+        }
+    }
 }
 
 impl<T: Any + Send> std::fmt::Debug for Field<T> {
@@ -1753,6 +1757,14 @@ impl Drop for Actor {
     fn drop(&mut self) {
         self.rx.close();
         ACTORS.write().remove(&self.ac_ref.actor_id);
+        let mut g = self.ac_ref.state.lock();
+        if let ActorState::Running(ref mut state) = *g {
+            tracing::warn!(actor_id = ?self.ac_ref.actor_id, "Force-terminated by Actor::drop");
+            let exit_status =
+                Arc::new(Err(error("Force-terminated by Actor::drop", AnyValue::new(false))));
+            state.cleanup(&self.ac_ref, &exit_status);
+            *g = ActorState::Terminated { exit_status };
+        }
         tracing::trace!(actor_id = ?self.ac_ref.actor_id, "Actor::drop");
     }
 }
