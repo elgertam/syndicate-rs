@@ -408,21 +408,34 @@ impl TunnelRelay {
         match event {
             P::Event::Assert(b) => {
                 let P::Assert { assertion: P::Assertion(a), handle } = &**b;
-                let target_ws = self.membranes.imported.oid_map.get(&remote_oid).map(Arc::clone)
-                    .expect("RelayEntity to have a valid oid");
-                target_ws.inc_ref(); // encoding won't do this; target oid is syntactically special
-                let mut pins = vec![target_ws];
-                a.foreach_embedded::<_, Error>(
-                    &mut |r| Ok(pins.push(self.membranes.lookup_ref(r))))?;
-                self.outbound_assertions.insert(handle.clone(), pins);
-                dump_membranes!(self.membranes);
+                if let Some(target_ws) = self.membranes.imported.oid_map.get(&remote_oid).map(Arc::clone) {
+                    target_ws.inc_ref(); // encoding won't do this; target oid is syntactically special
+                    let mut pins = vec![target_ws];
+                    a.foreach_embedded::<_, Error>(
+                        &mut |r| Ok(pins.push(self.membranes.lookup_ref(r))))?;
+                    self.outbound_assertions.insert(handle.clone(), pins);
+                    dump_membranes!(self.membranes);
+                } else {
+                    // This can happen if
+                    // 1. remote peer asserts a value causing remote_oid to be allocated
+                    // 2. some local actor holds a reference to that entity
+                    // 3. remote peer retracts the value
+                    // 4. local actor uses the ref
+                    tracing::trace!(?remote_oid, "not registered in imported membrane (ok)");
+                }
             }
             P::Event::Retract(b) => {
                 let P::Retract { handle } = &**b;
                 if let Some(pins) = self.outbound_assertions.remove(handle) {
                     self.membranes.release(pins);
+                    dump_membranes!(self.membranes);
+                } else {
+                    // This can happen e.g. if an assert leads to no
+                    // outbound message as in the scenario in the
+                    // P::Event::Assert stanza above, and then the
+                    // local actor retracts their assertion again.
+                    tracing::trace!(?handle, "not registered in outbound_assertions (ok)");
                 }
-                dump_membranes!(self.membranes);
             }
             P::Event::Message(b) => {
                 let P::Message { body: P::Assertion(a) } = &**b;
