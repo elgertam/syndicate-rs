@@ -312,6 +312,7 @@ impl TunnelRelay {
             P::Packet::Turn(b) => {
                 let P::Turn(events) = *b;
                 for P::TurnEvent { oid, event } in events {
+                    tracing::trace!(?oid, ?event, "handle_inbound");
                     let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.0.clone())) {
                         Some(ws) =>
                             ws.inc_ref(),

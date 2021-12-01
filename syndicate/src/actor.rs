@@ -737,6 +737,7 @@ impl<'activation> Activation<'activation> {
 
     /// Core API: retract a previously-established assertion.
     pub fn retract(&mut self, handle: Handle) {
+        tracing::trace!(?handle, "retract");
         if let Some(d) = self.state.cleanup_actions.remove(&handle) {
             self.pending.execute_cleanup_action(d)
         }
