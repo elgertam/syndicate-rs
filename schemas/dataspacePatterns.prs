@@ -6,11 +6,17 @@ Pattern = DDiscard / DBind / DLit / DCompound .
 
 DDiscard = <_>.
 DBind = <bind @pattern Pattern>.
-DLit = <lit @value any>.
-DCompound = @rec  <compound @ctor CRec  @members { int: Pattern ...:... }>
-          / @arr  <compound @ctor CArr  @members { int: Pattern ...:... }>
-          / @dict <compound @ctor CDict @members { any: Pattern ...:... }> .
+DLit = <lit @value AnyAtom>.
+DCompound = <rec @label any @fields [Pattern ...]>
+          / <arr @items [Pattern ...]>
+          / <dict @entries { any: Pattern ...:... }> .
 
-CRec = <rec @label any @arity int>.
-CArr = <arr @arity int>.
-CDict = <dict>.
+AnyAtom =
+    / @bool bool
+    / @float float
+    / @double double
+    / @int int
+    / @string string
+    / @bytes bytes
+    / @symbol symbol
+.
