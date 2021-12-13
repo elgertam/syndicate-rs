@@ -19,4 +19,5 @@ AnyAtom =
     / @string string
     / @bytes bytes
     / @symbol symbol
+    / @embedded #!any
 .
