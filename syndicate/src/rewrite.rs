@@ -142,6 +142,7 @@ impl Pattern {
                     match a.value().as_record(Some(fields.len())) {
                         Some(r) => {
                             if r.label() != label { return false; }
+                            if r.fields().len() != fields.len() { return false; }
                             for (i, p) in fields.iter().enumerate() {
                                 if !p.matches(&r.fields()[i], bindings) { return false; }
                             }
@@ -153,7 +154,7 @@ impl Pattern {
                 PCompound::Arr { items } => {
                     match a.value().as_sequence() {
                         Some(vs) => {
-                            if vs.len() < items.len() { return false; }
+                            if vs.len() != items.len() { return false; }
                             for (i, p) in items.iter().enumerate() {
                                 if !p.matches(&vs[i], bindings) { return false; }
                             }
