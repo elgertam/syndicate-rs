@@ -47,7 +47,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, service_name: AnyValue) -> ActorResult 
             }))
             .create_cap(t);
         ds.assert(t, language(), &Observe {
-            pattern: syndicate_macros::pattern!{<core-service #(service_name.clone())>},
+            pattern: syndicate_macros::pattern!{<core-service #(&service_name)>},
             observer: milestone_monitor,
         });
     }
@@ -74,7 +74,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, service_name: AnyValue) -> ActorResult 
     })?;
 
     enclose!((ds, obstacle_count) during!(
-        t, ds, language(), <depends-on #(service_name.clone()) $dependee>,
+        t, ds, language(), <depends-on #(&service_name) $dependee>,
         enclose!((ds, obstacle_count) move |t: &mut Activation| {
             if let Ok(dependee) = language().parse::<service::ServiceState>(&dependee) {
                 tracing::trace!(on = ?dependee, "new dependency");
@@ -87,8 +87,8 @@ fn run(t: &mut Activation, ds: Arc<Cap>, service_name: AnyValue) -> ActorResult 
 
             counter::adjust(t, &obstacle_count, 1);
 
-            let d = dependee.clone();
-            during!(t, ds, language(), #(d), enclose!(
+            let d = &dependee.clone();
+            during!(t, ds, language(), #d, enclose!(
                 (obstacle_count, dependee) move |t: &mut Activation| {
                     tracing::trace!(on = ?dependee, "dependency satisfied");
                     counter::adjust(t, &obstacle_count, -1);

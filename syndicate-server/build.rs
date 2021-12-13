@@ -10,11 +10,11 @@ mod pattern_plugin {
 
     use std::iter::FromIterator;
 
+    use syndicate::pattern::lift_literal;
     use syndicate::schemas::dataspace_patterns as P;
     use syndicate::value::IOValue;
     use syndicate::value::Map;
     use syndicate::value::NestedValue;
-    use syndicate::value::signed_integer::SignedInteger;
 
     #[derive(Debug)]
     pub struct PatternPlugin;
@@ -88,20 +88,15 @@ mod pattern_plugin {
             match self {
                 CompoundPattern::Tuple { patterns } =>
                     Some(P::Pattern::DCompound(Box::new(P::DCompound::Arr {
-                        ctor: Box::new(P::CArr { arity: patterns.len().into() }),
-                        members: Map::from_iter(
-                            patterns.iter().enumerate()
-                                .map(|(i, p)| Some((i.into(), unname(p).wc(s)?)))
-                                .filter(|e| discard() != e.as_ref().unwrap().1)
-                                .collect::<Option<Vec<(SignedInteger, P::Pattern)>>>()?
-                                .into_iter()),
+                        items: patterns.iter()
+                            .map(|p| unname(p).wc(s))
+                            .collect::<Option<Vec<P::Pattern>>>()?,
                     }))),
                 CompoundPattern::TuplePrefix { .. } =>
                     Some(discard()),
                 CompoundPattern::Dict { entries } =>
                     Some(P::Pattern::DCompound(Box::new(P::DCompound::Dict {
-                        ctor: Box::new(P::CDict),
-                        members: Map::from_iter(
+                        entries: Map::from_iter(
                             entries.0.iter()
                                 .map(|(k, p)| Some((from_io(k)?, unname_simple(p).wc(s)?)))
                                 .filter(|e| discard() != e.as_ref().unwrap().1)
@@ -113,16 +108,10 @@ mod pattern_plugin {
                         match (*label, *fields) {
                             (SimplePattern::Lit { value }, CompoundPattern::Tuple { patterns }) =>
                                 Some(P::Pattern::DCompound(Box::new(P::DCompound::Rec {
-                                    ctor: Box::new(P::CRec {
-                                        label: from_io(&value)?,
-                                        arity: patterns.len().into(),
-                                    }),
-                                    members: Map::from_iter(
-                                        patterns.iter().enumerate()
-                                            .map(|(i, p)| Some((i.into(), unname(p).wc(s)?)))
-                                            .filter(|e| discard() != e.as_ref().unwrap().1)
-                                            .collect::<Option<Vec<(SignedInteger, P::Pattern)>>>()?
-                                            .into_iter()),
+                                    label: from_io(&value)?,
+                                    fields: patterns.iter()
+                                        .map(|p| unname(p).wc(s))
+                                        .collect::<Option<Vec<P::Pattern>>>()?,
                                 }))),
                             _ => None,
                         },
@@ -141,11 +130,7 @@ mod pattern_plugin {
                 SimplePattern::Seqof { .. } |
                 SimplePattern::Setof { .. } |
                 SimplePattern::Dictof { .. } => Some(discard()),
-
-                SimplePattern::Lit { value } => Some(P::Pattern::DLit(Box::new(P::DLit {
-                    value: from_io(&value)?,
-                }))),
-
+                SimplePattern::Lit { value } => Some(lift_literal(&from_io(value)?)),
                 SimplePattern::Ref(r) => s.cycle_check(
                     r,
                     |ctxt, r| ctxt.bundle.lookup_definition(r),

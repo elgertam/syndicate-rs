@@ -9,8 +9,6 @@ use super::bag;
 
 use preserves::value::{Map, NestedValue, Set, Value};
 use std::collections::btree_map::Entry;
-use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use crate::actor::AnyValue;
@@ -216,15 +214,15 @@ impl Node {
     ) -> (usize, &mut Node) {
         let (guard, members): (Guard, Vec<(PathStep, &ds::Pattern)>) = match pat {
             ds::Pattern::DCompound(b) => match &**b {
-                ds::DCompound::Arr { ctor, members } =>
-                    (Guard::Seq(usize::try_from(&ctor.arity).unwrap_or(0)),
-                     members.iter().map(|(i, p)| (PathStep::Index(i.try_into().unwrap_or(0)), p)).collect()),
-                ds::DCompound::Rec { ctor, members } =>
-                    (Guard::Rec(ctor.label.clone(), usize::try_from(&ctor.arity).unwrap_or(0)),
-                     members.iter().map(|(i, p)| (PathStep::Index(i.try_into().unwrap_or(0)), p)).collect()),
-                ds::DCompound::Dict { members, .. } =>
+                ds::DCompound::Arr { items } =>
+                    (Guard::Seq(items.len()),
+                     items.iter().enumerate().map(|(i, p)| (PathStep::Index(i), p)).collect()),
+                ds::DCompound::Rec { label, fields } =>
+                    (Guard::Rec(label.clone(), fields.len()),
+                     fields.iter().enumerate().map(|(i, p)| (PathStep::Index(i), p)).collect()),
+                ds::DCompound::Dict { entries, .. } =>
                     (Guard::Map,
-                     members.iter().map(|(k, p)| (PathStep::Key(k.clone()), p)).collect()),
+                     entries.iter().map(|(k, p)| (PathStep::Key(k.clone()), p)).collect()),
             }
             ds::Pattern::DBind(b) => {
                 let ds::DBind { pattern, .. } = &**b;

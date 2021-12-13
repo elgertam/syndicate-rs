@@ -1,6 +1,6 @@
 use proc_macro2::Delimiter;
 use proc_macro2::LineColumn;
-use proc_macro2::TokenTree;
+use proc_macro2::TokenStream;
 
 use syn::ExprLit;
 use syn::Ident;
@@ -24,7 +24,7 @@ pub enum Stx {
     Atom(IOValue),
     Binder(Option<Ident>, Option<Type>, Option<Box<Stx>>),
     Discard,
-    Subst(TokenTree),
+    Subst(TokenStream),
     Rec(Box<Stx>, Vec<Stx>),
     Seq(Vec<Stx>),
     Set(Vec<Stx>),
@@ -230,8 +230,10 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
             '#' => {
                 if let Some((inner, _, next)) = next.group(Delimiter::Brace) {
                     parse_group_inner(inner, parse1, next).map(|(q,c)| (Stx::Set(q),c))
+                } else if let Some((inner, _, next)) = next.group(Delimiter::Parenthesis) {
+                    Ok((Stx::Subst(inner.token_stream()), next))
                 } else if let Some((tt, next)) = next.token_tree() {
-                    Ok((Stx::Subst(tt), next))
+                    Ok((Stx::Subst(vec![tt].into_iter().collect()), next))
                 } else {
                     Err(Error::new(c.span(), "Expected expression to substitute"))
                 }

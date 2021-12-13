@@ -352,7 +352,7 @@ fn run(
     }))?;
 
     enclose!((config_ds, unready_configs, completed_processes)
-             during!(t, config_ds.clone(), language(), <daemon #(service.id) $config>, {
+             during!(t, config_ds.clone(), language(), <daemon #(&service.id) $config>, {
                  enclose!((spec, config_ds, root_ds, unready_configs, completed_processes)
                           |t: &mut Activation| {
                               tracing::debug!(?config, "new config");

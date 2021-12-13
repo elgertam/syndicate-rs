@@ -1,3 +1,5 @@
+use preserves_schema::Codec;
+
 use std::io;
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -7,6 +9,7 @@ use syndicate::actor::*;
 use syndicate::dataspace::Dataspace;
 use syndicate::during;
 use syndicate::enclose;
+use syndicate::pattern::{lift_literal, drop_literal};
 use syndicate::schemas::dataspace;
 use syndicate::schemas::dataspace_patterns as P;
 use syndicate::schemas::sturdy;
@@ -15,7 +18,6 @@ use syndicate::value::NestedValue;
 use syndicate::value::Record;
 use syndicate::value::Set;
 use syndicate::value::Value;
-use syndicate::value::signed_integer::SignedInteger;
 
 use crate::language::language;
 
@@ -154,7 +156,7 @@ fn discard() -> P::Pattern {
 }
 
 fn dlit(value: AnyValue) -> P::Pattern {
-    P::Pattern::DLit(Box::new(P::DLit { value }))
+    lift_literal(&value)
 }
 
 fn tlit(value: AnyValue) -> sturdy::Template {
@@ -239,40 +241,28 @@ impl<'env> PatternInstantiator<'env> {
             Value::Record(r) => match parse_attenuation(r)? {
                 Some((base_name, alternatives)) =>
                     dlit(self.env.eval_attenuation(base_name, alternatives)?),
-                None => {
-                    // TODO: properly consolidate constant patterns into literals.
-                    match self.instantiate_pattern(r.label())? {
-                        P::Pattern::DLit(b) =>
-                            P::Pattern::DCompound(Box::new(P::DCompound::Rec {
-                                ctor: Box::new(P::CRec {
-                                    label: b.value,
-                                    arity: r.fields().len().into(),
-                                }),
-                                members: r.fields().iter().enumerate()
-                                    .map(|(i, p)| Ok((i.into(), self.instantiate_pattern(p)?)))
-                                    .filter(|e| discard() != e.as_ref().unwrap().1)
-                                    .collect::<io::Result<Map<SignedInteger, P::Pattern>>>()?,
-                            })),
-                        _ => Err(bad_instruction("Record pattern must have literal label"))?,
-                    }
-                },
+                None =>  {
+                    let label = self.instantiate_pattern(r.label())?;
+                    let fields = r.fields().iter().map(|p| self.instantiate_pattern(p))
+                        .collect::<io::Result<Vec<P::Pattern>>>()?;
+                    P::Pattern::DCompound(Box::new(P::DCompound::Rec {
+                        label: drop_literal(&label)
+                            .ok_or(bad_instruction("Record pattern must have literal label"))?,
+                        fields,
+                    }))
+                }
             },
             Value::Sequence(v) =>
                 P::Pattern::DCompound(Box::new(P::DCompound::Arr {
-                    ctor: Box::new(P::CArr {
-                        arity: v.len().into(),
-                    }),
-                    members: v.iter().enumerate()
-                        .map(|(i, p)| Ok((i.into(), self.instantiate_pattern(p)?)))
-                        .filter(|e| discard() != e.as_ref().unwrap().1)
-                        .collect::<io::Result<Map<SignedInteger, P::Pattern>>>()?,
+                    items: v.iter()
+                        .map(|p| self.instantiate_pattern(p))
+                        .collect::<io::Result<Vec<P::Pattern>>>()?,
                 })),
             Value::Set(_) =>
                 Err(bad_instruction(&format!("Sets not permitted in patterns: {:?}", template)))?,
             Value::Dictionary(v) =>
                 P::Pattern::DCompound(Box::new(P::DCompound::Dict {
-                    ctor: Box::new(P::CDict),
-                    members: v.iter()
+                    entries: v.iter()
                         .map(|(a, b)| Ok((a.clone(), self.instantiate_pattern(b)?)))
                         .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
                 })),
@@ -618,31 +608,33 @@ fn embed_pattern(p: &P::Pattern) -> sturdy::Pattern {
             pattern: embed_pattern(&b.pattern),
         })),
         P::Pattern::DLit(b) => sturdy::Pattern::Lit(Box::new(sturdy::Lit {
-            value: b.value.clone(),
+            value: language().unparse(&b.value),
         })),
         P::Pattern::DCompound(b) => sturdy::Pattern::PCompound(Box::new(match &**b {
-            P::DCompound::Rec { ctor, members } =>
+            P::DCompound::Rec { label, fields } =>
                 sturdy::PCompound {
                     ctor: sturdy::ConstructorSpec::CRec(Box::new(sturdy::CRec {
-                        label: ctor.label.clone(),
-                        arity: ctor.arity.clone(),
+                        label: label.clone(),
+                        arity: fields.len().into(),
                     })),
                     members: sturdy::PCompoundMembers(
-                        members.iter().map(|(k, v)| (AnyValue::new(k), embed_pattern(v))).collect()),
+                        fields.iter().enumerate().map(
+                            |(k, v)| (AnyValue::new(k), embed_pattern(v))).collect()),
                 },
-            P::DCompound::Arr { ctor, members } =>
+            P::DCompound::Arr { items } =>
                 sturdy::PCompound {
                     ctor: sturdy::ConstructorSpec::CArr(Box::new(sturdy::CArr {
-                        arity: ctor.arity.clone(),
+                        arity: items.len().into(),
                     })),
                     members: sturdy::PCompoundMembers(
-                        members.iter().map(|(k, v)| (AnyValue::new(k), embed_pattern(v))).collect()),
+                        items.iter().enumerate().map(
+                            |(k, v)| (AnyValue::new(k), embed_pattern(v))).collect()),
                 },
-            P::DCompound::Dict { ctor: _, members } =>
+            P::DCompound::Dict { entries } =>
                 sturdy::PCompound {
                     ctor: sturdy::ConstructorSpec::CDict(Box::new(sturdy::CDict)),
                     members: sturdy::PCompoundMembers(
-                        members.iter().map(|(k, v)| (k.clone(), embed_pattern(v))).collect()),
+                        entries.iter().map(|(k, v)| (k.clone(), embed_pattern(v))).collect()),
                 },
         })),
     }

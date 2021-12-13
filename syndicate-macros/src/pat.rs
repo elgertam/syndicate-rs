@@ -7,20 +7,18 @@ use quote::quote;
 use syn::parse_macro_input;
 
 use crate::stx::Stx;
-use crate::val::emit_set;
 use crate::val::to_value_expr;
 use crate::val::value_to_value_expr;
 
 pub fn lit<T: ToTokens>(e: T) -> TokenStream2 {
-    quote!(
-        syndicate::schemas::dataspace_patterns::Pattern::DLit(Box::new(
-            syndicate::schemas::dataspace_patterns::DLit { value: #e })))
+    quote!(syndicate::pattern::lift_literal(#e))
 }
 
 fn compile_sequence_members(stxs: &Vec<Stx>) -> Result<Vec<TokenStream2>, &'static str> {
-    stxs.iter().enumerate().map(|(i, stx)| {
-        let p = to_pattern_expr(stx)?;
-        Ok(quote!((#i .into(), #p)))
+    stxs.iter().map(|stx| {
+        // let p = to_pattern_expr(stx)?;
+        // Ok(quote!(#p))
+        to_pattern_expr(stx)
     }).collect()
 }
 
@@ -51,24 +49,21 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
             Ok(quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard)))),
 
         Stx::Rec(l, fs) => {
-            let arity = fs.len() as u128;
             let label = to_value_expr(&*l)?;
             let members = compile_sequence_members(fs)?;
             Ok(quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Rec {
-                ctor: Box::new(#P_::CRec { label: #label, arity: #arity .into() }),
-                members: #MapFromIterator_(vec![#(#members),*])
+                label: #label,
+                fields: vec![#(#members),*],
             }))))
         },
         Stx::Seq(stxs) => {
-            let arity = stxs.len() as u128;
             let members = compile_sequence_members(stxs)?;
             Ok(quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Arr {
-                ctor: Box::new(#P_::CArr { arity: #arity .into() }),
-                members: #MapFromIterator_(vec![#(#members),*])
+                items: vec![#(#members),*],
             }))))
         }
-        Stx::Set(stxs) =>
-            Ok(lit(emit_set(&stxs.iter().map(to_value_expr).collect::<Result<Vec<_>,_>>()?))),
+        Stx::Set(_stxs) =>
+            Err("Set literals not supported in patterns"),
         Stx::Dict(d) => {
             let members = d.iter().map(|(k, v)| {
                 let k = to_value_expr(k)?;
@@ -76,8 +71,7 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
                 Ok(quote!((#k, #v)))
             }).collect::<Result<Vec<_>, &'static str>>()?;
             Ok(quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Dict {
-                ctor: Box::new(#P_::CDict),
-                members: #MapFromIterator_(vec![#(#members),*])
+                entries: #MapFromIterator_(vec![#(#members),*])
             }))))
         }
     }

@@ -170,11 +170,10 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                 lit(ValueCompiler::for_patterns().compile(v)),
         }
         Value::Record(r) => {
-            let arity = r.arity() as u128;
             match r.label().value().as_symbol() {
                 None => panic!("Record labels in patterns must be symbols"),
                 Some(label) =>
-                    if label.starts_with("$") && arity == 1 {
+                    if label.starts_with("$") && r.arity() == 1 {
                         let nested = compile_pattern(&r.fields()[0]);
                         quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
                             pattern: #nested
@@ -188,23 +187,16 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                         };
                         let members = compile_sequence_members(r.fields());
                         quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Rec {
-                            ctor: Box::new(#P_::CRec {
-                                label: #label_stx,
-                                arity: #arity .into(),
-                            }),
-                            members: #MapFromIterator_(vec![#(#members),*])
+                            label: #label_stx,
+                            fields: vec![#(#members),*],
                         })))
                     }
             }
         }
         Value::Sequence(vs) => {
-            let arity = vs.len() as u128;
             let members = compile_sequence_members(vs);
             quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Arr {
-                ctor: Box::new(#P_::CArr {
-                    arity: #arity .into(),
-                }),
-                members: #MapFromIterator_(vec![#(#members),*])
+                items: vec![#(#members),*],
             })))
         }
         Value::Set(_) =>
@@ -216,8 +208,7 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                 quote!((#k, #v))
             }).collect::<Vec<_>>();
             quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Dict {
-                ctor: Box::new(#P_::CDict),
-                members: #MapFromIterator_(vec![#(#members),*])
+                entries: #MapFromIterator_(vec![#(#members),*])
             })))
         }
         _ => lit(ValueCompiler::for_patterns().compile(v)),

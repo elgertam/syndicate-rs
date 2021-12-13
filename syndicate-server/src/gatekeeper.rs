@@ -56,7 +56,7 @@ pub fn handle_resolve(
         .create_cap(t);
     if let Some(oh) = ds.assert(t, language(), &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
-        pattern: syndicate_macros::pattern!{<bind #(queried_oid) $ $>},
+        pattern: syndicate_macros::pattern!{<bind #(&queried_oid) $ $>},
         observer: handler,
     }) {
         Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))
