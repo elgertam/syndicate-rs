@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-macros"
-version = "0.10.1"
+version = "0.11.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
