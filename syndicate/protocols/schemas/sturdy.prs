@@ -20,11 +20,6 @@ WireRef = @mine [0 @oid Oid] / @yours [1 @oid Oid @attenuation Caveat ...].
 
 ;---------------------------------------------------------------------------
 
-ConstructorSpec = CRec / CArr / CDict .
-CRec = <rec @label any @arity int>.
-CArr = <arr @arity int>.
-CDict = <dict>.
-
 Lit = <lit @value any>.
 
 Pattern = PDiscard / PAtom / PEmbedded / PBind / PAnd / PNot / Lit / PCompound .
@@ -34,11 +29,15 @@ PEmbedded = =Embedded .
 PBind = <bind @pattern Pattern>.
 PAnd = <and @patterns [Pattern ...]>.
 PNot = <not @pattern Pattern>.
-PCompound = <compound @ctor ConstructorSpec @members PCompoundMembers>.
-PCompoundMembers = { any: Pattern ...:... }.
+PCompound =
+    / @rec <rec @label any @fields [Pattern ...]>
+    / @arr <arr @items [Pattern ...]>
+    / @dict <dict @entries { any: Pattern ...:... }> .
 
 Template = TAttenuate / TRef / Lit / TCompound .
 TAttenuate = <attenuate @template Template @attenuation Attenuation>.
 TRef = <ref @binding int>.
-TCompound = <compound @ctor ConstructorSpec @members TCompoundMembers>.
-TCompoundMembers = { any: Template ...:... }.
+TCompound =
+    / @rec <rec @label any @fields [Template ...]>
+    / @arr <arr @items [Template ...]>
+    / @dict <dict @entries { any: Template ...:... }> .
