@@ -26,15 +26,6 @@ pub enum CaveatError {
     UnboundRef,
     /// A pattern includes a negation of a subpattern that includes a binding.
     BindingUnderNegation,
-    /// A constructor specification includes an arity that exceeds the range of a [`usize`].
-    LudicrousArity,
-    /// A member index in a compound pattern exceeds the arity limit of the constructor.
-    IndexOutOfBounds,
-    /// A member index for a sequence-like compound is not an integer.
-    InvalidIndex,
-    /// A compound template does not specify a subtemplate for each of
-    /// the slots of the compound value being constructed.
-    IncompleteTemplate,
 }
 
 impl Attenuation {
@@ -78,37 +69,6 @@ impl Caveat {
     }
 }
 
-impl ConstructorSpec {
-    fn arity(&self) -> Result<Option<usize>, CaveatError> {
-        match self {
-            ConstructorSpec::CRec(b) => match usize::try_from(&(&**b).arity) {
-                Err(_) => Err(CaveatError::LudicrousArity),
-                Ok(a) => Ok(Some(a)),
-            }
-            ConstructorSpec::CArr(b) => match usize::try_from(&(&**b).arity) {
-                Err(_) => return Err(CaveatError::LudicrousArity),
-                Ok(a) => Ok(Some(a)),
-            }
-            ConstructorSpec::CDict(_) => Ok(None),
-        }
-    }
-}
-
-fn check_member_key(limit: usize, k: &_Any) -> Result<(), CaveatError> {
-    match k.value().as_signedinteger() {
-        None => Err(CaveatError::InvalidIndex),
-        Some(k) => match usize::try_from(k) {
-            Err(_) => Err(CaveatError::IndexOutOfBounds),
-            Ok(k) =>
-                if k >= limit {
-                    Err(CaveatError::IndexOutOfBounds)
-                } else {
-                    Ok(())
-                },
-        }
-    }
-}
-
 impl Pattern {
     fn binding_count(&self) -> Result<usize, CaveatError> {
         match self {
@@ -132,17 +92,22 @@ impl Pattern {
                 }
                 Ok(count)
             }
-            Pattern::PCompound(b) => {
-                let PCompound { ctor, members: PCompoundMembers(ms) } = &**b;
-                let arity = ctor.arity()?;
-                let mut count = 0;
-                for (k, p) in ms.iter() {
-                    if let Some(limit) = arity {
-                        check_member_key(limit, k)?;
+            Pattern::PCompound(b) => match &**b {
+                PCompound::Rec { fields: items, .. } |
+                PCompound::Arr { items } => {
+                    let mut count = 0;
+                    for p in items.iter() {
+                        count += p.binding_count()?;
                     }
-                    count += p.binding_count()?
+                    Ok(count)
                 }
-                Ok(count)
+                PCompound::Dict { entries } => {
+                    let mut count = 0;
+                    for (_k, p) in entries.iter() {
+                        count += p.binding_count()?;
+                    }
+                    Ok(count)
+                }
             }
         }
     }
@@ -173,42 +138,34 @@ impl Pattern {
             Pattern::PNot(b) => !(&**b).pattern.matches(a, bindings),
             Pattern::Lit(b) => &(&**b).value == a,
             Pattern::PCompound(b) => match &**b {
-                PCompound { ctor: ConstructorSpec::CRec(b), members: PCompoundMembers(ms) } => {
-                    let CRec { label, arity } = &**b;
-                    let arity = usize::try_from(arity).expect("in-range arity");
-                    match a.value().as_record(Some(arity)) {
+                PCompound::Rec { label, fields } => {
+                    match a.value().as_record(Some(fields.len())) {
                         Some(r) => {
                             if r.label() != label { return false; }
-                            for (k, p) in ms.iter() {
-                                let k = k.value().as_signedinteger().expect("integer index");
-                                let k = usize::try_from(k).expect("in-range index");
-                                if !p.matches(&r.fields()[k], bindings) { return false; }
+                            for (i, p) in fields.iter().enumerate() {
+                                if !p.matches(&r.fields()[i], bindings) { return false; }
                             }
                             true
                         },
                         None => false,
                     }
                 }
-                PCompound { ctor: ConstructorSpec::CArr(b), members: PCompoundMembers(ms) } => {
-                    let CArr { arity } = &**b;
-                    let arity = usize::try_from(arity).expect("in-range arity");
+                PCompound::Arr { items } => {
                     match a.value().as_sequence() {
                         Some(vs) => {
-                            if vs.len() < arity { return false; }
-                            for (k, p) in ms.iter() {
-                                let k = k.value().as_signedinteger().expect("integer index");
-                                let k = usize::try_from(k).expect("in-range index");
-                                if !p.matches(&vs[k], bindings) { return false; }
+                            if vs.len() < items.len() { return false; }
+                            for (i, p) in items.iter().enumerate() {
+                                if !p.matches(&vs[i], bindings) { return false; }
                             }
                             true
                         },
                         None => false,
                     }
                 }
-                PCompound { ctor: ConstructorSpec::CDict(_), members: PCompoundMembers(ms) } => {
+                PCompound::Dict { entries } => {
                     match a.value().as_dictionary() {
                         Some(es) => {
-                            for (k, p) in ms.iter() {
+                            for (k, p) in entries.iter() {
                                 match es.get(k) {
                                     Some(v) => if !p.matches(v, bindings) { return false; },
                                     None => return false,
@@ -237,22 +194,22 @@ impl Template {
                 Err(_) => Err(CaveatError::UnboundRef),
             },
             Template::Lit(_) => Ok(0),
-            Template::TCompound(b) => {
-                let TCompound { ctor, members: TCompoundMembers(ms) } = &**b;
-                let arity = ctor.arity()?;
-                let mut max = 0;
-                if let Some(limit) = arity {
-                    if ms.len() != limit {
-                        return Err(CaveatError::IncompleteTemplate);
+            Template::TCompound(b) => match &**b {
+                TCompound::Rec { fields: items, .. } |
+                TCompound::Arr { items } => {
+                    let mut max = 0;
+                    for t in items.iter() {
+                        max = max.max(t.implied_binding_count()?);
                     }
+                    Ok(max)
                 }
-                for (k, t) in ms.iter() {
-                    if let Some(limit) = arity {
-                        check_member_key(limit, k)?;
+                TCompound::Dict { entries } => {
+                    let mut max = 0;
+                    for (_k, t) in entries.iter() {
+                        max = max.max(t.implied_binding_count()?);
                     }
-                    max = max.max(t.implied_binding_count()?);
+                    Ok(max)
                 }
-                Ok(max)
             }
         }
     }
@@ -267,48 +224,27 @@ impl Template {
             }
             Template::TRef(b) => Some(bindings[usize::try_from(&(&**b).binding).expect("in-range index")].clone()),
             Template::Lit(b) => Some((&**b).value.clone()),
-            Template::TCompound(b) => {
-                let TCompound { ctor, members: TCompoundMembers(ms) } = &**b;
-                match ctor {
-                    ConstructorSpec::CRec(b) => {
-                        let CRec { label, arity } = &**b;
-                        let arity = usize::try_from(arity).expect("in-range arity");
-                        let mut r = Value::record(label.clone(), arity);
-                        for i in 0..arity {
-                            let t = ms.get(&Value::from(i).wrap()).expect("entry for each index");
-                            match t.instantiate(bindings) {
-                                None => return None,
-                                Some(v) => r.fields_vec_mut().push(v),
-                            }
-                        }
-                        Some(r.finish().wrap())
+            Template::TCompound(b) => match &**b {
+                TCompound::Rec { label, fields } => {
+                    let mut r = Value::record(label.clone(), fields.len());
+                    for t in fields.iter() {
+                        r.fields_vec_mut().push(t.instantiate(bindings)?);
                     }
-                    ConstructorSpec::CArr(b) => {
-                        let CArr { arity } = &**b;
-                        let arity = usize::try_from(arity).expect("in-range arity");
-                        let mut r = Vec::with_capacity(arity);
-                        for i in 0..arity {
-                            let t = ms.get(&Value::from(i).wrap()).expect("entry for each index");
-                            match t.instantiate(bindings) {
-                                None => return None,
-                                Some(v) => r.push(v),
-                            }
-                        }
-                        Some(Value::from(r).wrap())
+                    Some(r.finish().wrap())
+                }
+                TCompound::Arr { items } => {
+                    let mut r = Vec::with_capacity(items.len());
+                    for t in items.iter() {
+                        r.push(t.instantiate(bindings)?);
                     }
-                    ConstructorSpec::CDict(_) => {
-                        let mut r = Map::new();
-                        for (k, t) in ms.iter() {
-                            match t.instantiate(bindings) {
-                                None => return None,
-                                Some(v) => {
-                                    r.insert(k.clone(), v);
-                                    ()
-                                }
-                            }
-                        }
-                        Some(Value::from(r).wrap())
+                    Some(Value::from(r).wrap())
+                }
+                TCompound::Dict { entries } => {
+                    let mut r = Map::new();
+                    for (k, t) in entries.iter() {
+                        r.insert(k.clone(), t.instantiate(bindings)?);
                     }
+                    Some(Value::from(r).wrap())
                 }
             }
         }

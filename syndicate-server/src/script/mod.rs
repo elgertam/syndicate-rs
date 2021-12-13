@@ -559,43 +559,29 @@ impl Env {
                     // TODO: properly consolidate constant templates into literals.
                     match self.instantiate_template(binding_names, r.label())? {
                         sturdy::Template::Lit(b) =>
-                            sturdy::Template::TCompound(Box::new(sturdy::TCompound {
-                                ctor: sturdy::ConstructorSpec::CRec(Box::new(sturdy::CRec {
-                                    label: b.value,
-                                    arity: r.fields().len().into(),
-                                })),
-                                members: sturdy::TCompoundMembers(
-                                    r.fields().iter().enumerate()
-                                        .map(|(i, t)| Ok(
-                                            (AnyValue::new(i),
-                                             self.instantiate_template(binding_names, t)?)))
-                                        .collect::<io::Result<Map<_, sturdy::Template>>>()?),
+                            sturdy::Template::TCompound(Box::new(sturdy::TCompound::Rec {
+                                label: b.value,
+                                fields: r.fields().iter()
+                                    .map(|t| self.instantiate_template(binding_names, t))
+                                    .collect::<io::Result<Vec<sturdy::Template>>>()?,
                             })),
                         _ => Err(bad_instruction("Record template must have literal label"))?,
                     }
                 }
             },
             Value::Sequence(v) =>
-                sturdy::Template::TCompound(Box::new(sturdy::TCompound {
-                    ctor: sturdy::ConstructorSpec::CArr(Box::new(sturdy::CArr {
-                        arity: v.len().into(),
-                    })),
-                    members: sturdy::TCompoundMembers(
-                        v.iter().enumerate()
-                            .map(|(i, p)| Ok(
-                                (AnyValue::new(i),
-                                 self.instantiate_template(binding_names, p)?)))
-                            .collect::<io::Result<Map<_, sturdy::Template>>>()?),
+                sturdy::Template::TCompound(Box::new(sturdy::TCompound::Arr {
+                    items: v.iter()
+                        .map(|p| self.instantiate_template(binding_names, p))
+                        .collect::<io::Result<Vec<sturdy::Template>>>()?,
                 })),
             Value::Set(_) =>
                 Err(bad_instruction(&format!("Sets not permitted in templates: {:?}", template)))?,
             Value::Dictionary(v) =>
-                sturdy::Template::TCompound(Box::new(sturdy::TCompound {
-                    ctor: sturdy::ConstructorSpec::CDict(Box::new(sturdy::CDict)),
-                    members: sturdy::TCompoundMembers(
-                        v.iter()
-                            .map(|(a, b)| Ok((a.clone(), self.instantiate_template(binding_names, b)?)))
-                            .collect::<io::Result<Map<_, sturdy::Template>>>()?),
+                sturdy::Template::TCompound(Box::new(sturdy::TCompound::Dict {
+                    entries: v.iter()
+                        .map(|(a, b)| Ok((a.clone(), self.instantiate_template(binding_names, b)?)))
+                        .collect::<io::Result<Map<_, sturdy::Template>>>()?,
                 })),
         })
     }
@@ -612,29 +598,17 @@ fn embed_pattern(p: &P::Pattern) -> sturdy::Pattern {
         })),
         P::Pattern::DCompound(b) => sturdy::Pattern::PCompound(Box::new(match &**b {
             P::DCompound::Rec { label, fields } =>
-                sturdy::PCompound {
-                    ctor: sturdy::ConstructorSpec::CRec(Box::new(sturdy::CRec {
-                        label: label.clone(),
-                        arity: fields.len().into(),
-                    })),
-                    members: sturdy::PCompoundMembers(
-                        fields.iter().enumerate().map(
-                            |(k, v)| (AnyValue::new(k), embed_pattern(v))).collect()),
+                sturdy::PCompound::Rec {
+                    label: label.clone(),
+                    fields: fields.iter().map(embed_pattern).collect(),
                 },
             P::DCompound::Arr { items } =>
-                sturdy::PCompound {
-                    ctor: sturdy::ConstructorSpec::CArr(Box::new(sturdy::CArr {
-                        arity: items.len().into(),
-                    })),
-                    members: sturdy::PCompoundMembers(
-                        items.iter().enumerate().map(
-                            |(k, v)| (AnyValue::new(k), embed_pattern(v))).collect()),
+                sturdy::PCompound::Arr {
+                    items: items.iter().map(embed_pattern).collect(),
                 },
             P::DCompound::Dict { entries } =>
-                sturdy::PCompound {
-                    ctor: sturdy::ConstructorSpec::CDict(Box::new(sturdy::CDict)),
-                    members: sturdy::PCompoundMembers(
-                        entries.iter().map(|(k, v)| (k.clone(), embed_pattern(v))).collect()),
+                sturdy::PCompound::Dict {
+                    entries: entries.iter().map(|(k, v)| (k.clone(), embed_pattern(v))).collect(),
                 },
         })),
     }
