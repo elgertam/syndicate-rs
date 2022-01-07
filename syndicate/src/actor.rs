@@ -933,6 +933,27 @@ impl<'activation> Activation<'activation> {
         self.at(time::Instant::now() + duration, a)
     }
 
+    /// Executes the given action immediately, and then every time another multiple of the
+    /// given duration has elapsed (so long as the active facet still exists at that time).
+    pub fn every<F: 'static + Send + FnMut(&mut Activation) -> ActorResult>(
+        &mut self,
+        duration: time::Duration,
+        mut a: F,
+    ) -> ActorResult {
+        let account = Arc::clone(self.account());
+        let facet = self.facet.clone();
+        let span = tracing::Span::current().clone();
+        self.linked_task(crate::name!(parent: None, "Activation::every"), async move {
+            let mut timer = tokio::time::interval(duration);
+            loop {
+                timer.tick().await;
+                let _entry = span.enter();
+                facet.activate(Arc::clone(&account), |t| a(t))?;
+            }
+        });
+        Ok(())
+    }
+
     /// Executes the given action at the given instant (so long as the active facet still
     /// exists at that time).
     pub fn at<I: Into<tokio::time::Instant>, F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
