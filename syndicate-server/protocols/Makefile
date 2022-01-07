@@ -4,5 +4,5 @@ clean:
 	rm -f schema-bundle.bin
 
 schema-bundle.bin: schemas/*.prs
-	preserves-schemac schemas/*.prs > $@.tmp
+	preserves-schemac schemas > $@.tmp
 	mv $@.tmp $@
