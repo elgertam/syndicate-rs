@@ -96,3 +96,43 @@ pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
         });
     }}).into()
 }
+
+pub fn on_message(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let d = parse_macro_input!(src as During);
+    let During { turn_stx, ds_stx, lang_stx, pat_stx, body_stx } = &d;
+    let (varname_stx, type_stx, index_stx) = d.bindings();
+    let binding_count = varname_stx.len();
+    let pat_stx_expr = match pat::to_pattern_expr(pat_stx) {
+        Ok(e) => e,
+        Err(e) => return Error::new(Span::call_site(), e).to_compile_error().into(),
+    };
+    (quote_spanned!{Span::mixed_site()=> {
+        let __ds = #ds_stx.clone();
+        let __lang = #lang_stx;
+        let monitor = syndicate::during::entity(())
+            .on_message(move |_, t, captures: syndicate::actor::AnyValue| {
+                if let Some(captures) = {
+                    use syndicate::value::NestedValue;
+                    use syndicate::value::Value;
+                    captures.value().as_sequence()
+                }{
+                    if captures.len() == #binding_count {
+                        #(let #varname_stx: #type_stx = match {
+                            use syndicate::preserves_schema::Codec;
+                            __lang.parse(&captures[#index_stx])
+                        } {
+                            Ok(v) => v,
+                            Err(_) => return Ok(()),
+                        };)*
+                        return (#body_stx)(t);
+                    }
+                }
+                Ok(())
+            })
+            .create_cap(#turn_stx);
+        __ds.assert(#turn_stx, __lang, &syndicate::schemas::dataspace::Observe {
+            pattern: #pat_stx_expr,
+            observer: monitor,
+        });
+    }}).into()
+}
