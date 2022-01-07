@@ -66,6 +66,15 @@ impl Default for SupervisorConfiguration {
     }
 }
 
+impl SupervisorConfiguration {
+    pub fn on_error_only() -> Self {
+        Self {
+            restart_policy: RestartPolicy::OnErrorOnly,
+            .. Self::default()
+        }
+    }
+}
+
 impl Entity<Protocol> for Supervisor
 {
     fn assert(&mut self, t: &mut Activation, m: Protocol, _h: Handle) -> ActorResult {

@@ -26,7 +26,7 @@ pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
             Supervisor::start(
                 t,
                 syndicate::name!(parent: None, "daemon", id = ?spec.id),
-                SupervisorConfiguration::default(),
+                SupervisorConfiguration::on_error_only(),
                 enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
                 enclose!((config_ds, root_ds) move |t|
                          enclose!((config_ds, root_ds, spec) run(t, config_ds, root_ds, spec))))
@@ -112,6 +112,12 @@ impl DaemonProcessSpec {
                 process: Process::Simple(command_line).elaborate(),
                 ready_on_start: ReadyOnStart::Absent,
                 restart: RestartField::Absent,
+                protocol: ProtocolField::Absent,
+            },
+            DaemonProcessSpec::OneShot { setup } => FullDaemonProcess {
+                process: Process::Simple(setup).elaborate(),
+                ready_on_start: ReadyOnStart::Absent,
+                restart: RestartField::Present { restart: Box::new(RestartPolicy::OnError) },
                 protocol: ProtocolField::Absent,
             },
             DaemonProcessSpec::Full(spec) => *spec,
@@ -379,7 +385,7 @@ fn run(
                                           };
                                           let restart_policy = match config.restart {
                                               RestartField::Present { restart } => *restart,
-                                              RestartField::Absent => RestartPolicy::All,
+                                              RestartField::Absent => RestartPolicy::Always,
                                               RestartField::Invalid { restart } => {
                                                   tracing::error!(?restart, "Invalid restart value");
                                                   Err("Invalid restart value")?

@@ -6,7 +6,7 @@ Service = DaemonService .
 DaemonService = <daemon @id any> .
 DaemonProcess = <daemon @id any @config DaemonProcessSpec>.
 
-DaemonProcessSpec = @simple CommandLine / @full FullDaemonProcess .
+DaemonProcessSpec = @simple CommandLine / @oneShot <one-shot @setup CommandLine> / @full FullDaemonProcess .
 FullDaemonProcess = @process FullProcess & @readyOnStart ReadyOnStart & @restart RestartField & @protocol ProtocolField .
 ReadyOnStart = @present { readyOnStart: bool } / @invalid { readyOnStart: any } / @absent {} .
 RestartField = @present { restart: RestartPolicy } / @invalid { restart: any } / @absent {} .
