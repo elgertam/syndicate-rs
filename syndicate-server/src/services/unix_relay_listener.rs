@@ -32,6 +32,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult {
+    lifecycle::terminate_on_service_restart(t, &ds, &spec);
     let path_str = spec.addr.path.clone();
     let parent_span = tracing::Span::current();
     let facet = t.facet.clone();

@@ -116,7 +116,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if config.debt_reporter {
             server_config_ds.assert(t, language(), &service::RunService {
-                service_name: language().unparse(&internal_services::DebtReporter),
+                service_name: language().unparse(&internal_services::DebtReporter {
+                    interval_seconds: (1.0).into(),
+                }),
             });
         }
 

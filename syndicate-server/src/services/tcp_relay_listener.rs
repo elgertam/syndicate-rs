@@ -28,6 +28,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult {
+    lifecycle::terminate_on_service_restart(t, &ds, &spec);
     let host = spec.addr.host.clone();
     let port = u16::try_from(&spec.addr.port).map_err(|_| "Invalid TCP port number")?;
     let parent_span = tracing::Span::current();

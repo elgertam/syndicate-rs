@@ -324,6 +324,8 @@ fn run(
     root_ds: Arc<Cap>,
     service: DaemonService,
 ) -> ActorResult {
+    lifecycle::terminate_on_service_restart(t, &config_ds, &service);
+
     let spec = language().unparse(&service);
 
     let total_configs = t.named_field("total_configs", 0isize);

@@ -7,6 +7,8 @@ use syndicate::preserves_schema::support::Unparse;
 use crate::language::Language;
 use crate::language::language;
 
+use syndicate_macros::on_message;
+
 pub fn updater<'a, N: Clone + Unparse<&'a Language<AnyValue>, AnyValue>>(
     ds: Arc<Cap>,
     name: N,
@@ -34,4 +36,16 @@ pub fn started<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(service_name: &
 
 pub fn ready<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(service_name: &N) -> ServiceState {
     lifecycle(service_name, State::Ready)
+}
+
+pub fn terminate_on_service_restart<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(
+    t: &mut Activation,
+    ds: &Arc<Cap>,
+    service_name: &N,
+) {
+    on_message!(t, ds, language(), <restart-service #(&service_name.unparse(language()))>, |t: &mut Activation| {
+        tracing::info!("Terminating to restart");
+        t.state.shutdown();
+        Ok(())
+    });
 }

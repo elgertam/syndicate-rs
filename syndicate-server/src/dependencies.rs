@@ -28,26 +28,26 @@ pub fn boot(t: &mut Activation, ds: Arc<Cap>) {
 
 fn run(t: &mut Activation, ds: Arc<Cap>, service_name: AnyValue) -> ActorResult {
     if !service_name.value().is_simple_record("milestone", Some(1)) {
-        let core_dep = service::ServiceDependency {
+        let system_layer_dep = service::ServiceDependency {
             depender: service_name.clone(),
             dependee: service::ServiceState {
                 service_name: language().unparse(&internal_services::Milestone {
-                    name: AnyValue::symbol("core"),
+                    name: AnyValue::symbol("system-layer"),
                 }),
                 state: service::State::Ready,
             },
         };
-        let milestone_monitor = entity(ds.assert(t, language(), &core_dep))
+        let milestone_monitor = entity(ds.assert(t, language(), &system_layer_dep))
             .on_asserted(enclose!((ds) move |handle, t, _captures: AnyValue| {
                 ds.update::<_, service::ServiceDependency>(t, handle, language(), None);
-                Ok(Some(Box::new(enclose!((ds, core_dep) move |handle, t| {
-                    ds.update(t, handle, language(), Some(&core_dep));
+                Ok(Some(Box::new(enclose!((ds, system_layer_dep) move |handle, t| {
+                    ds.update(t, handle, language(), Some(&system_layer_dep));
                     Ok(())
                 }))))
             }))
             .create_cap(t);
         ds.assert(t, language(), &Observe {
-            pattern: syndicate_macros::pattern!{<core-service #(&service_name)>},
+            pattern: syndicate_macros::pattern!{<system-layer-service #(&service_name)>},
             observer: milestone_monitor,
         });
     }

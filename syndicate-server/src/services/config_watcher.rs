@@ -160,6 +160,8 @@ fn run(
     config_ds: Arc<Cap>,
     spec: internal_services::ConfigWatcher,
 ) -> ActorResult {
+    lifecycle::terminate_on_service_restart(t, &config_ds, &spec);
+
     let path = fs::canonicalize(spec.path.clone())?;
     let env = script::Env::new(path, spec.env.0.clone());
 
