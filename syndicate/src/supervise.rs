@@ -61,7 +61,7 @@ impl Default for SupervisorConfiguration {
             period: Duration::from_secs(5),
             pause_time: Duration::from_millis(200),
             sleep_time: Duration::from_secs(10),
-            restart_policy: RestartPolicy::OnErrorOnly,
+            restart_policy: RestartPolicy::Always,
         }
     }
 }
