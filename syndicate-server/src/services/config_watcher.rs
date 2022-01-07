@@ -17,7 +17,7 @@ use syndicate::error::Error;
 use syndicate::enclose;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::value::BinarySource;
-use syndicate::value::IOBinarySource;
+use syndicate::value::BytesBinarySource;
 use syndicate::value::Map;
 use syndicate::value::NestedValue;
 use syndicate::value::NoEmbeddedDomainCodec;
@@ -52,7 +52,9 @@ fn process_existing_file(
     t: &mut Activation,
     mut env: script::Env,
 ) -> io::Result<Option<FacetId>> {
-    let tokens: Vec<AnyValue> = IOBinarySource::new(fs::File::open(&env.path)?)
+    let mut contents = fs::read(&env.path)?;
+    contents.append(&mut Vec::from("\n[]".as_bytes())); // improved ergonomics of trailing comments
+    let tokens: Vec<AnyValue> = BytesBinarySource::new(&contents)
         .text::<AnyValue, _>(ViaCodec::new(NoEmbeddedDomainCodec))
         .configured(true)
         .collect::<Result<Vec<_>, _>>()?;
