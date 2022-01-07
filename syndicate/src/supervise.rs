@@ -105,11 +105,12 @@ impl Entity<Protocol> for Supervisor
                 }
                 let self_ref = Arc::clone(&self.self_ref);
                 let wait_time = if self.restarts.len() > self.config.intensity {
+                    tracing::warn!(?self.config.sleep_time, "Restart intensity exceeded; sleeping");
                     self.config.sleep_time
                 } else {
+                    tracing::trace!(?self.config.pause_time, "pausing");
                     self.config.pause_time
                 };
-                tracing::trace!(?wait_time, "sleeping");
                 t.after(wait_time, move |t| {
                     tracing::trace!("Sending retry trigger");
                     t.message(&self_ref, Protocol::Retry);
