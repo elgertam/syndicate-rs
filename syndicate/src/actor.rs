@@ -1087,29 +1087,18 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
-    /// commits.
-    ///
-    /// Then,
-    ///  - if `continuation` is supplied, and
-    ///  - the facet to be stopped hasn't been stopped at the time of the `stop_facet_and_continue` call, and
-    ///  - none of the shutdown handlers yields an error, and
-    ///  - the facet's parent facet is alive,
-    /// executes `continuation` (immediately) in the *parent* facet's context.
-    ///
+    /// If `continuation` is supplied, adds it as a stop action for the [`Facet`] named by
+    /// `facet_id`. Then, cleanly stops the facet immediately, without waiting for `self` to
+    /// commit.
     pub fn stop_facet_and_continue<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
         facet_id: FacetId,
         continuation: Option<F>,
     ) -> ActorResult {
-        let maybe_parent_id = self.active_facet().and_then(|f| f.parent_facet_id);
-        self.enqueue_for_myself_at_commit(Box::new(move |t| t._terminate_facet(facet_id, true)));
         if let Some(k) = continuation {
-            if let Some(parent_id) = maybe_parent_id {
-                self.with_facet(true, parent_id, k)?;
-            }
+            self.on_facet_stop(facet_id, k);
         }
-        Ok(())
+        self._terminate_facet(facet_id, true)
     }
 
     /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
@@ -1159,10 +1148,13 @@ impl<'activation> Activation<'activation> {
                     }
                 }
                 if alive {
-                    for action in std::mem::take(&mut f.stop_actions) {
-                        action(t)?;
-                    }
                     let parent_facet_id = f.parent_facet_id;
+                    t.with_facet(false, parent_facet_id.unwrap_or(facet_id), |t| {
+                        for action in std::mem::take(&mut f.stop_actions) {
+                            action(t)?;
+                        }
+                        Ok(())
+                    })?;
                     f.retract_outbound(t);
                     // ^ we need retraction to happen right here so that child-facet
                     // cleanup-actions are performed before parent-facet cleanup-actions.
