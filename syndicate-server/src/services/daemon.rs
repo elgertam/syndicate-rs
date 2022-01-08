@@ -22,16 +22,37 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
     t.spawn(syndicate::name!("daemon"), move |t| {
-        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService>, |t| {
-            Supervisor::start(
-                t,
-                syndicate::name!(parent: None, "daemon", id = ?spec.id),
-                SupervisorConfiguration::on_error_only(),
-                enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
-                enclose!((config_ds, root_ds) move |t|
-                         enclose!((config_ds, root_ds, spec) run(t, config_ds, root_ds, spec))))
-        }))
+        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService>,
+                   enclose!((config_ds, root_ds) move |t: &mut Activation| {
+                       supervise_daemon(t, config_ds, root_ds, spec)
+                   })))
     });
+}
+
+fn supervise_daemon(
+    t: &mut Activation,
+    config_ds: Arc<Cap>,
+    root_ds: Arc<Cap>,
+    spec: DaemonService,
+) -> ActorResult {
+    t.facet(|t| {
+        lifecycle::on_service_restart(t, &config_ds, &spec, enclose!(
+            (config_ds, root_ds, spec) move |t| {
+                tracing::info!(id = ?spec.id, "Terminating to restart");
+                t.stop_facet_and_continue(t.facet.facet_id, Some(
+                    enclose!((config_ds, root_ds, spec) move |t: &mut Activation| {
+                        supervise_daemon(t, config_ds, root_ds, spec)
+                    })))
+            }));
+        Supervisor::start(
+            t,
+            syndicate::name!(parent: None, "daemon", id = ?spec.id),
+            SupervisorConfiguration::on_error_only(),
+            enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
+            enclose!((config_ds, root_ds) move |t|
+                     enclose!((config_ds, root_ds, spec) run(t, config_ds, root_ds, spec))))
+    })?;
+    Ok(())
 }
 
 impl Process {
@@ -330,8 +351,6 @@ fn run(
     root_ds: Arc<Cap>,
     service: DaemonService,
 ) -> ActorResult {
-    lifecycle::terminate_on_service_restart(t, &config_ds, &service);
-
     let spec = language().unparse(&service);
 
     let total_configs = t.named_field("total_configs", 0isize);

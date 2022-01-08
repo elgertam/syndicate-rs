@@ -38,12 +38,23 @@ pub fn ready<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(service_name: &N)
     lifecycle(service_name, State::Ready)
 }
 
+pub fn on_service_restart<'a,
+                          N: Unparse<&'a Language<AnyValue>, AnyValue>,
+                          F: 'static + Send + FnMut(&mut Activation) -> ActorResult>(
+    t: &mut Activation,
+    ds: &Arc<Cap>,
+    service_name: &N,
+    mut f: F,
+) {
+    on_message!(t, ds, language(), <restart-service #(&service_name.unparse(language()))>, f);
+}
+
 pub fn terminate_on_service_restart<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(
     t: &mut Activation,
     ds: &Arc<Cap>,
     service_name: &N,
 ) {
-    on_message!(t, ds, language(), <restart-service #(&service_name.unparse(language()))>, |t: &mut Activation| {
+    on_service_restart(t, ds, service_name, |t| {
         tracing::info!("Terminating to restart");
         t.state.shutdown();
         Ok(())
