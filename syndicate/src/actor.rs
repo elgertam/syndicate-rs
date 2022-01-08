@@ -184,7 +184,8 @@ pub trait Entity<M>: Send {
     }
 
     /// Optional callback for running actions when the entity's owning [Facet] terminates
-    /// cleanly. Will not be called in case of abnormal shutdown (crash) of an actor.
+    /// cleanly. Will not be called in case of abnormal shutdown (crash) of an actor. Callbacks
+    /// run in the context of the owning facet's *parent* facet.
     ///
     /// Programs register an entity's stop hook with [Activation::on_stop_notify].
     ///
@@ -817,7 +818,8 @@ impl<'activation> Activation<'activation> {
     }
 
     /// Registers the entity `r` in the list of stop actions for the active facet. If the facet
-    /// terminates cleanly, `r`'s [`stop`][Entity::stop] will be called.
+    /// terminates cleanly, `r`'s [`stop`][Entity::stop] will be called in the context of the
+    /// facet's parent.
     ///
     /// **Note.** If the actor crashes, stop actions will *not* be called.
     ///
@@ -832,8 +834,8 @@ impl<'activation> Activation<'activation> {
     }
 
     /// Registers `action` in the list of stop actions for the active facet. If the facet
-    /// terminates cleanly, `action` will be called. See also notes against
-    /// [`on_stop_notify`][Activation::on_stop_notify].
+    /// terminates cleanly, `action` will be called in the context of the facet's parent. See
+    /// also notes against [`on_stop_notify`][Activation::on_stop_notify].
     pub fn on_stop<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(&mut self, action: F) {
         if let Some(f) = self.active_facet() {
             f.stop_actions.push(Box::new(action));
@@ -1703,9 +1705,9 @@ impl RunningActor {
         }
     }
 
-    /// Registers the entity `r` in the list of exit hooks for this
-    /// actor. When the actor terminates, `r`'s
-    /// [`exit_hook`][Entity::exit_hook] will be called.
+    /// Registers the entity `r` in the list of exit hooks for this actor. When the actor
+    /// terminates, `r`'s [`exit_hook`][Entity::exit_hook] will be called in the context of the
+    /// actor's root facet.
     pub fn add_exit_hook<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>) {
         let r = Arc::clone(r);
         self.exit_hooks.push(Box::new(
