@@ -658,6 +658,24 @@ impl<'activation> Activation<'activation> {
         self.state.get_facet(self.facet.facet_id)
     }
 
+    /// Retrieves the chain of facet IDs, in order, from the currently-active [`Facet`] up to
+    /// and including the root facet of the active actor. Useful for debugging.
+    pub fn facet_ids(&mut self) -> Vec<FacetId> {
+        let mut ids = Vec::new();
+        let mut id = self.facet.facet_id;
+        loop {
+            ids.push(id);
+            match self.state.get_facet(id) {
+                None => break,
+                Some(f) => match f.parent_facet_id {
+                    None => break,
+                    Some(p) => id = p,
+                }
+            }
+        }
+        ids
+    }
+
     /// Core API: assert `a` at recipient `r`.
     ///
     /// Returns the [`Handle`] for the new assertion.
