@@ -837,7 +837,15 @@ impl<'activation> Activation<'activation> {
     /// terminates cleanly, `action` will be called in the context of the facet's parent. See
     /// also notes against [`on_stop_notify`][Activation::on_stop_notify].
     pub fn on_stop<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(&mut self, action: F) {
-        if let Some(f) = self.active_facet() {
+        self.on_facet_stop(self.facet.facet_id, action)
+    }
+
+    fn on_facet_stop<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        &mut self,
+        facet_id: FacetId,
+        action: F,
+    ) {
+        if let Some(f) = self.state.get_facet(facet_id) {
             f.stop_actions.push(Box::new(action));
         }
     }
