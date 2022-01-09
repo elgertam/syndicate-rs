@@ -80,7 +80,7 @@ impl Entity<Protocol> for Supervisor
     fn assert(&mut self, t: &mut Activation, m: Protocol, _h: Handle) -> ActorResult {
         match m {
             Protocol::SuperviseeStarted => t.set(&self.state, State::Started),
-            _ => (),
+            _ => Err(format!("Unexpected assertion: {:?}", m).as_str())?,
         }
         Ok(())
     }
