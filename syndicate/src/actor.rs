@@ -1001,11 +1001,6 @@ impl<'activation> Activation<'activation> {
         });
     }
 
-    fn enqueue_for_myself_at_commit(&mut self, action: Action) {
-        let mailbox = self.state.mailbox();
-        self.pending.queue_for_mailbox(&mailbox).push(action);
-    }
-
     /// Schedule the creation of a new actor when the Activation commits.
     pub fn spawn<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
@@ -1014,7 +1009,7 @@ impl<'activation> Activation<'activation> {
     ) -> ActorRef {
         let ac = Actor::new(Some(self.state.actor_id));
         let ac_ref = ac.ac_ref.clone();
-        self.enqueue_for_myself_at_commit(Box::new(move |_| {
+        self.pending.for_myself.push(Box::new(move |_| {
             ac.boot(name, boot);
             Ok(())
         }));
@@ -1034,7 +1029,7 @@ impl<'activation> Activation<'activation> {
         let ac = Actor::new(Some(self.state.actor_id));
         let ac_ref = ac.ac_ref.clone();
         let facet_id = self.facet.facet_id;
-        self.enqueue_for_myself_at_commit(Box::new(move |t| {
+        self.pending.for_myself.push(Box::new(move |t| {
             t.with_facet(true, facet_id, move |t| {
                 ac.link(t).boot(name, boot);
                 Ok(())
@@ -1128,7 +1123,7 @@ impl<'activation> Activation<'activation> {
 
     fn stop_if_inert(&mut self) {
         let facet_id = self.facet.facet_id;
-        self.enqueue_for_myself_at_commit(Box::new(move |t| {
+        self.pending.for_myself.push(Box::new(move |t| {
             tracing::trace!("Checking inertness of facet {} from facet {}", facet_id, t.facet.facet_id);
             if t.state.facet_exists_and_is_inert(facet_id) {
                 tracing::trace!(" - facet {} is inert, stopping it", facet_id);
@@ -1174,8 +1169,7 @@ impl<'activation> Activation<'activation> {
                             tracing::trace!("not terminating parent {:?} of facet {:?}", p, facet_id);
                         }
                     } else {
-                        tracing::trace!("terminating actor of root facet {:?}", facet_id);
-                        t.state.shutdown();
+                        tracing::trace!("no parent of root facet {:?} to terminate", facet_id);
                     }
                 } else {
                     f.retract_outbound(t);
@@ -1312,14 +1306,25 @@ impl<'activation> Activation<'activation> {
     }
 
     fn restore_invariants(&mut self, d: RunDisposition) -> RunDisposition {
-        match d {
+        let d = match d {
             RunDisposition::Continue =>
                 self._restore_invariants().into(),
             RunDisposition::Terminate(Ok(())) =>
                 RunDisposition::Terminate(self._restore_invariants()),
             RunDisposition::Terminate(Err(_)) =>
                 d,
+        };
+
+        // If we would otherwise continue, check the root facet: is it still alive?
+        // If not, then the whole actor should terminate now.
+        if let RunDisposition::Continue = d {
+            if let None = self.state.get_facet(self.state.root) {
+                tracing::trace!("terminating actor because root facet no longer exists");
+                return RunDisposition::Terminate(Ok(()));
+            }
         }
+
+        d
     }
 }
 
