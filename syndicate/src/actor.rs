@@ -1118,6 +1118,14 @@ impl<'activation> Activation<'activation> {
         self.stop_facet(self.facet.facet_id)
     }
 
+    /// Arranges for the active actor's root facet to be stopped cleanly when `self` commits;
+    /// this is one way to arrange a clean shutdown of the entire actor.
+    ///
+    /// Equivalent to `self.stop_facet(self.state.root)`.
+    pub fn stop_root(&mut self) {
+        self.stop_facet(self.state.root);
+    }
+
     fn stop_if_inert(&mut self) {
         let facet_id = self.facet.facet_id;
         self.enqueue_for_myself_at_commit(Box::new(move |t| {

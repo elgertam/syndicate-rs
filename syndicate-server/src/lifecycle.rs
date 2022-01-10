@@ -56,7 +56,7 @@ pub fn terminate_on_service_restart<'a, N: Unparse<&'a Language<AnyValue>, AnyVa
 ) {
     on_service_restart(t, ds, service_name, |t| {
         tracing::info!("Terminating to restart");
-        t.state.shutdown();
+        t.stop_root();
         Ok(())
     });
 }
