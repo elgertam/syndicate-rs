@@ -13,7 +13,7 @@ license = "Apache-2.0"
 proc-macro = true
 
 [dependencies]
-syndicate = { path = "../syndicate", version = "^0.19.0"}
+syndicate = { path = "../syndicate", version = "^0.20.0"}
 
 proc-macro2 = { version = "^1.0", features = ["span-locations"] }
 quote = "^1.0"
