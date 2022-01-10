@@ -44,15 +44,19 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult 
         loop {
             let (stream, addr) = listener.accept().await?;
             let gatekeeper = spec.gatekeeper.clone();
-            Actor::new().boot(
-                syndicate::name!(parent: parent_span.clone(), "conn"),
-                move |t| Ok(t.linked_task(tracing::Span::current(), {
-                    let facet = t.facet.clone();
-                    async move {
-                        detect_protocol(facet, stream, gatekeeper, addr).await?;
-                        Ok(LinkedTaskTermination::KeepFacet)
-                    }
-                })));
+            let name = syndicate::name!(parent: parent_span.clone(), "conn");
+            facet.activate(Account::new(name.clone()), move |t| {
+                t.spawn(name, move |t| {
+                    Ok(t.linked_task(tracing::Span::current(), {
+                        let facet = t.facet.clone();
+                        async move {
+                            detect_protocol(facet, stream, gatekeeper, addr).await?;
+                            Ok(LinkedTaskTermination::KeepFacet)
+                        }
+                    }))
+                });
+                Ok(())
+            })?;
         }
     });
     Ok(())

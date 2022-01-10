@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_args();
     let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
     let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-    Actor::new().boot(syndicate::name!("producer"), |t| {
+    Actor::new(None).boot(syndicate::name!("producer"), |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
             let padding: AnyValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
             let action_count = config.action_count;

@@ -1012,7 +1012,7 @@ impl<'activation> Activation<'activation> {
         name: tracing::Span,
         boot: F,
     ) -> ActorRef {
-        let ac = Actor::new();
+        let ac = Actor::new(Some(self.state.actor_id));
         let ac_ref = ac.ac_ref.clone();
         self.enqueue_for_myself_at_commit(Box::new(move |_| {
             ac.boot(name, boot);
@@ -1031,7 +1031,7 @@ impl<'activation> Activation<'activation> {
         name: tracing::Span,
         boot: F,
     ) -> ActorRef {
-        let ac = Actor::new();
+        let ac = Actor::new(Some(self.state.actor_id));
         let ac_ref = ac.ac_ref.clone();
         let facet_id = self.facet.facet_id;
         self.enqueue_for_myself_at_commit(Box::new(move |t| {
@@ -1498,11 +1498,11 @@ impl Drop for Mailbox {
 
 impl Actor {
     /// Create a new actor. It still needs to be [`boot`ed][Self::boot].
-    pub fn new() -> Self {
+    pub fn new(parent_actor_id: Option<ActorId>) -> Self {
         let (tx, rx) = unbounded_channel();
         let actor_id = next_actor_id();
         let root = Facet::new(None);
-        tracing::trace!(?actor_id, root_facet_id = ?root.facet_id, "Actor::new");
+        tracing::debug!(?actor_id, ?parent_actor_id, root_facet_id = ?root.facet_id, "Actor::new");
         let mut st = RunningActor {
             actor_id,
             tx,
@@ -1806,7 +1806,10 @@ impl<T: Any + Send> Drop for Field<T> {
 impl Drop for Actor {
     fn drop(&mut self) {
         self.rx.close();
-        ACTORS.write().remove(&self.ac_ref.actor_id);
+        let _name = ACTORS.write().remove(&self.ac_ref.actor_id)
+            .map_or_else(|| crate::name!(parent: None, "DROPPED", actor_id=?self.ac_ref.actor_id),
+                         |(span, _ac_ref)| span);
+        let _scope = _name.enter();
         let mut g = self.ac_ref.state.lock();
         if let ActorState::Running(ref mut state) = *g {
             tracing::warn!(actor_id = ?self.ac_ref.actor_id, "Force-terminated by Actor::drop");
@@ -1815,7 +1818,7 @@ impl Drop for Actor {
             state.cleanup(&self.ac_ref, &exit_status);
             *g = ActorState::Terminated { exit_status };
         }
-        tracing::trace!(actor_id = ?self.ac_ref.actor_id, "Actor::drop");
+        tracing::debug!(actor_id = ?self.ac_ref.actor_id, "Actor::drop");
     }
 }
 

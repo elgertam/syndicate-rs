@@ -52,7 +52,7 @@ pub fn bench_pub(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let start = Instant::now();
             rt.block_on(async move {
-                Actor::new().boot(syndicate::name!("dataspace"), move |t| {
+                Actor::new(None).boot(syndicate::name!("dataspace"), move |t| {
                     let ds = t.create(Dataspace::new());
                     let shutdown = t.create(ShutdownEntity);
                     let account = Account::new(syndicate::name!("sender-account"));
@@ -83,7 +83,7 @@ pub fn bench_pub(c: &mut Criterion) {
             rt.block_on(async move {
                 let turn_count = Arc::new(AtomicU64::new(0));
 
-                Actor::new().boot(syndicate::name!("dataspace"), {
+                Actor::new(None).boot(syndicate::name!("dataspace"), {
                     let iters = iters.clone();
                     let turn_count = Arc::clone(&turn_count);
 
@@ -103,7 +103,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             observer: shutdown,
                         });
 
-                        Actor::new().boot(syndicate::name!("consumer"), move |t| {
+                        t.spawn(syndicate::name!("consumer"), move |t| {
                             struct Receiver(Arc<AtomicU64>);
                             impl Entity<AnyValue> for Receiver {
                                 fn message(&mut self, _t: &mut Activation, _m: AnyValue) -> ActorResult {

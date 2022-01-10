@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::trace!("startup");
 
-    Actor::new().boot(tracing::Span::current(), move |t| {
+    Actor::new(None).boot(tracing::Span::current(), move |t| {
         let server_config_ds = Cap::new(&t.create(Dataspace::new()));
         let log_ds = Cap::new(&t.create(Dataspace::new()));
 

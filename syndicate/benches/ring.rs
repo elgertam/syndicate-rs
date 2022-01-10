@@ -88,7 +88,7 @@ pub fn bench_ring(c: &mut Criterion) {
                             self.i += 1;
                             let spawner_ref = Arc::clone(&self.self_ref);
                             ACTORS_CREATED.fetch_add(1, Ordering::Relaxed);
-                            Actor::new().boot(syndicate::name!("forwarder", ?i), move |t| {
+                            t.spawn(syndicate::name!("forwarder", ?i), move |t| {
                                 let _ = t.prevent_inert_check();
                                 let f = t.create(Forwarder {
                                     next,
@@ -118,7 +118,7 @@ pub fn bench_ring(c: &mut Criterion) {
                 }
 
                 ACTORS_CREATED.fetch_add(1, Ordering::Relaxed);
-                Actor::new().boot(syndicate::name!("counter"), move |t| {
+                Actor::new(None).boot(syndicate::name!("counter"), move |t| {
                     let _ = t.prevent_inert_check();
                     let mut s = Spawner {
                         self_ref: t.create_inert(),

@@ -8,11 +8,11 @@ use syndicate::value::NestedValue;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
-    Actor::new().boot(tracing::Span::current(), |t| {
+    Actor::new(None).boot(tracing::Span::current(), |t| {
         let ds = Cap::new(&t.create(Dataspace::new()));
         let _ = t.prevent_inert_check();
 
-        Actor::new().boot(syndicate::name!("box"), enclose!((ds) move |t| {
+        t.spawn(syndicate::name!("box"), enclose!((ds) move |t| {
             let current_value = t.named_field("current_value", 0u64);
 
             t.dataflow({
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }));
 
-        Actor::new().boot(syndicate::name!("client"), enclose!((ds) move |t| {
+        t.spawn(syndicate::name!("client"), enclose!((ds) move |t| {
             let box_state_handler = syndicate::entity(0u32)
                 .on_asserted(enclose!((ds) move |count, t, captures: AnyValue| {
                     *count = *count + 1;

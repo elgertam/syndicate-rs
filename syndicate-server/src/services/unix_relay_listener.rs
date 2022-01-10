@@ -47,22 +47,26 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
             let (stream, _addr) = listener.accept().await?;
             let peer = stream.peer_cred()?;
             let gatekeeper = spec.gatekeeper.clone();
-            Actor::new().boot(
-                syndicate::name!(parent: parent_span.clone(), "conn",
-                                 pid = ?peer.pid().unwrap_or(-1),
-                                 uid = peer.uid()),
-                |t| Ok(t.linked_task(tracing::Span::current(), {
-                    let facet = t.facet.clone();
-                    async move {
-                        tracing::info!(protocol = %"unix");
-                        let (i, o) = stream.into_split();
-                        run_connection(facet,
-                                       relay::Input::Bytes(Box::pin(i)),
-                                       relay::Output::Bytes(Box::pin(o)),
-                                       gatekeeper)?;
-                        Ok(LinkedTaskTermination::KeepFacet)
-                    }
-                })));
+            let name = syndicate::name!(parent: parent_span.clone(), "conn",
+                                        pid = ?peer.pid().unwrap_or(-1),
+                                        uid = peer.uid());
+            facet.activate(Account::new(name.clone()), move |t| {
+                t.spawn(name, |t| {
+                    Ok(t.linked_task(tracing::Span::current(), {
+                        let facet = t.facet.clone();
+                        async move {
+                            tracing::info!(protocol = %"unix");
+                            let (i, o) = stream.into_split();
+                            run_connection(facet,
+                                           relay::Input::Bytes(Box::pin(i)),
+                                           relay::Output::Bytes(Box::pin(o)),
+                                           gatekeeper)?;
+                            Ok(LinkedTaskTermination::KeepFacet)
+                        }
+                    }))
+                });
+                Ok(())
+            })?;
         }
     });
     Ok(())
