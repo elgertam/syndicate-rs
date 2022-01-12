@@ -241,15 +241,18 @@ impl<'env> PatternInstantiator<'env> {
             Value::Record(r) => match parse_attenuation(r)? {
                 Some((base_name, alternatives)) =>
                     dlit(self.env.eval_attenuation(base_name, alternatives)?),
-                None =>  {
-                    let label = self.instantiate_pattern(r.label())?;
-                    let fields = r.fields().iter().map(|p| self.instantiate_pattern(p))
-                        .collect::<io::Result<Vec<P::Pattern>>>()?;
-                    P::Pattern::DCompound(Box::new(P::DCompound::Rec {
-                        label: drop_literal(&label)
-                            .ok_or(bad_instruction("Record pattern must have literal label"))?,
-                        fields,
-                    }))
+                None => match self.maybe_binder_with_pattern(r)? {
+                    Some(pat) => pat,
+                    None => {
+                        let label = self.instantiate_pattern(r.label())?;
+                        let fields = r.fields().iter().map(|p| self.instantiate_pattern(p))
+                            .collect::<io::Result<Vec<P::Pattern>>>()?;
+                        P::Pattern::DCompound(Box::new(P::DCompound::Rec {
+                            label: drop_literal(&label)
+                                .ok_or(bad_instruction("Record pattern must have literal label"))?,
+                            fields,
+                        }))
+                    }
                 }
             },
             Value::Sequence(v) =>
@@ -267,6 +270,18 @@ impl<'env> PatternInstantiator<'env> {
                         .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
                 })),
         })
+    }
+
+    fn maybe_binder_with_pattern(&mut self, r: &Record<AnyValue>) -> io::Result<Option<P::Pattern>> {
+        match r.label().value().as_symbol().map(|s| analyze(&s)) {
+            Some(Symbolic::Binder(formal)) => if r.fields().len() == 1 {
+                let pattern = self.instantiate_pattern(&r.fields()[0])?;
+                self.binding_names.push(formal);
+                return Ok(Some(P::Pattern::DBind(Box::new(P::DBind { pattern }))));
+            },
+            _ => (),
+        }
+        Ok(None)
     }
 }
 
