@@ -1,0 +1,11 @@
+version 1 .
+
+; Assertion. Describes `object`.
+Metadata = <metadata @object any @info { symbol: any ...:... }> .
+
+; Projections of the `info` in a `Metadata` record.
+Description = @present { description: IOList } / @invalid { description: any } / @absent {} .
+Url = @present { url: string } / @invalid { url: any } / @absent {} .
+
+; Data type. From preserves' `conventions.md`.
+IOList = @bytes bytes / @string string / @nested [IOList ...] .
