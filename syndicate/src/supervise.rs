@@ -145,7 +145,7 @@ impl Entity<Protocol> for Supervisor
 
     fn stop(&mut self, _t: &mut Activation) -> ActorResult {
         let _entry = self.name.enter();
-        tracing::info!("Supervisor terminating");
+        tracing::info!(self_ref = ?self.self_ref, "Supervisor terminating");
         Ok(())
     }
 }
@@ -172,6 +172,7 @@ impl Supervisor {
             state: Arc::clone(&state_field),
             ac_ref: None,
         };
+        tracing::info!(self_ref = ?supervisor.self_ref, "Supervisor starting");
         supervisor.ensure_started(t)?;
         t.dataflow(enclose!((name) move |t| {
             let state = t.get(&state_field).clone();
@@ -213,6 +214,9 @@ impl Supervisor {
                                 }
                             }
                         }));
+                    tracing::debug!(self_ref = ?self.self_ref,
+                                    supervisee = ?self.ac_ref,
+                                    "Supervisee started");
                     Ok(())
                 })?;
             }
