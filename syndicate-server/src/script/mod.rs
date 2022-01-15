@@ -678,9 +678,10 @@ impl<'t> Parser<'t> {
 
         if let Some(tokens) = self.peek().as_sequence() {
             self.drop();
-            return Parsed::Value(Instruction::Sequence {
-                instructions: Parser::new(tokens).parse_all(target),
-            });
+            let mut inner_parser = Parser::new(tokens);
+            let instructions = inner_parser.parse_all(target);
+            self.errors.extend(inner_parser.errors);
+            return Parsed::Value(Instruction::Sequence { instructions });
         }
 
         if let Some(s) = self.peek().as_symbol() {
