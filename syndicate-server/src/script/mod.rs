@@ -484,7 +484,7 @@ impl Env {
     pub fn eval_expr(&self, t: &mut Activation, e: &Expr) -> io::Result<AnyValue> {
         match e {
             Expr::Template { template } => self.instantiate_value(template),
-            Expr::Dataspace => Ok(AnyValue::domain(Cap::new(&t.create(Dataspace::new())))),
+            Expr::Dataspace => Ok(AnyValue::domain(Cap::new(&t.create(Dataspace::new(None))))),
             Expr::Timestamp => Ok(AnyValue::new(chrono::Utc::now().to_rfc3339())),
             Expr::Facet => Ok(AnyValue::domain(Cap::new(&t.create(FacetHandle::new())))),
         }

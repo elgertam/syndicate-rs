@@ -112,7 +112,8 @@ impl Index {
     }
 
     /// Inserts an assertion into the index, notifying matching observers.
-    pub fn insert(&mut self, t: &mut Activation, outer_value: &AnyValue) {
+    /// Answers `true` iff the assertion was new to the dataspace.
+    pub fn insert(&mut self, t: &mut Activation, outer_value: &AnyValue) -> bool {
         let net = self.all_assertions.change(outer_value.clone(), 1);
         match net {
             bag::Net::AbsentToPresent => {
@@ -131,14 +132,16 @@ impl Index {
                         }
                     })
                     .perform(&mut self.root);
+                true
             }
-            bag::Net::PresentToPresent => (),
+            bag::Net::PresentToPresent => false,
             _ => unreachable!(),
         }
     }
 
     /// Removes an assertion from the index, notifying matching observers.
-    pub fn remove(&mut self, t: &mut Activation, outer_value: &AnyValue) {
+    /// Answers `true` if it is the last in its equivalence class to be removed.
+    pub fn remove(&mut self, t: &mut Activation, outer_value: &AnyValue) -> bool {
         let net = self.all_assertions.change(outer_value.clone(), -1);
         match net {
             bag::Net::PresentToAbsent => {
@@ -157,8 +160,9 @@ impl Index {
                         }
                     })
                     .perform(&mut self.root);
+                true
             }
-            bag::Net::PresentToPresent => (),
+            bag::Net::PresentToPresent => false,
             _ => unreachable!(),
         }
     }

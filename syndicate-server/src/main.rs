@@ -84,8 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::trace!("startup");
 
     Actor::new(None).boot(tracing::Span::current(), move |t| {
-        let server_config_ds = Cap::new(&t.create(Dataspace::new()));
-        let log_ds = Cap::new(&t.create(Dataspace::new()));
+        let server_config_ds = Cap::new(&t.create(Dataspace::new(Some(syndicate::name!("config")))));
+        let log_ds = Cap::new(&t.create(Dataspace::new(Some(syndicate::name!("log")))));
 
         if config.inferior {
             tracing::info!("inferior server instance");

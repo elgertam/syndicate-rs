@@ -17,56 +17,26 @@ use super::schemas::dataspace::_Any;
 use preserves::value::Map;
 use preserves_schema::Codec;
 
-// #[derive(Debug)]
-// pub struct Churn {
-//     pub assertions_added: usize,
-//     pub assertions_removed: usize,
-//     pub endpoints_added: usize,
-//     pub endpoints_removed: usize,
-//     pub observers_added: usize,
-//     pub observers_removed: usize,
-//     pub messages_injected: usize,
-//     pub messages_delivered: usize,
-// }
-
-// impl Churn {
-//     pub fn new() -> Self {
-//         Self {
-//             assertions_added: 0,
-//             assertions_removed: 0,
-//             endpoints_added: 0,
-//             endpoints_removed: 0,
-//             observers_added: 0,
-//             observers_removed: 0,
-//             messages_injected: 0,
-//             messages_delivered: 0,
-//         }
-//     }
-//
-//     pub fn reset(&mut self) {
-//         *self = Churn::new()
-//     }
-// }
-
 /// A Dataspace object (entity).
 #[derive(Debug)]
 pub struct Dataspace {
+    pub name: tracing::Span,
     /// Index over assertions placed in the dataspace; used to
     /// efficiently route assertion changes and messages to observers.
     pub index: skeleton::Index,
     /// Local memory of assertions indexed by `Handle`, used to remove
     /// assertions from the `index` when they are retracted.
-    pub handle_map: Map<Handle, (_Any, Option<Observe>)>,
-    // pub churn: Churn,
+    pub handle_map: Map<Handle, _Any>,
 }
 
 impl Dataspace {
     /// Construct a new, empty dataspace.
-    pub fn new() -> Self {
+    pub fn new(name: Option<tracing::Span>) -> Self {
         Self {
+            name: name.map_or_else(|| crate::name!("anonymous_dataspace"),
+                                   |n| crate::name!(parent: &n, "dataspace")),
             index: skeleton::Index::new(),
             handle_map: Map::new(),
-            // churn: Churn::new(),
         }
     }
 
@@ -92,46 +62,45 @@ impl Dataspace {
 
 impl Entity<_Any> for Dataspace {
     fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
-        tracing::trace!(assertion = ?a, handle = ?h, "assert");
+        let _guard = self.name.enter();
 
-        // let old_assertions = self.index.assertion_count();
-        self.index.insert(t, &a);
-        // self.churn.assertions_added += self.index.assertion_count() - old_assertions;
-        // self.churn.endpoints_added += 1;
+        let is_new = self.index.insert(t, &a);
+        tracing::trace!(assertion = ?a, handle = ?h, ?is_new, "assert");
 
-        if let Ok(o) = language().parse::<Observe>(&a) {
-            self.index.add_observer(t, &o.pattern, &o.observer);
-            // self.churn.observers_added += 1;
-            self.handle_map.insert(h, (a, Some(o)));
-        } else {
-            self.handle_map.insert(h, (a, None));
+        if is_new {
+            if let Ok(o) = language().parse::<Observe>(&a) {
+                self.index.add_observer(t, &o.pattern, &o.observer);
+            }
         }
+
+        self.handle_map.insert(h, a);
         Ok(())
     }
 
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
-        tracing::trace!(handle = ?h, "retract");
+        let _guard = self.name.enter();
 
-        if let Some((a, maybe_o)) = self.handle_map.remove(&h) {
-            if let Some(o) = maybe_o {
-                self.index.remove_observer(t, o.pattern, &o.observer);
-                // self.churn.observers_removed += 1;
+        match self.handle_map.remove(&h) {
+            None => tracing::warn!(handle = ?h, "retract of unknown handle"),
+            Some(a) => {
+                let is_last = self.index.remove(t, &a);
+                tracing::trace!(assertion = ?a, handle = ?h, ?is_last, "retract");
+
+                if is_last {
+                    if let Ok(o) = language().parse::<Observe>(&a) {
+                        self.index.remove_observer(t, o.pattern, &o.observer);
+                    }
+                }
             }
-
-            // let old_assertions = self.index.assertion_count();
-            self.index.remove(t, &a);
-            // self.churn.assertions_removed += old_assertions - self.index.assertion_count();
-            // self.churn.endpoints_removed += 1;
         }
         Ok(())
     }
 
     fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
+        let _guard = self.name.enter();
         tracing::trace!(body = ?m, "message");
 
-        // self.index.send(t, &m, &mut self.churn.messages_delivered);
         self.index.send(t, &m);
-        // self.churn.messages_injected += 1;
         Ok(())
     }
 }
