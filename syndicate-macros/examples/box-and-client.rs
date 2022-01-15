@@ -9,7 +9,7 @@ use syndicate::value::NestedValue;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
     Actor::new(None).boot(tracing::Span::current(), |t| {
-        let ds = Cap::new(&t.create(Dataspace::new()));
+        let ds = Cap::new(&t.create(Dataspace::new(None)));
         let _ = t.prevent_inert_check();
 
         t.spawn(syndicate::name!("box"), enclose!((ds) move |t| {

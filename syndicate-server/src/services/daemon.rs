@@ -249,7 +249,7 @@ impl DaemonInstance {
                         Err(_) => AnyValue::bytestring(buf),
                     };
                     let now = AnyValue::new(chrono::Utc::now().to_rfc3339());
-                    if facet.activate(
+                    if !facet.activate(
                         Account::new(tracing::Span::current()),
                         enclose!((pid, service, kind) |t| {
                             log_ds.message(t, &(), &syndicate_macros::template!(
@@ -260,7 +260,7 @@ impl DaemonInstance {
                                              line: =buf,
                                            }>"));
                             Ok(())
-                        })).is_err()
+                        }))
                     {
                         break;
                     }
@@ -313,7 +313,7 @@ impl DaemonInstance {
                     facet.activate(Account::new(syndicate::name!("instance-terminated")), |t| {
                         let m = if status.success() { None } else { Some(format!("{}", status)) };
                         self.handle_exit(t, m)
-                    })?;
+                    });
                     Ok(LinkedTaskTermination::Normal)
                 }));
             Ok(())
@@ -443,7 +443,7 @@ fn run(
 
                                           facet.activate(Account::new(syndicate::name!("instance-startup")), |t| {
                                               daemon_instance.start(t)
-                                          })?;
+                                          });
                                           Ok(LinkedTaskTermination::KeepFacet)
                                       });
                                       Ok(())

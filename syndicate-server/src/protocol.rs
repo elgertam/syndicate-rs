@@ -41,9 +41,9 @@ pub fn run_connection(
     i: relay::Input,
     o: relay::Output,
     initial_ref: Arc<Cap>,
-) -> ActorResult {
+) {
     facet.activate(Account::new(syndicate::name!("start-session")),
-                   |t| run_io_relay(t, i, o, initial_ref))
+                   |t| run_io_relay(t, i, o, initial_ref));
 }
 
 pub async fn detect_protocol(
@@ -76,7 +76,8 @@ pub async fn detect_protocol(
             _ => unreachable!()
         }
     };
-    run_connection(facet, i, o, gateway)
+    run_connection(facet, i, o, gateway);
+    Ok(())
 }
 
 fn message_error<E: std::fmt::Display>(e: E) -> Error {

@@ -624,12 +624,15 @@ async fn input_loop(
             loop {
                 account.ensure_clear_funds().await;
                 match src.next().await {
-                    None => return Ok(LinkedTaskTermination::Normal),
-                    Some(bs) => facet.activate(Arc::clone(&account), |t| {
-                        let mut g = relay.lock();
-                        let tr = g.as_mut().expect("initialized");
-                        tr.handle_inbound_datagram(t, &bs?)
-                    })?,
+                    None => break,
+                    Some(bs) => {
+                        let is_alive = facet.activate(Arc::clone(&account), |t| {
+                            let mut g = relay.lock();
+                            let tr = g.as_mut().expect("initialized");
+                            tr.handle_inbound_datagram(t, &bs?)
+                        });
+                        if !is_alive { break; }
+                    }
                 }
             }
         }
@@ -643,22 +646,26 @@ async fn input_loop(
                     Ok(n) => n,
                     Err(e) =>
                         if e.kind() == io::ErrorKind::ConnectionReset {
-                            return Ok(LinkedTaskTermination::Normal);
+                            break;
                         } else {
                             return Err(e)?;
                         },
                 };
                 match n {
-                    0 => return Ok(LinkedTaskTermination::Normal),
-                    _ => facet.activate(Arc::clone(&account), |t| {
-                        let mut g = relay.lock();
-                        let tr = g.as_mut().expect("initialized");
-                        tr.handle_inbound_stream(t, &mut buf)
-                    })?,
+                    0 => break,
+                    _ => {
+                        let is_alive = facet.activate(Arc::clone(&account), |t| {
+                            let mut g = relay.lock();
+                            let tr = g.as_mut().expect("initialized");
+                            tr.handle_inbound_stream(t, &mut buf)
+                        });
+                        if !is_alive { break; }
+                    }
                 }
             }
         }
     }
+    Ok(LinkedTaskTermination::Normal)
 }
 
 async fn output_loop(

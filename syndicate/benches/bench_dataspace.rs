@@ -53,7 +53,7 @@ pub fn bench_pub(c: &mut Criterion) {
             let start = Instant::now();
             rt.block_on(async move {
                 Actor::new(None).boot(syndicate::name!("dataspace"), move |t| {
-                    let ds = t.create(Dataspace::new());
+                    let ds = t.create(Dataspace::new(None));
                     let shutdown = t.create(ShutdownEntity);
                     let account = Account::new(syndicate::name!("sender-account"));
                     t.linked_task(syndicate::name!("sender"), async move {
@@ -88,7 +88,7 @@ pub fn bench_pub(c: &mut Criterion) {
                     let turn_count = Arc::clone(&turn_count);
 
                     move |t| {
-                        let ds = Cap::new(&t.create(Dataspace::new()));
+                        let ds = Cap::new(&t.create(Dataspace::new(None)));
 
                         let shutdown = entity(())
                             .on_asserted(|_, _, _| Ok(Some(Box::new(|_, t| Ok(t.stop())))))

@@ -181,14 +181,17 @@ fn run(
 
         let mut path_state: Map<PathBuf, FacetId> = Map::new();
 
-        {
-            facet.activate(Account::new(syndicate::name!("initial_scan")), |t| {
+        if !facet.activate(
+            Account::new(syndicate::name!("initial_scan")),
+            |t| {
                 initial_scan(t, &mut path_state, &config_ds, env.clone());
                 config_ds.assert(t, language(), &lifecycle::ready(&spec));
                 Ok(())
-            }).unwrap();
-            tracing::trace!("initial_scan complete");
+            })
+        {
+            return;
         }
+        tracing::trace!("initial_scan complete");
 
         let mut rescan = |paths: Vec<PathBuf>| {
             facet.activate(Account::new(syndicate::name!("rescan")), |t| {
@@ -209,15 +212,15 @@ fn run(
                     t.stop_facet(facet_id);
                 }
                 Ok(())
-            }).unwrap()
+            })
         };
 
         while let Ok(event) = rx.recv() {
             tracing::trace!("notification: {:?}", &event);
-            match event {
+            let keep_running = match event {
                 DebouncedEvent::NoticeWrite(_p) |
                 DebouncedEvent::NoticeRemove(_p) =>
-                    (),
+                    true,
                 DebouncedEvent::Create(p) |
                 DebouncedEvent::Write(p) |
                 DebouncedEvent::Chmod(p) |
@@ -225,12 +228,15 @@ fn run(
                     rescan(vec![p]),
                 DebouncedEvent::Rename(p, q) =>
                     rescan(vec![p, q]),
-                _ =>
-                    tracing::info!("{:?}", event),
-            }
+                _ => {
+                    tracing::info!("{:?}", event);
+                    true
+                }
+            };
+            if !keep_running { break; }
         }
 
-        let _ = facet.activate(Account::new(syndicate::name!("termination")), |t| {
+        facet.activate(Account::new(syndicate::name!("termination")), |t| {
             tracing::trace!("linked thread terminating associated facet");
             Ok(t.stop())
         });

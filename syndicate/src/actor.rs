@@ -7,7 +7,6 @@
 
 use super::dataflow::Graph;
 use super::error::Error;
-use super::error::encode_error;
 use super::error::error;
 use super::rewrite::CaveatError;
 use super::rewrite::CheckedCaveat;
@@ -556,12 +555,14 @@ impl FacetRef {
     /// [commits the turn][Activation::deliver] and performs the buffered actions; otherwise,
     /// [abandons the turn][Activation::clear] and discards the buffered actions.
     ///
+    /// Returns `true` if, at the end of the activation, `actor` had not yet terminated.
+    ///
     /// Bills any activity to `account`.
     pub fn activate<F>(
         &self,
         account: Arc<Account>,
         f: F,
-    ) -> ActorResult where
+    ) -> bool where
         F: FnOnce(&mut Activation) -> ActorResult,
     {
         self.activate_exit(account, |t| f(t).into())
@@ -572,25 +573,26 @@ impl FacetRef {
     /// returns `None`, leaves `actor` in runnable state. [Commits buffered
     /// actions][Activation::deliver] unless `actor` terminates with an `Err` status.
     ///
+    /// Returns `true` if, at the end of the activation, `actor` had not yet terminated.
+    ///
     /// Bills any activity to `account`.
     pub fn activate_exit<F>(
         &self,
         account: Arc<Account>,
         f: F,
-    ) -> ActorResult where
+    ) -> bool where
         F: FnOnce(&mut Activation) -> RunDisposition,
     {
         let mut g = self.actor.state.lock();
         match &mut *g {
-            ActorState::Terminated { exit_status } =>
-                Err(error("Could not activate terminated actor",
-                          encode_error((**exit_status).clone()))),
+            ActorState::Terminated { .. } =>
+                false,
             ActorState::Running(state) => {
                 tracing::trace!(actor_id=?self.actor.actor_id, "activate");
                 let mut activation = Activation::make(self, account, state);
                 let f_result = f(&mut activation);
-                let result = match activation.restore_invariants(f_result) {
-                    RunDisposition::Continue => Ok(()),
+                let is_alive = match activation.restore_invariants(f_result) {
+                    RunDisposition::Continue => true,
                     RunDisposition::Terminate(exit_status) => {
                         if exit_status.is_err() {
                             activation.clear();
@@ -598,14 +600,12 @@ impl FacetRef {
                         drop(activation);
                         let exit_status = Arc::new(exit_status);
                         state.cleanup(&self.actor, &exit_status);
-                        *g = ActorState::Terminated {
-                            exit_status: Arc::clone(&exit_status),
-                        };
-                        (*exit_status).clone()
+                        *g = ActorState::Terminated { exit_status };
+                        false
                     }
                 };
                 tracing::trace!(actor_id=?self.actor.actor_id, "deactivate");
-                result
+                is_alive
             }
         }
     }
@@ -933,17 +933,16 @@ impl<'activation> Activation<'activation> {
                             }
                         }
                     };
-                    let _ = facet.activate(
-                        Account::new(crate::name!("release_linked_task")), |t| {
-                            if let Some(f) = t.active_facet() {
-                                tracing::trace!(task_id, "cancellation token removed");
-                                f.linked_tasks.remove(&task_id);
-                            }
-                            if let LinkedTaskTermination::Normal = result {
-                                t.stop();
-                            }
-                            Ok(())
-                        });
+                    facet.activate(Account::new(crate::name!("release_linked_task")), |t| {
+                        if let Some(f) = t.active_facet() {
+                            tracing::trace!(task_id, "cancellation token removed");
+                            f.linked_tasks.remove(&task_id);
+                        }
+                        if let LinkedTaskTermination::Normal = result {
+                            t.stop();
+                        }
+                        Ok(())
+                    });
                     Ok::<(), Error>(())
                 }.instrument(name));
             }
@@ -976,8 +975,9 @@ impl<'activation> Activation<'activation> {
             loop {
                 timer.tick().await;
                 let _entry = span.enter();
-                facet.activate(Arc::clone(&account), |t| a(t))?;
+                if !facet.activate(Arc::clone(&account), |t| a(t)) { break; }
             }
+            Ok(LinkedTaskTermination::Normal)
         });
         Ok(())
     }
@@ -996,7 +996,7 @@ impl<'activation> Activation<'activation> {
         self.linked_task(crate::name!(parent: None, "Activation::at"), async move {
             tokio::time::sleep_until(instant.into()).await;
             let _entry = span.enter();
-            facet.activate(account, a)?;
+            facet.activate(account, a);
             Ok(LinkedTaskTermination::KeepFacet)
         });
     }
@@ -1031,7 +1031,7 @@ impl<'activation> Activation<'activation> {
         let facet_id = self.facet.facet_id;
         self.pending.for_myself.push(Box::new(move |t| {
             t.with_facet(true, facet_id, move |t| {
-                ac.link(t).boot(name, boot);
+                ac.link(t)?.boot(name, boot);
                 Ok(())
             })
         }));
@@ -1526,16 +1526,21 @@ impl Actor {
         Actor { rx, ac_ref }
     }
 
-    fn link(self, t_parent: &mut Activation) -> Self {
+    fn link(self, t_parent: &mut Activation) -> Result<Self, Error> {
         if t_parent.active_facet().is_none() {
             panic!("No active facet when calling spawn_link");
         }
-        self.ac_ref.root_facet_ref().activate(Account::new(crate::name!("link")), |t_child| {
-            t_parent.half_link(t_child);
-            t_child.half_link(t_parent);
-            Ok(())
-        }).expect("Failed during link");
-        self
+        let is_alive = self.ac_ref.root_facet_ref().activate(
+            Account::new(crate::name!("link")), |t_child| {
+                t_parent.half_link(t_child);
+                t_child.half_link(t_parent);
+                Ok(())
+            });
+        if is_alive {
+            Ok(self)
+        } else {
+            Err(error("spawn_link'd actor terminated before link could happen", AnyValue::new(false)))
+        }
     }
 
     /// Start the actor's mainloop. Takes ownership of `self`. The
@@ -1571,11 +1576,11 @@ impl Actor {
         let root_facet_ref = self.ac_ref.root_facet_ref();
 
         let terminate = |result: ActorResult| {
-            let _ = root_facet_ref.activate_exit(Account::new(crate::name!("shutdown")),
-                                                 |_| RunDisposition::Terminate(result));
+            root_facet_ref.activate_exit(Account::new(crate::name!("shutdown")),
+                                         |_| RunDisposition::Terminate(result));
         };
 
-        if root_facet_ref.activate(Account::new(crate::name!("boot")), boot).is_err() {
+        if !root_facet_ref.activate(Account::new(crate::name!("boot")), boot) {
             return;
         }
 
@@ -1600,11 +1605,12 @@ impl Actor {
                     SystemMessage::Turn(mut loaned_item) => {
                         tracing::trace!(actor_id = ?self.ac_ref.actor_id, "SystemMessage::Turn");
                         let actions = std::mem::take(&mut loaned_item.item);
-                        let r = root_facet_ref.activate(Arc::clone(&loaned_item.account), |t| {
-                            for action in actions.into_iter() { action(t)? }
-                            Ok(())
-                        });
-                        if r.is_err() { return; }
+                        let is_alive = root_facet_ref.activate(
+                            Arc::clone(&loaned_item.account), |t| {
+                                for action in actions.into_iter() { action(t)? }
+                                Ok(())
+                            });
+                        if !is_alive { return; }
                     }
                     SystemMessage::Crash(e) => {
                         tracing::trace!(actor_id = ?self.ac_ref.actor_id,
