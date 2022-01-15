@@ -181,14 +181,16 @@ fn run(
 
         let mut path_state: Map<PathBuf, FacetId> = Map::new();
 
-        {
-            facet.activate(Account::new(syndicate::name!("initial_scan")), |t| {
+        let initial_scan_result = facet.activate(
+            Account::new(syndicate::name!("initial_scan")), |t| {
                 initial_scan(t, &mut path_state, &config_ds, env.clone());
                 config_ds.assert(t, language(), &lifecycle::ready(&spec));
                 Ok(())
-            }).unwrap();
-            tracing::trace!("initial_scan complete");
+            });
+        if initial_scan_result.is_already_terminated() {
+            return;
         }
+        tracing::trace!("initial_scan complete");
 
         let mut rescan = |paths: Vec<PathBuf>| {
             facet.activate(Account::new(syndicate::name!("rescan")), |t| {
@@ -209,24 +211,30 @@ fn run(
                     t.stop_facet(facet_id);
                 }
                 Ok(())
-            }).unwrap()
+            }).as_result()
         };
 
         while let Ok(event) = rx.recv() {
             tracing::trace!("notification: {:?}", &event);
-            match event {
-                DebouncedEvent::NoticeWrite(_p) |
-                DebouncedEvent::NoticeRemove(_p) =>
-                    (),
-                DebouncedEvent::Create(p) |
-                DebouncedEvent::Write(p) |
-                DebouncedEvent::Chmod(p) |
-                DebouncedEvent::Remove(p) =>
-                    rescan(vec![p]),
-                DebouncedEvent::Rename(p, q) =>
-                    rescan(vec![p, q]),
-                _ =>
-                    tracing::info!("{:?}", event),
+            if
+                match event {
+                    DebouncedEvent::NoticeWrite(_p) |
+                    DebouncedEvent::NoticeRemove(_p) =>
+                        Ok(()),
+                    DebouncedEvent::Create(p) |
+                    DebouncedEvent::Write(p) |
+                    DebouncedEvent::Chmod(p) |
+                    DebouncedEvent::Remove(p) =>
+                        rescan(vec![p]),
+                    DebouncedEvent::Rename(p, q) =>
+                        rescan(vec![p, q]),
+                    _ => {
+                        tracing::info!("{:?}", event);
+                        Ok(())
+                    }
+                }.is_err()
+            {
+                return;
             }
         }
 

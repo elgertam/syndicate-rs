@@ -625,11 +625,14 @@ async fn input_loop(
                 account.ensure_clear_funds().await;
                 match src.next().await {
                     None => return Ok(LinkedTaskTermination::Normal),
-                    Some(bs) => facet.activate(Arc::clone(&account), |t| {
-                        let mut g = relay.lock();
-                        let tr = g.as_mut().expect("initialized");
-                        tr.handle_inbound_datagram(t, &bs?)
-                    })?,
+                    Some(bs) => {
+                        let r = facet.activate(Arc::clone(&account), |t| {
+                            let mut g = relay.lock();
+                            let tr = g.as_mut().expect("initialized");
+                            tr.handle_inbound_datagram(t, &bs?)
+                        });
+                        if !r.is_success() { return Ok(LinkedTaskTermination::Normal); }
+                    }
                 }
             }
         }
@@ -650,11 +653,14 @@ async fn input_loop(
                 };
                 match n {
                     0 => return Ok(LinkedTaskTermination::Normal),
-                    _ => facet.activate(Arc::clone(&account), |t| {
-                        let mut g = relay.lock();
-                        let tr = g.as_mut().expect("initialized");
-                        tr.handle_inbound_stream(t, &mut buf)
-                    })?,
+                    _ => {
+                        let r = facet.activate(Arc::clone(&account), |t| {
+                            let mut g = relay.lock();
+                            let tr = g.as_mut().expect("initialized");
+                            tr.handle_inbound_stream(t, &mut buf)
+                        });
+                        if !r.is_success() { return Ok(LinkedTaskTermination::Normal); }
+                    }
                 }
             }
         }

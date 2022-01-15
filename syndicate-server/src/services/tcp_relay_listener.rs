@@ -36,16 +36,16 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult 
     t.linked_task(syndicate::name!("listener"), async move {
         let listen_addr = format!("{}:{}", host, port);
         let listener = TcpListener::bind(listen_addr).await?;
-        facet.activate(Account::new(syndicate::name!("readiness")), |t| {
+        if !facet.activate(Account::new(syndicate::name!("readiness")), |t| {
             tracing::info!("listening");
             ds.assert(t, language(), &lifecycle::ready(&spec));
             Ok(())
-        })?;
+        }).is_success() { return Ok(LinkedTaskTermination::Normal); }
         loop {
             let (stream, addr) = listener.accept().await?;
             let gatekeeper = spec.gatekeeper.clone();
             let name = syndicate::name!(parent: parent_span.clone(), "conn");
-            facet.activate(Account::new(name.clone()), move |t| {
+            if !facet.activate(Account::new(name.clone()), move |t| {
                 t.spawn(name, move |t| {
                     Ok(t.linked_task(tracing::Span::current(), {
                         let facet = t.facet.clone();
@@ -56,7 +56,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult 
                     }))
                 });
                 Ok(())
-            })?;
+            }).is_success() { return Ok(LinkedTaskTermination::Normal); }
         }
     });
     Ok(())

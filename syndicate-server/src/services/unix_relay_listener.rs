@@ -38,11 +38,11 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
     let facet = t.facet.clone();
     t.linked_task(syndicate::name!("listener"), async move {
         let listener = bind_unix_listener(&PathBuf::from(path_str)).await?;
-        facet.activate(Account::new(syndicate::name!("readiness")), |t| {
+        if !facet.activate(Account::new(syndicate::name!("readiness")), |t| {
             tracing::info!("listening");
             ds.assert(t, language(), &lifecycle::ready(&spec));
             Ok(())
-        })?;
+        }).is_success() { return Ok(LinkedTaskTermination::Normal); }
         loop {
             let (stream, _addr) = listener.accept().await?;
             let peer = stream.peer_cred()?;
@@ -50,7 +50,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
             let name = syndicate::name!(parent: parent_span.clone(), "conn",
                                         pid = ?peer.pid().unwrap_or(-1),
                                         uid = peer.uid());
-            facet.activate(Account::new(name.clone()), move |t| {
+            if !facet.activate(Account::new(name.clone()), move |t| {
                 t.spawn(name, |t| {
                     Ok(t.linked_task(tracing::Span::current(), {
                         let facet = t.facet.clone();
@@ -66,7 +66,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
                     }))
                 });
                 Ok(())
-            })?;
+            }).is_success() { return Ok(LinkedTaskTermination::Normal); }
         }
     });
     Ok(())

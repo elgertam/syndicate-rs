@@ -43,7 +43,7 @@ pub fn run_connection(
     initial_ref: Arc<Cap>,
 ) -> ActorResult {
     facet.activate(Account::new(syndicate::name!("start-session")),
-                   |t| run_io_relay(t, i, o, initial_ref))
+                   |t| run_io_relay(t, i, o, initial_ref)).into()
 }
 
 pub async fn detect_protocol(

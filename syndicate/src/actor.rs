@@ -7,7 +7,6 @@
 
 use super::dataflow::Graph;
 use super::error::Error;
-use super::error::encode_error;
 use super::error::error;
 use super::rewrite::CaveatError;
 use super::rewrite::CheckedCaveat;
@@ -455,6 +454,18 @@ pub enum RunDisposition {
     Terminate(ActorResult),
 }
 
+/// Returned from [`Facet::activate`] and [`Facet::activate_exit`].
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[must_use]
+pub enum ActivationResult {
+    /// The actor to be activated had already terminated by the time of the activation attempt.
+    AlreadyTerminated,
+    /// The activation succeeded.
+    Success,
+    /// The activation failed,
+    Failure(Error),
+}
+
 /// [Linked tasks][Activation::linked_task] terminate yielding values of this type.
 pub enum LinkedTaskTermination {
     /// Causes the task's associated [Facet] to be [stop][Activation::stop]ped when the task
@@ -561,7 +572,7 @@ impl FacetRef {
         &self,
         account: Arc<Account>,
         f: F,
-    ) -> ActorResult where
+    ) -> ActivationResult where
         F: FnOnce(&mut Activation) -> ActorResult,
     {
         self.activate_exit(account, |t| f(t).into())
@@ -577,14 +588,15 @@ impl FacetRef {
         &self,
         account: Arc<Account>,
         f: F,
-    ) -> ActorResult where
+    ) -> ActivationResult where
         F: FnOnce(&mut Activation) -> RunDisposition,
     {
         let mut g = self.actor.state.lock();
         match &mut *g {
-            ActorState::Terminated { exit_status } =>
-                Err(error("Could not activate terminated actor",
-                          encode_error((**exit_status).clone()))),
+            ActorState::Terminated { exit_status } => {
+                tracing::debug!(?exit_status, "Could not activate terminated actor");
+                ActivationResult::AlreadyTerminated
+            }
             ActorState::Running(state) => {
                 tracing::trace!(actor_id=?self.actor.actor_id, "activate");
                 let mut activation = Activation::make(self, account, state);
@@ -605,7 +617,10 @@ impl FacetRef {
                     }
                 };
                 tracing::trace!(actor_id=?self.actor.actor_id, "deactivate");
-                result
+                match result {
+                    Ok(()) => ActivationResult::Success,
+                    Err(e) => ActivationResult::Failure(e),
+                }
             }
         }
     }
@@ -976,7 +991,9 @@ impl<'activation> Activation<'activation> {
             loop {
                 timer.tick().await;
                 let _entry = span.enter();
-                facet.activate(Arc::clone(&account), |t| a(t))?;
+                if facet.activate(Arc::clone(&account), |t| a(t)).as_result().is_err() {
+                    return Ok(LinkedTaskTermination::Normal);
+                }
             }
         });
         Ok(())
@@ -996,7 +1013,7 @@ impl<'activation> Activation<'activation> {
         self.linked_task(crate::name!(parent: None, "Activation::at"), async move {
             tokio::time::sleep_until(instant.into()).await;
             let _entry = span.enter();
-            facet.activate(account, a)?;
+            facet.activate(account, a).ignore_termination()?;
             Ok(LinkedTaskTermination::KeepFacet)
         });
     }
@@ -1031,7 +1048,7 @@ impl<'activation> Activation<'activation> {
         let facet_id = self.facet.facet_id;
         self.pending.for_myself.push(Box::new(move |t| {
             t.with_facet(true, facet_id, move |t| {
-                ac.link(t).boot(name, boot);
+                ac.link(t)?.boot(name, boot);
                 Ok(())
             })
         }));
@@ -1526,7 +1543,7 @@ impl Actor {
         Actor { rx, ac_ref }
     }
 
-    fn link(self, t_parent: &mut Activation) -> Self {
+    fn link(self, t_parent: &mut Activation) -> Result<Self, Error> {
         if t_parent.active_facet().is_none() {
             panic!("No active facet when calling spawn_link");
         }
@@ -1534,8 +1551,8 @@ impl Actor {
             t_parent.half_link(t_child);
             t_child.half_link(t_parent);
             Ok(())
-        }).expect("Failed during link");
-        self
+        }).as_result()?;
+        Ok(self)
     }
 
     /// Start the actor's mainloop. Takes ownership of `self`. The
@@ -1575,7 +1592,7 @@ impl Actor {
                                                  |_| RunDisposition::Terminate(result));
         };
 
-        if root_facet_ref.activate(Account::new(crate::name!("boot")), boot).is_err() {
+        if !root_facet_ref.activate(Account::new(crate::name!("boot")), boot).is_success() {
             return;
         }
 
@@ -1604,7 +1621,7 @@ impl Actor {
                             for action in actions.into_iter() { action(t)? }
                             Ok(())
                         });
-                        if r.is_err() { return; }
+                        if !r.is_success() { return; }
                     }
                     SystemMessage::Crash(e) => {
                         tracing::trace!(actor_id = ?self.ac_ref.actor_id,
@@ -2066,6 +2083,41 @@ where
 impl<M> Entity<M> for StopOnRetract {
     fn retract(&mut self, t: &mut Activation, _h: Handle) -> ActorResult {
         Ok(t.stop())
+    }
+}
+
+impl ActivationResult {
+    pub fn is_success(&self) -> bool {
+        self == &ActivationResult::Success
+    }
+
+    pub fn as_result(self) -> ActorResult {
+        self.into()
+    }
+
+    pub fn ignore_termination(self) -> ActorResult {
+        match self {
+            ActivationResult::AlreadyTerminated => Ok(()),
+            ActivationResult::Failure(e) => Err(e),
+            ActivationResult::Success => Ok(()),
+        }
+    }
+
+    pub fn is_already_terminated(&self) -> bool {
+        self == &ActivationResult::AlreadyTerminated
+    }
+}
+
+impl From<ActivationResult> for ActorResult {
+    fn from(r: ActivationResult) -> ActorResult {
+        match r {
+            ActivationResult::AlreadyTerminated =>
+                Err(error("New actor crashed unexpectedly in spawn_link", AnyValue::new(false))),
+            ActivationResult::Failure(e) =>
+                Err(e),
+            ActivationResult::Success =>
+                Ok(()),
+        }
     }
 }
 
