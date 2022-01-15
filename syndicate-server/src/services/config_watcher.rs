@@ -60,6 +60,7 @@ fn process_existing_file(
         .collect::<Result<Vec<_>, _>>()?;
     match script::Parser::new(&tokens).parse_top("config") {
         Ok(Some(i)) => Ok(Some(t.facet(|t| {
+            tracing::debug!("Instructions for file {:?}: {:#?}", &env.path, &i);
             env.safe_eval(t, &i);
             Ok(())
         }).expect("Successful facet startup"))),
