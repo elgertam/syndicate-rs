@@ -690,11 +690,11 @@ impl<'t> Parser<'t> {
                     self.drop();
 
                     let ctor = match s.as_ref() {
-                        "" => |target, pattern_template, body| {
+                        "" => |target, pattern_template, body| { // "?"
                             Instruction::During { target, pattern_template, body } },
-                        "?" => |target, pattern_template, body| {
+                        "?" => |target, pattern_template, body| { // "??"
                             Instruction::OnMessage { target, pattern_template, body } },
-                        "-" => match self.parse(target) {
+                        "-" => match self.parse(target) { // "?-"
                             Parsed::Value(i) => return Parsed::Value(Instruction::OnStop {
                                 body: Box::new(i),
                             }),
@@ -759,12 +759,44 @@ impl<'t> Parser<'t> {
                             target: target.to_owned(),
                             template: self.shift(),
                         });
+                    } else if s == "+=" {
+                        self.drop();
+                        if self.ateof() {
+                            return self.error("Missing payload after '+='");
+                        }
+                        return Parsed::Value(Instruction::Assert {
+                            target: target.to_owned(),
+                            template: self.shift(),
+                        });
                     } else {
                         /* fall through */
                     }
                 }
-                Symbolic::Literal(_) => {
-                    /* fall through */
+                Symbolic::Literal(s) => {
+                    if s == "~" { // "=~"
+                        // s.drop();
+                        // if self.ateof() {
+                        //     return self.error("Missing pattern, true-instruction and false-continuation in match");
+                        // }
+                        // let match_template = self.shift();
+                        // return match self.parse(target) {
+                        //     Parsed::Eof =>
+                        //         self.error(format!(
+                        //             "Missing true-instruction in conditional with pattern {:?}",
+                        //             match_template)),
+                        //     Parsed::Skip =>
+                        //         Parsed::Skip,
+                        //     Parsed::Value(true_instruction) => {
+                        //         let false_instructions = self.parse_all();
+                        //         Parsed::Value(Instruction::Cond {
+                        //             value: target.to_owned(),
+                        //             pattern: match_template,
+                        //             on_match: true_instruction,
+                        //             on_nomatch: self.parse_all(
+                        // };
+                    } else {
+                        /* fall through */
+                    }
                 }
             }
         }
