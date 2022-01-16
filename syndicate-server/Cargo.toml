@@ -16,7 +16,7 @@ syndicate = { path = "../syndicate", version = "^0.21.0"}
 [dependencies]
 preserves-schema = "^2"
 syndicate = { path = "../syndicate", version = "^0.21.0"}
-syndicate-macros = { path = "../syndicate-macros", version = "^0.15.0"}
+syndicate-macros = { path = "../syndicate-macros", version = "^0.16.0"}
 
 chrono = "0.4"
 futures = "0.3"
