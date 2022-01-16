@@ -2,7 +2,7 @@ version 1 .
 
 Packet = Turn / Error / Extension .
 
-Extension = <<rec> @label any @fields any> .
+Extension = <<rec> @label any @fields [any ...]> .
 
 Error = <error @message string @detail any>.
 
