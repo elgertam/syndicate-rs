@@ -303,12 +303,17 @@ impl TunnelRelay {
     fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<AnyValue>) -> ActorResult {
         tracing::debug!(packet = ?p, "-->");
         match p {
+            P::Packet::Extension(b) => {
+                let P::Extension { label, fields } = *b;
+                tracing::info!(?label, ?fields, "received Extension from peer");
+                Ok(())
+            }
             P::Packet::Error(b) => {
                 tracing::info!(message = ?b.message.clone(),
                                detail = ?b.detail.clone(),
                                "received Error from peer");
                 Err(*b)
-            },
+            }
             P::Packet::Turn(b) => {
                 let P::Turn(events) = *b;
                 for P::TurnEvent { oid, event } in events {
