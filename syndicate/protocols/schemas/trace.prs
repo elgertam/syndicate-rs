@@ -1,0 +1,82 @@
+version 1 .
+embeddedType EntityRef.Cap .
+
+TraceEntry = <trace
+              @timestamp @"seconds since Unix epoch" double
+              @actor ActorId
+              @item ActorActivation> .
+
+ActorActivation =
+/ <start @actorName Name>
+/ @turn TurnDescription
+/ <stop @status ExitStatus>
+.
+
+Name =
+/ <anonymous>
+/ <named @name any>
+.
+
+ActorId = any .
+FacetId = any .
+Oid = any .
+TaskId = any .
+TurnId = any .
+
+ExitStatus = =ok / protocol.Error .
+
+; Trace information associated with a turn.
+TurnDescription = <turn @id TurnId @cause TurnCause @actions [ActionDescription ...]> .
+
+; The cause of a turn.
+TurnCause =
+/ @turn <caused-by @id TurnId>
+/ @actorBoot <actor-boot>
+/ @actorCleanup <actor-cleanup>
+/ @linkedTaskRelease <linked-task-release @id TaskId @reason LinkedTaskReleaseReason>
+/ @periodicActivation <periodic-activation @"`period` is in seconds" @period double>
+/ <delay @causingTurn TurnId @"`amount` is in seconds" @amount double>
+/ <external @description any>
+.
+
+LinkedTaskReleaseReason = =cancelled / =normal .
+
+; An action taken during a turn.
+ActionDescription =
+/ <assert @target Target @assertion AssertionDescription @handle protocol.Handle>
+/ <retract @target Target @handle protocol.Handle>
+/ <message @target Target @body AssertionDescription>
+/ <sync @target Target>
+/ <spawn @link bool @id ActorId>
+/ <link
+   @parentActor ActorId
+   @childToParent protocol.Handle
+   @childActor ActorId
+   @parentToChild protocol.Handle>
+/ @breakLink <break-link @peer ActorId @handle protocol.Handle>
+/ @facetStart <facet-start @path [FacetId ...]>
+/ @facetStop <facet-stop @path [FacetId ...] @reason FacetStopReason>
+/ @linkedTaskStart <linked-task-start @taskName Name @id TaskId>
+.
+
+; An assertion or the body of a message: either a Preserves value, or
+; some opaque system-internal value, represented according to the
+; system concerned.
+AssertionDescription =
+/ <value @value any>
+/ <opaque @description any>
+.
+
+FacetStopReason =
+/ @explicitAction =explicit-action
+/ =inert
+/ @parentStopping =parent-stopping
+/ @actorStopping =actor-stopping
+.
+
+Target = <entity @actor ActorId @facet FacetId @oid Oid> .
+
+; For the future: consider including information about `protocol`-level `Turn`s etc sent to
+; peers over e.g. Websockets or TCP/IP, allowing cross-correlation of traces from different
+; processes and implementations with each other to form a large overall picture.
+.
