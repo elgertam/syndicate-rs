@@ -1,6 +1,8 @@
 //! Extremely simple single-actor supervision. Vastly simplified compared to the available
 //! options in [Erlang/OTP](https://erlang.org/doc/man/supervisor.html).
 
+use preserves::value::NestedValue;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +10,6 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::actor::*;
-use crate::enclose;
 use crate::schemas::service::State;
 
 pub type Boot = Box<dyn Send + FnMut(&mut Activation) -> ActorResult>;
@@ -36,7 +37,8 @@ pub struct SupervisorConfiguration {
 
 pub struct Supervisor {
     self_ref: Arc<Ref<Protocol>>,
-    name: tracing::Span,
+    my_name: Name,
+    child_name: Name,
     config: SupervisorConfiguration,
     boot_fn: Option<Boot>,
     restarts: VecDeque<Instant>,
@@ -86,8 +88,7 @@ impl Entity<Protocol> for Supervisor
     }
 
     fn retract(&mut self, t: &mut Activation, _h: Handle) -> ActorResult {
-        let _name = self.name.clone();
-        let _entry = _name.enter();
+        let _entry = tracing::info_span!("supervisor", name = ?self.child_name).entered();
         let exit_status =
             self.ac_ref.take().expect("valid supervisee ActorRef")
             .exit_status()
@@ -144,8 +145,9 @@ impl Entity<Protocol> for Supervisor
     }
 
     fn stop(&mut self, _t: &mut Activation) -> ActorResult {
-        let _entry = self.name.enter();
-        tracing::info!(self_ref = ?self.self_ref, "Supervisor terminating");
+        tracing::info!(name = ?self.my_name,
+                       self_ref = ?self.self_ref,
+                       "Supervisor terminating");
         Ok(())
     }
 }
@@ -154,18 +156,21 @@ impl Supervisor {
     pub fn start<C: 'static + Send + FnMut(&mut Activation, State) -> ActorResult,
                  B: 'static + Send + FnMut(&mut Activation) -> ActorResult>(
         t: &mut Activation,
-        name: tracing::Span,
+        name: Name,
         config: SupervisorConfiguration,
         mut state_cb: C,
         boot_fn: B,
     ) -> ActorResult {
-        let _entry = name.enter();
+        let _entry = tracing::info_span!("supervisor", ?name).entered();
         tracing::trace!(?config);
         let self_ref = t.create_inert();
         let state_field = t.named_field("supervisee_state", State::Started);
+        let my_name = name.as_ref().map(
+            |n| preserves::rec![AnyValue::symbol("supervisor"), n.clone()]);
         let mut supervisor = Supervisor {
             self_ref: Arc::clone(&self_ref),
-            name: name.clone(),
+            my_name: my_name.clone(),
+            child_name: name,
             config,
             boot_fn: Some(Box::new(boot_fn)),
             restarts: VecDeque::new(),
@@ -174,14 +179,11 @@ impl Supervisor {
         };
         tracing::info!(self_ref = ?supervisor.self_ref, "Supervisor starting");
         supervisor.ensure_started(t)?;
-        t.dataflow(enclose!((name) move |t| {
+        t.dataflow(move |t| {
             let state = t.get(&state_field).clone();
-            {
-                let _entry = name.enter();
-                tracing::debug!(?state);
-            }
+            tracing::debug!(name = ?my_name, ?state);
             state_cb(t, state)
-        }))?;
+        })?;
         self_ref.become_entity(supervisor);
         t.on_stop_notify(&self_ref);
         Ok(())
@@ -190,16 +192,16 @@ impl Supervisor {
     fn ensure_started(&mut self, t: &mut Activation) -> ActorResult {
         match self.boot_fn.take() {
             None => {
-                let _entry = self.name.enter();
                 t.set(&self.state, State::Failed);
-                tracing::error!("Cannot restart supervisee, because it panicked at startup")
+                tracing::error!(name = ?self.my_name,
+                                "Cannot restart supervisee, because it panicked at startup")
             }
             Some(mut boot_fn) => {
                 let self_ref = Arc::clone(&self.self_ref);
                 t.facet(|t: &mut Activation| {
                     t.assert(&self.self_ref, Protocol::SuperviseeStarted);
                     self.ac_ref = Some(t.spawn_link(
-                        crate::name!(parent: &self.name, "supervisee"),
+                        self.child_name.clone(),
                         move |t| {
                             match boot_fn(t) {
                                 Ok(()) => {

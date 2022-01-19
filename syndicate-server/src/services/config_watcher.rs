@@ -3,6 +3,8 @@ use notify::Watcher;
 use notify::RecursiveMode;
 use notify::watcher;
 
+use syndicate::preserves::rec;
+
 use std::fs;
 use std::future;
 use std::io;
@@ -16,6 +18,7 @@ use syndicate::actor::*;
 use syndicate::error::Error;
 use syndicate::enclose;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
+use syndicate::trace;
 use syndicate::value::BinarySource;
 use syndicate::value::BytesBinarySource;
 use syndicate::value::Map;
@@ -32,11 +35,11 @@ use crate::script;
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("config_watcher"), move |t| {
+    t.spawn(Some(AnyValue::symbol("config_watcher")), move |t| {
         Ok(during!(t, config_ds, language(), <run-service $spec: internal_services::ConfigWatcher>, |t| {
             Supervisor::start(
                 t,
-                syndicate::name!(parent: None, "config", path = ?spec.path),
+                Some(rec![AnyValue::symbol("config"), AnyValue::new(spec.path.clone())]),
                 SupervisorConfiguration::default(),
                 enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
                 enclose!((config_ds) move |t| enclose!((config_ds, spec) run(t, config_ds, spec))))
@@ -175,26 +178,32 @@ fn run(
     watcher.watch(&env.path, RecursiveMode::Recursive).map_err(convert_notify_error)?;
 
     let facet = t.facet.clone();
+    let trace_collector = t.trace_collector();
     let span = tracing::Span::current();
     thread::spawn(move || {
         let _entry = span.enter();
 
         let mut path_state: Map<PathBuf, FacetId> = Map::new();
 
-        if !facet.activate(
-            Account::new(syndicate::name!("initial_scan")),
-            |t| {
-                initial_scan(t, &mut path_state, &config_ds, env.clone());
-                config_ds.assert(t, language(), &lifecycle::ready(&spec));
-                Ok(())
-            })
         {
-            return;
+            let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("initial_scan"));
+            let account = Account::new(Some(AnyValue::symbol("initial_scan")), trace_collector.clone());
+            if !facet.activate(
+                &account, cause, |t| {
+                    initial_scan(t, &mut path_state, &config_ds, env.clone());
+                    config_ds.assert(t, language(), &lifecycle::ready(&spec));
+                    Ok(())
+                })
+            {
+                return;
+            }
         }
         tracing::trace!("initial_scan complete");
 
         let mut rescan = |paths: Vec<PathBuf>| {
-            facet.activate(Account::new(syndicate::name!("rescan")), |t| {
+            let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("rescan"));
+            let account = Account::new(Some(AnyValue::symbol("rescan")), trace_collector.clone());
+            facet.activate(&account, cause, |t| {
                 let mut to_stop = Vec::new();
                 for path in paths.into_iter() {
                     let maybe_facet_id = path_state.remove(&path);
@@ -236,15 +245,19 @@ fn run(
             if !keep_running { break; }
         }
 
-        facet.activate(Account::new(syndicate::name!("termination")), |t| {
-            tracing::trace!("linked thread terminating associated facet");
-            Ok(t.stop())
-        });
+        {
+            let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("termination"));
+            let account = Account::new(Some(AnyValue::symbol("termination")), trace_collector);
+            facet.activate(&account, cause, |t| {
+                tracing::trace!("linked thread terminating associated facet");
+                Ok(t.stop())
+            });
+        }
 
         tracing::trace!("linked thread done");
     });
 
-    t.linked_task(syndicate::name!("cancel-wait"), async move {
+    t.linked_task(Some(AnyValue::symbol("cancel-wait")), async move {
         future::pending::<()>().await;
         drop(watcher);
         Ok(LinkedTaskTermination::KeepFacet)

@@ -1,3 +1,5 @@
+use preserves_schema::Codec;
+
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -5,8 +7,11 @@ use std::sync::Arc;
 use syndicate::actor::*;
 use syndicate::enclose;
 use syndicate::error::Error;
+use syndicate::preserves::rec;
+use syndicate::preserves::value::NestedValue;
 use syndicate::relay;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
+use syndicate::trace;
 
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
@@ -19,11 +24,11 @@ use crate::schemas::internal_services::UnixRelayListener;
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("unix_relay_listener"), move |t| {
+    t.spawn(Some(AnyValue::symbol("unix_relay_listener")), move |t| {
         Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener>, |t| {
             Supervisor::start(
                 t,
-                syndicate::name!(parent: None, "relay", addr = ?spec),
+                Some(rec![AnyValue::symbol("relay"), language().unparse(&spec)]),
                 SupervisorConfiguration::default(),
                 enclose!((ds, spec) lifecycle::updater(ds, spec)),
                 enclose!((ds) move |t| enclose!((ds, spec) run(t, ds, spec))))
@@ -34,38 +39,44 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult {
     lifecycle::terminate_on_service_restart(t, &ds, &spec);
     let path_str = spec.addr.path.clone();
-    let parent_span = tracing::Span::current();
     let facet = t.facet.clone();
-    t.linked_task(syndicate::name!("listener"), async move {
+    let trace_collector = t.trace_collector();
+    t.linked_task(Some(AnyValue::symbol("listener")), async move {
         let listener = bind_unix_listener(&PathBuf::from(path_str)).await?;
 
-        if !facet.activate(
-            Account::new(syndicate::name!("readiness")), |t| {
-                tracing::info!("listening");
-                ds.assert(t, language(), &lifecycle::ready(&spec));
-                Ok(())
-            })
         {
-            return Ok(LinkedTaskTermination::Normal);
+            let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("readiness"));
+            let account = Account::new(Some(AnyValue::symbol("readiness")), trace_collector.clone());
+            if !facet.activate(
+                &account, cause, |t| {
+                    tracing::info!("listening");
+                    ds.assert(t, language(), &lifecycle::ready(&spec));
+                    Ok(())
+                })
+            {
+                return Ok(LinkedTaskTermination::Normal);
+            }
         }
 
         loop {
             let (stream, _addr) = listener.accept().await?;
             let peer = stream.peer_cred()?;
             let gatekeeper = spec.gatekeeper.clone();
-            let name = syndicate::name!(parent: parent_span.clone(), "conn",
-                                        pid = ?peer.pid().unwrap_or(-1),
-                                        uid = peer.uid());
+            let name = Some(rec![AnyValue::symbol("unix"),
+                                 AnyValue::new(peer.pid().unwrap_or(-1)),
+                                 AnyValue::new(peer.uid())]);
+            let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("connect"));
+            let account = Account::new(name.clone(), trace_collector.clone());
             if !facet.activate(
-                Account::new(name.clone()),
-                move |t| {
+                &account, cause, enclose!((trace_collector) move |t| {
                     t.spawn(name, |t| {
-                        Ok(t.linked_task(tracing::Span::current(), {
+                        Ok(t.linked_task(None, {
                             let facet = t.facet.clone();
                             async move {
                                 tracing::info!(protocol = %"unix");
                                 let (i, o) = stream.into_split();
-                                run_connection(facet,
+                                run_connection(trace_collector,
+                                               facet,
                                                relay::Input::Bytes(Box::pin(i)),
                                                relay::Output::Bytes(Box::pin(o)),
                                                gatekeeper);
@@ -74,7 +85,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
                         }))
                     });
                     Ok(())
-                })
+                }))
             {
                 return Ok(LinkedTaskTermination::Normal);
             }

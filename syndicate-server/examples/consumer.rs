@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_args();
     let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
     let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-    Actor::new(None).boot(syndicate::name!("consumer"), |t| {
+    Actor::top(None, |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), |_state, t, ds| {
             let consumer = syndicate::entity(0)
                 .on_message(|message_count, _t, m: AnyValue| {
@@ -44,13 +44,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 observer: Arc::clone(&consumer),
             });
 
-            t.linked_task(syndicate::name!("tick"), async move {
+            t.linked_task(Some(AnyValue::symbol("tick")), async move {
                 let mut stats_timer = interval(Duration::from_secs(1));
                 loop {
                     stats_timer.tick().await;
                     let consumer = Arc::clone(&consumer);
                     external_event(&Arc::clone(&consumer.underlying.mailbox),
-                                   &Account::new(syndicate::name!("account")),
+                                   None,
+                                   &Account::new(None, None),
                                    Box::new(move |t| t.with_entity(
                                        &consumer.underlying,
                                        |t, e| e.message(t, AnyValue::new(true)))))?;

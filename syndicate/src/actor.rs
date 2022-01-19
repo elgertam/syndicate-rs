@@ -5,12 +5,16 @@
     include_str!("../doc/linked-tasks.md"),
 )]
 
+use crate::enclose;
+
 use super::dataflow::Graph;
 use super::error::Error;
 use super::error::error;
 use super::rewrite::CaveatError;
 use super::rewrite::CheckedCaveat;
+use super::schemas::protocol;
 use super::schemas::sturdy;
+use super::trace;
 
 use parking_lot::Mutex;
 use parking_lot::RwLock;
@@ -42,7 +46,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
 use tokio_util::sync::CancellationToken;
 
-use tracing::Instrument;
+// use tracing::Instrument;
 
 /// The type of messages and assertions that can be exchanged among
 /// distributed objects, including via [dataspace][crate::dataspace].
@@ -55,6 +59,9 @@ use tracing::Instrument;
 /// polyglot systems a *lingua franca* has to be chosen. `AnyValue` is
 /// that language.
 pub type AnyValue = ArcValue<Arc<Cap>>;
+
+/// The type of the optional names attached to actors, tasks, and [`Account`]s.
+pub type Name = Option<AnyValue>;
 
 /// The type of process-unique actor IDs.
 pub type ActorId = u64;
@@ -211,9 +218,12 @@ pub trait Entity<M>: Send {
 pub struct InertEntity;
 impl<M> Entity<M> for InertEntity {}
 
+type ActionDescriber = Box<dyn Send + FnOnce() -> trace::ActionDescription>;
+type TracedAction = (Option<ActionDescriber>, Action);
+
 enum CleanupAction {
-    ForMyself(Action),
-    ForAnother(Arc<Mailbox>, Action),
+    ForMyself(TracedAction),
+    ForAnother(Arc<Mailbox>, TracedAction),
 }
 
 type CleanupActions = Map<Handle, CleanupAction>;
@@ -250,6 +260,9 @@ pub struct Activation<'activation> {
 }
 
 struct EventBuffer {
+    pub source_actor_id: ActorId,
+    pub desc: Option<trace::TurnDescription>,
+    pub trace_collector: Option<trace::TraceCollector>,
     pub account: Arc<Account>,
     queues: HashMap<ActorId, (UnboundedSender<SystemMessage>, PendingEventQueue)>,
     for_myself: PendingEventQueue,
@@ -264,6 +277,7 @@ pub struct Account {
     id: u64,
     debt: Arc<AtomicI64>,
     notify: Notify,
+    trace_collector: Option<trace::TraceCollector>,
 }
 
 /// A `LoanedItem<T>` is a `T` with an associated `cost` recorded
@@ -285,7 +299,7 @@ pub struct LoanedItem<T> {
 enum SystemMessage {
     Release,
     ReleaseField(FieldId),
-    Turn(LoanedItem<PendingEventQueue>),
+    Turn(Option<trace::TurnCause>, LoanedItem<PendingEventQueue>),
     Crash(Error),
 }
 
@@ -302,6 +316,7 @@ pub struct Mailbox {
 /// to the actor's private state.
 pub struct Actor {
     rx: UnboundedReceiver<SystemMessage>,
+    trace_collector: Option<trace::TraceCollector>,
     ac_ref: ActorRef,
 }
 
@@ -349,6 +364,9 @@ pub struct RunningActor {
     root: FacetId,
 }
 
+/// The type of process-unique task IDs.
+pub type TaskId = u64;
+
 /// Handle to a shared, mutable field (i.e. a *dataflow variable*) within a [`RunningActor`].
 ///
 /// Use [`Activation::field`] to create fields, and use [`Activation::get`],
@@ -389,7 +407,7 @@ pub struct Facet {
     pub parent_facet_id: Option<FacetId>,
     outbound_handles: Set<Handle>,
     stop_actions: Vec<Action>,
-    linked_tasks: Map<u64, CancellationToken>,
+    linked_tasks: Map<TaskId, CancellationToken>,
     inert_check_preventers: Arc<AtomicU64>,
 }
 
@@ -495,6 +513,8 @@ static NEXT_FIELD_ID: AtomicU64 = AtomicU64::new(6);
 
 static NEXT_BLOCK_ID: AtomicU64 = AtomicU64::new(7);
 
+static NEXT_ACTIVATION_ID: AtomicU64 = AtomicU64::new(9);
+
 preserves_schema::support::lazy_static! {
     #[doc(hidden)]
     pub static ref SYNDICATE_CREDIT: i64 = {
@@ -506,10 +526,10 @@ preserves_schema::support::lazy_static! {
     };
 
     #[doc(hidden)]
-    pub static ref ACCOUNTS: RwLock<Map<u64, (tracing::Span, Arc<AtomicI64>)>> = Default::default();
+    pub static ref ACCOUNTS: RwLock<Map<u64, (Name, Arc<AtomicI64>)>> = Default::default();
 
     #[doc(hidden)]
-    pub static ref ACTORS: RwLock<Map<ActorId, (tracing::Span, ActorRef)>> = Default::default();
+    pub static ref ACTORS: RwLock<Map<ActorId, (Name, ActorRef)>> = Default::default();
 }
 
 impl TryFrom<&AnyValue> for Synced {
@@ -560,12 +580,13 @@ impl FacetRef {
     /// Bills any activity to `account`.
     pub fn activate<F>(
         &self,
-        account: Arc<Account>,
+        account: &Arc<Account>,
+        cause: Option<trace::TurnCause>,
         f: F,
     ) -> bool where
         F: FnOnce(&mut Activation) -> ActorResult,
     {
-        self.activate_exit(account, |t| f(t).into())
+        self.activate_exit(account, cause, |t| f(t).into())
     }
 
     /// Executes `f` in a new "[turn][Activation]" for `actor`. If `f` returns
@@ -578,7 +599,8 @@ impl FacetRef {
     /// Bills any activity to `account`.
     pub fn activate_exit<F>(
         &self,
-        account: Arc<Account>,
+        account: &Arc<Account>,
+        cause: Option<trace::TurnCause>,
         f: F,
     ) -> bool where
         F: FnOnce(&mut Activation) -> RunDisposition,
@@ -588,8 +610,13 @@ impl FacetRef {
             ActorState::Terminated { .. } =>
                 false,
             ActorState::Running(state) => {
-                tracing::trace!(actor_id=?self.actor.actor_id, "activate");
-                let mut activation = Activation::make(self, account, state);
+                // let _entry = tracing::info_span!(parent: None, "actor", actor_id = ?self.actor.actor_id).entered();
+                let mut activation =
+                    Activation::make(self,
+                                     Arc::clone(account),
+                                     cause.clone(),
+                                     account.trace_collector.clone(),
+                                     state);
                 let f_result = f(&mut activation);
                 let is_alive = match activation.restore_invariants(f_result) {
                     RunDisposition::Continue => true,
@@ -599,12 +626,13 @@ impl FacetRef {
                         }
                         drop(activation);
                         let exit_status = Arc::new(exit_status);
-                        state.cleanup(&self.actor, &exit_status);
+                        state.cleanup(&self.actor,
+                                      &exit_status,
+                                      account.trace_collector.clone());
                         *g = ActorState::Terminated { exit_status };
                         false
                     }
                 };
-                tracing::trace!(actor_id=?self.actor.actor_id, "deactivate");
                 is_alive
             }
         }
@@ -615,14 +643,32 @@ impl<'activation> Activation<'activation> {
     fn make(
         facet: &FacetRef,
         account: Arc<Account>,
+        cause: Option<trace::TurnCause>,
+        trace_collector: Option<trace::TraceCollector>,
         state: &'activation mut RunningActor,
     ) -> Self {
         Activation {
             facet: facet.clone(),
             state,
             active_block: None,
-            pending: EventBuffer::new(account),
+            pending: EventBuffer::new(
+                facet.actor.actor_id,
+                account,
+                cause.map(|c| trace::TurnDescription::new(
+                    NEXT_ACTIVATION_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed),
+                    c)),
+                trace_collector),
         }
+    }
+
+    pub fn trace_collector(&self) -> Option<trace::TraceCollector> {
+        self.pending.trace_collector.clone()
+    }
+
+    /// Constructs a new [`Account`] with the given `name`, inheriting
+    /// its `trace_collector` from the current [`Activation`]'s cause.
+    pub fn create_account(&self, name: Name) -> Arc<Account> {
+        Account::new(name, self.trace_collector())
     }
 
     fn immediate_oid<M>(&self, r: &Arc<Ref<M>>) {
@@ -639,6 +685,7 @@ impl<'activation> Activation<'activation> {
             tracing::trace!(check_existence, facet_id, "is_alive");
             let old_facet_id = self.facet.facet_id;
             self.facet.facet_id = facet_id;
+            // let _entry = tracing::info_span!("facet", ?facet_id).entered();
             let result = f(self);
             self.facet.facet_id = old_facet_id;
             result
@@ -662,8 +709,11 @@ impl<'activation> Activation<'activation> {
     /// Retrieves the chain of facet IDs, in order, from the currently-active [`Facet`] up to
     /// and including the root facet of the active actor. Useful for debugging.
     pub fn facet_ids(&mut self) -> Vec<FacetId> {
+        self.facet_ids_for(self.facet.facet_id)
+    }
+
+    fn facet_ids_for(&mut self, mut id: FacetId) -> Vec<FacetId> {
         let mut ids = Vec::new();
-        let mut id = self.facet.facet_id;
         loop {
             ids.push(id);
             match self.state.get_facet(id) {
@@ -677,6 +727,14 @@ impl<'activation> Activation<'activation> {
         ids
     }
 
+    #[inline(always)]
+    fn trace<F: FnOnce(&mut Self) -> trace::ActionDescription>(&mut self, f: F) {
+        if self.pending.desc.is_some() {
+            let a = f(self);
+            self.pending.desc.as_mut().unwrap().record(a);
+        }
+    }
+
     /// Core API: assert `a` at recipient `r`.
     ///
     /// Returns the [`Handle`] for the new assertion.
@@ -686,14 +744,22 @@ impl<'activation> Activation<'activation> {
             tracing::trace!(?r, ?handle, ?a, "assert");
             f.outbound_handles.insert(handle);
             drop(f);
-            self.state.insert_retract_cleanup_action(&r, handle);
+            self.state.insert_retract_cleanup_action(&r, handle, self.pending.desc.as_ref().map(
+                enclose!((r) |_| Box::new(move || trace::ActionDescription::Retract {
+                    target: Box::new(r.as_ref().into()),
+                    handle: Box::new(protocol::Handle(handle.into())),
+                }) as ActionDescriber)));
             {
                 let r = Arc::clone(r);
-                self.pending.queue_for(&r).push(Box::new(
-                    move |t| t.with_entity(&r, |t, e| {
-                        tracing::trace!(?handle, ?a, "asserted");
-                        e.assert(t, a, handle)
-                    })));
+                self.pending.trace(|| trace::ActionDescription::Assert {
+                    target: Box::new(r.as_ref().into()),
+                    assertion: Box::new((&a).into()),
+                    handle: Box::new(protocol::Handle(handle.into())),
+                });
+                self.pending.queue_for(&r).push(Box::new(move |t| t.with_entity(&r, |t, e| {
+                    tracing::trace!(?handle, ?a, "asserted");
+                    e.assert(t, a, handle)
+                })));
             }
         }
         handle
@@ -724,34 +790,49 @@ impl<'activation> Activation<'activation> {
                 let r = Arc::clone(r);
                 self.state.cleanup_actions.insert(
                     handle,
-                    CleanupAction::ForMyself(Box::new(
-                        move |t| t.with_entity(&r, |t, e| {
+                    CleanupAction::ForMyself((
+                        self.pending.desc.as_ref().map(enclose!((r, handle) move |_| Box::new(
+                            move || trace::ActionDescription::Retract {
+                                target: Box::new(r.as_ref().into()),
+                                handle: Box::new(protocol::Handle(handle.into())),
+                            }) as ActionDescriber)),
+                        Box::new(move |t| t.with_entity(&r, |t, e| {
                             tracing::trace!(?handle, "retracted");
                             if let Some(f) = t.active_facet() {
                                 f.outbound_handles.remove(&handle);
                             }
                             e.retract(t, handle)
-                        }))));
+                        })))));
             }
             {
                 let r = Arc::clone(r);
-                self.pending.for_myself.push(Box::new(
-                    move |t| t.with_entity(&r, |t, e| {
-                        tracing::trace!(?handle, ?a, "asserted");
-                        e.assert(t, a, handle)
-                    })));
+                self.pending.trace(|| trace::ActionDescription::Assert {
+                    target: Box::new(r.as_ref().into()),
+                    assertion: Box::new((&a).into()),
+                    handle: Box::new(protocol::Handle(handle.into())),
+                });
+                self.pending.for_myself.push(Box::new(move |t| t.with_entity(&r, |t, e| {
+                    tracing::trace!(?handle, ?a, "asserted");
+                    e.assert(t, a, handle)
+                })));
             }
         }
         handle
     }
 
-    fn half_link(&mut self, t_other: &mut Activation) {
+    fn half_link(&mut self, t_other: &mut Activation) -> Handle {
+        let other_actor_id = t_other.state.actor_id;
         let entity_ref = t_other.create::<AnyValue, _>(StopOnRetract);
         let handle = next_handle();
         tracing::trace!(?handle, ?entity_ref, "half_link");
-        self.state.insert_retract_cleanup_action(&entity_ref, handle);
+        self.state.insert_retract_cleanup_action(&entity_ref, handle, self.pending.desc.as_ref().map(
+            move |_| Box::new(move || trace::ActionDescription::BreakLink {
+                peer: Box::new(trace::ActorId(AnyValue::new(other_actor_id))),
+                handle: Box::new(protocol::Handle(handle.into())),
+            }) as ActionDescriber));
         self.active_facet().unwrap().outbound_handles.insert(handle);
         t_other.with_entity(&entity_ref, |t, e| e.assert(t, AnyValue::new(true), handle)).unwrap();
+        handle
     }
 
     /// Core API: retract a previously-established assertion.
@@ -782,11 +863,14 @@ impl<'activation> Activation<'activation> {
     pub fn message<M: 'static + Send + std::fmt::Debug>(&mut self, r: &Arc<Ref<M>>, m: M) {
         tracing::trace!(?r, ?m, "message");
         let r = Arc::clone(r);
-        self.pending.queue_for(&r).push(Box::new(
-            move |t| t.with_entity(&r, |t, e| {
-                tracing::trace!(?m, "delivered");
-                e.message(t, m)
-            })))
+        self.pending.trace(|| trace::ActionDescription::Message {
+            target: Box::new(r.as_ref().into()),
+            body: Box::new((&m).into()),
+        });
+        self.pending.queue_for(&r).push(Box::new(move |t| t.with_entity(&r, |t, e| {
+            tracing::trace!(?m, "delivered");
+            e.message(t, m)
+        })))
     }
 
     /// Core API: send message `m` to recipient `r`, which must be a
@@ -799,9 +883,13 @@ impl<'activation> Activation<'activation> {
     /// # Panics
     ///
     /// Panics if `r` is not part of the active actor.
-    pub fn message_for_myself<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, m: M) {
+    pub fn message_for_myself<M: 'static + Send + std::fmt::Debug>(&mut self, r: &Arc<Ref<M>>, m: M) {
         self.immediate_oid(r);
         let r = Arc::clone(r);
+        self.pending.trace(|| trace::ActionDescription::Message {
+            target: Box::new(r.as_ref().into()),
+            body: Box::new((&m).into()),
+        });
         self.pending.for_myself.push(Box::new(
             move |t| t.with_entity(&r, |t, e| e.message(t, m))))
     }
@@ -813,6 +901,9 @@ impl<'activation> Activation<'activation> {
     /// the synchronisation request.
     pub fn sync<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
         let r = Arc::clone(r);
+        self.pending.trace(|| trace::ActionDescription::Sync {
+            target: Box::new(r.as_ref().into()),
+        });
         self.pending.queue_for(&r).push(Box::new(
             move |t| t.with_entity(&r, |t, e| e.sync(t, peer))))
     }
@@ -903,28 +994,34 @@ impl<'activation> Activation<'activation> {
     /// facet when the linked task completes. Uses `name` for log messages emitted by the task.
     pub fn linked_task<F: 'static + Send + futures::Future<Output = Result<LinkedTaskTermination, Error>>>(
         &mut self,
-        name: tracing::Span,
+        name: Name,
         boot: F,
     ) {
         let mailbox = self.state.mailbox();
         let facet = self.facet.clone();
-        if let Some(f) = self.active_facet() {
-            let token = CancellationToken::new();
+        let trace_collector = self.trace_collector();
+        if self.active_facet().is_some() {
             let task_id = NEXT_TASK_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed);
-            name.record("task_id", &task_id);
+            self.pending.trace(|| trace::ActionDescription::LinkedTaskStart {
+                task_name: Box::new(name.into()),
+                id: Box::new(trace::TaskId(AnyValue::new(task_id))),
+            });
+
+            let f = self.active_facet().unwrap();
+            let token = CancellationToken::new();
             {
                 let token = token.clone();
                 tokio::spawn(async move {
                     tracing::trace!(task_id, "linked task start");
-                    let result = select! {
+                    let (result, reason) = select! {
                         _ = token.cancelled() => {
                             tracing::trace!(task_id, "linked task cancelled");
-                            LinkedTaskTermination::Normal
+                            (LinkedTaskTermination::Normal, trace::LinkedTaskReleaseReason::Cancelled)
                         }
                         result = boot => match result {
                             Ok(t) => {
                                 tracing::trace!(task_id, "linked task normal stop");
-                                t
+                                (t, trace::LinkedTaskReleaseReason::Normal)
                             }
                             Err(e) => {
                                 tracing::error!(task_id, "linked task error: {}", e);
@@ -933,18 +1030,28 @@ impl<'activation> Activation<'activation> {
                             }
                         }
                     };
-                    facet.activate(Account::new(crate::name!("release_linked_task")), |t| {
-                        if let Some(f) = t.active_facet() {
-                            tracing::trace!(task_id, "cancellation token removed");
-                            f.linked_tasks.remove(&task_id);
-                        }
-                        if let LinkedTaskTermination::Normal = result {
-                            t.stop();
-                        }
-                        Ok(())
-                    });
+                    let release_account =
+                        Account::new(Some(AnyValue::symbol("linked-task-release")), trace_collector);
+                    facet.activate(
+                        &release_account,
+                        release_account.trace_collector.as_ref().map(
+                            |_| trace::TurnCause::LinkedTaskRelease {
+                                id: Box::new(trace::TaskId(AnyValue::new(task_id))),
+                                reason: Box::new(reason),
+                            }),
+                        |t| {
+                            if let Some(f) = t.active_facet() {
+                                tracing::trace!(task_id, "cancellation token removed");
+                                f.linked_tasks.remove(&task_id);
+                            }
+                            if let LinkedTaskTermination::Normal = result {
+                                t.stop();
+                            }
+                            Ok(())
+                        });
                     Ok::<(), Error>(())
-                }.instrument(name));
+                });
+                // }.instrument(tracing::info_span!("task", ?task_id).or_current()));
             }
             f.linked_tasks.insert(task_id, token);
         }
@@ -957,7 +1064,18 @@ impl<'activation> Activation<'activation> {
         duration: time::Duration,
         a: F,
     ) {
-        self.at(time::Instant::now() + duration, a)
+        let account = Arc::clone(self.account());
+        let desc = self.pending.desc.as_ref().map(|d| trace::TurnCause::Delay {
+            causing_turn: Box::new(d.id.clone()),
+            amount: duration.as_secs_f64().into(),
+        });
+        let instant = time::Instant::now() + duration;
+        let facet = self.facet.clone();
+        self.linked_task(Some(AnyValue::symbol("delay")), async move {
+            tokio::time::sleep_until(instant.into()).await;
+            facet.activate(&account, desc, a);
+            Ok(LinkedTaskTermination::KeepFacet)
+        });
     }
 
     /// Executes the given action immediately, and then every time another multiple of the
@@ -969,13 +1087,14 @@ impl<'activation> Activation<'activation> {
     ) -> ActorResult {
         let account = Arc::clone(self.account());
         let facet = self.facet.clone();
-        let span = tracing::Span::current().clone();
-        self.linked_task(crate::name!(parent: None, "Activation::every"), async move {
+        let desc = trace::TurnCause::PeriodicActivation { period: duration.as_secs_f64().into() };
+        self.linked_task(Some(AnyValue::symbol("periodic-activation")), async move {
             let mut timer = tokio::time::interval(duration);
             loop {
                 timer.tick().await;
-                let _entry = span.enter();
-                if !facet.activate(Arc::clone(&account), |t| a(t)) { break; }
+                if !facet.activate(&account, Some(desc.clone()), |t| a(t)) {
+                    break;
+                }
             }
             Ok(LinkedTaskTermination::Normal)
         });
@@ -989,28 +1108,25 @@ impl<'activation> Activation<'activation> {
         instant: I,
         a: F,
     ) {
-        let account = Arc::clone(self.account());
-        let instant = instant.into();
-        let facet = self.facet.clone();
-        let span = tracing::Span::current().clone();
-        self.linked_task(crate::name!(parent: None, "Activation::at"), async move {
-            tokio::time::sleep_until(instant.into()).await;
-            let _entry = span.enter();
-            facet.activate(account, a);
-            Ok(LinkedTaskTermination::KeepFacet)
-        });
+        let delay = instant.into().checked_duration_since(tokio::time::Instant::now())
+            .unwrap_or(time::Duration::ZERO);
+        self.after(delay, a)
     }
 
     /// Schedule the creation of a new actor when the Activation commits.
     pub fn spawn<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
-        name: tracing::Span,
+        name: Name,
         boot: F,
     ) -> ActorRef {
-        let ac = Actor::new(Some(self.state.actor_id));
+        let ac = Actor::new(Some(self.state.actor_id), self.trace_collector());
         let ac_ref = ac.ac_ref.clone();
-        self.pending.for_myself.push(Box::new(move |_| {
-            ac.boot(name, boot);
+        self.pending.trace(|| trace::ActionDescription::Spawn {
+            link: false,
+            id: Box::new(trace::ActorId(AnyValue::new(ac_ref.actor_id))),
+        });
+        self.pending.for_myself.push(Box::new(move |t| {
+            ac.boot(name, Arc::clone(t.account()), Some(trace::TurnCause::ActorBoot), boot);
             Ok(())
         }));
         ac_ref
@@ -1023,15 +1139,22 @@ impl<'activation> Activation<'activation> {
     /// stopped.
     pub fn spawn_link<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
-        name: tracing::Span,
+        name: Name,
         boot: F,
     ) -> ActorRef {
-        let ac = Actor::new(Some(self.state.actor_id));
+        let ac = Actor::new(Some(self.state.actor_id), self.trace_collector());
         let ac_ref = ac.ac_ref.clone();
         let facet_id = self.facet.facet_id;
+        self.pending.trace(|| trace::ActionDescription::Spawn {
+            link: true,
+            id: Box::new(trace::ActorId(AnyValue::new(ac_ref.actor_id))),
+        });
         self.pending.for_myself.push(Box::new(move |t| {
             t.with_facet(true, facet_id, move |t| {
-                ac.link(t)?.boot(name, boot);
+                ac.link(t)?.boot(name,
+                                 Arc::clone(t.account()),
+                                 Some(trace::TurnCause::ActorBoot),
+                                 boot);
                 Ok(())
             })
         }));
@@ -1048,6 +1171,9 @@ impl<'activation> Activation<'activation> {
         let f = Facet::new(Some(self.facet.facet_id));
         let facet_id = f.facet_id;
         self.state.facet_nodes.insert(facet_id, f);
+        self.trace(|t| trace::ActionDescription::FacetStart {
+            path: t.facet_ids_for(facet_id).iter().map(|i| trace::FacetId(AnyValue::new(u64::from(*i)))).collect(),
+        });
         tracing::trace!(parent_id = ?self.facet.facet_id,
                         ?facet_id,
                         actor_facet_count = ?self.state.facet_nodes.len());
@@ -1093,7 +1219,7 @@ impl<'activation> Activation<'activation> {
         if let Some(k) = continuation {
             self.on_facet_stop(facet_id, k);
         }
-        self._terminate_facet(facet_id, true)
+        self._terminate_facet(facet_id, true, trace::FacetStopReason::ExplicitAction)
     }
 
     /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
@@ -1127,7 +1253,8 @@ impl<'activation> Activation<'activation> {
             tracing::trace!("Checking inertness of facet {} from facet {}", facet_id, t.facet.facet_id);
             if t.state.facet_exists_and_is_inert(facet_id) {
                 tracing::trace!(" - facet {} is inert, stopping it", facet_id);
-                t.stop_facet(facet_id);
+                t._terminate_facet(facet_id, true, trace::FacetStopReason::Inert)
+                    .expect("Non-failing _terminate_facet in stop_if_inert");
             } else {
                 tracing::trace!(" - facet {} is not inert", facet_id);
             }
@@ -1135,8 +1262,17 @@ impl<'activation> Activation<'activation> {
         }))
     }
 
-    fn _terminate_facet(&mut self, facet_id: FacetId, alive: bool) -> ActorResult {
+    fn _terminate_facet(
+        &mut self,
+        facet_id: FacetId,
+        alive: bool,
+        reason: trace::FacetStopReason,
+    ) -> ActorResult {
         if let Some(mut f) = self.state.facet_nodes.remove(&facet_id) {
+            self.trace(|t| trace::ActionDescription::FacetStop {
+                path: t.facet_ids_for(facet_id).iter().map(|i| trace::FacetId(AnyValue::new(u64::from(*i)))).collect(),
+                reason: Box::new(reason),
+            });
             tracing::trace!(actor_facet_count = ?self.state.facet_nodes.len(),
                             "{} termination of {:?}",
                             if alive { "living" } else { "post-exit" },
@@ -1147,7 +1283,7 @@ impl<'activation> Activation<'activation> {
             self.with_facet(false, facet_id, |t| {
                 if let Some(children) = t.state.facet_children.remove(&facet_id) {
                     for child_id in children.into_iter() {
-                        t._terminate_facet(child_id, alive)?;
+                        t._terminate_facet(child_id, alive, trace::FacetStopReason::ParentStopping)?;
                     }
                 }
                 if alive {
@@ -1164,7 +1300,7 @@ impl<'activation> Activation<'activation> {
                     if let Some(p) = parent_facet_id {
                         if t.state.facet_exists_and_is_inert(p) {
                             tracing::trace!("terminating parent {:?} of facet {:?}", p, facet_id);
-                            t._terminate_facet(p, true)?;
+                            t._terminate_facet(p, true, trace::FacetStopReason::Inert)?;
                         } else {
                             tracing::trace!("not terminating parent {:?} of facet {:?}", p, facet_id);
                         }
@@ -1329,8 +1465,16 @@ impl<'activation> Activation<'activation> {
 }
 
 impl EventBuffer {
-    fn new(account: Arc<Account>) -> Self {
+    fn new(
+        source_actor_id: ActorId,
+        account: Arc<Account>,
+        desc: Option<trace::TurnDescription>,
+        trace_collector: Option<trace::TraceCollector>,
+    ) -> Self {
         EventBuffer {
+            source_actor_id,
+            desc,
+            trace_collector,
             account,
             queues: HashMap::new(),
             for_myself: Vec::new(),
@@ -1339,10 +1483,18 @@ impl EventBuffer {
 
     fn execute_cleanup_action(&mut self, d: CleanupAction) {
         match d {
-            CleanupAction::ForAnother(mailbox, action) =>
-                self.queue_for_mailbox(&mailbox).push(action),
-            CleanupAction::ForMyself(action) =>
-                self.for_myself.push(action),
+            CleanupAction::ForAnother(mailbox, (tracer, action)) => {
+                if let Some(f) = tracer {
+                    self.trace(f);
+                }
+                self.queue_for_mailbox(&mailbox).push(action);
+            }
+            CleanupAction::ForMyself((tracer, action)) => {
+                if let Some(f) = tracer {
+                    self.trace(f);
+                }
+                self.for_myself.push(action);
+            }
         }
     }
 
@@ -1365,6 +1517,11 @@ impl EventBuffer {
         if !self.for_myself.is_empty() {
             panic!("Unprocessed for_myself events remain at deliver() time");
         }
+        if let Some(d) = &mut self.desc {
+            if let Some(c) = &self.trace_collector {
+                c.record(self.source_actor_id, trace::ActorActivation::Turn(Box::new(d.take())));
+            }
+        }
         for (_actor_id, (tx, turn)) in std::mem::take(&mut self.queues).into_iter() {
             // Deliberately ignore send errors here: they indicate that the recipient is no
             // longer alive. But we don't care about that case, since we have to be robust to
@@ -1372,7 +1529,19 @@ impl EventBuffer {
             // problems it caused was a relay output_loop that received EPIPE causing the relay
             // to crash, just as it was receiving thousands of messages a second, leading to
             // many, many log reports of failed send_actions from the following line.)
-            let _ = send_actions(&tx, &self.account, turn);
+            let _ = send_actions(&tx,
+                                 self.desc.as_ref().map(|d| trace::TurnCause::Turn {
+                                     id: Box::new(d.id.clone()),
+                                 }),
+                                 &self.account,
+                                 turn);
+        }
+    }
+
+    #[inline(always)]
+    fn trace<F: FnOnce() -> trace::ActionDescription>(&mut self, f: F) {
+        if let Some(d) = &mut self.desc {
+            d.record(f());
         }
     }
 }
@@ -1386,14 +1555,15 @@ impl Drop for EventBuffer {
 impl Account {
     /// Construct a new `Account`, storing `name` within it for
     /// debugging use.
-    pub fn new(name: tracing::Span) -> Arc<Self> {
-        let id = NEXT_ACCOUNT_ID.fetch_add(1, Ordering::Relaxed);
+    pub fn new(name: Name, trace_collector: Option<trace::TraceCollector>) -> Arc<Self> {
+        let id = NEXT_ACCOUNT_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed);
         let debt = Arc::new(AtomicI64::new(0));
         ACCOUNTS.write().insert(id, (name, Arc::clone(&debt)));
         Arc::new(Account {
             id,
             debt,
             notify: Notify::new(),
+            trace_collector,
         })
     }
 
@@ -1454,11 +1624,12 @@ impl<T> Drop for LoanedItem<T> {
 #[must_use]
 fn send_actions(
     tx: &UnboundedSender<SystemMessage>,
+    caused_by: Option<trace::TurnCause>,
     account: &Arc<Account>,
     t: PendingEventQueue,
 ) -> ActorResult {
     let token_count = t.len();
-    tx.send(SystemMessage::Turn(LoanedItem::new(account, token_count, t)))
+    tx.send(SystemMessage::Turn(caused_by, LoanedItem::new(account, token_count, t)))
         .map_err(|_| error("Target actor not running", AnyValue::new(false)))
 }
 
@@ -1497,17 +1668,29 @@ impl Drop for Mailbox {
     fn drop(&mut self) {
         tracing::debug!("Last reference to mailbox of actor id {:?} was dropped", self.actor_id);
         let _ = self.tx.send(SystemMessage::Release);
-        ()
     }
 }
 
 impl Actor {
+    /// Create and start a new "top-level" actor: an actor not
+    /// causally related to another. This is the usual way to start a
+    /// Syndicate program.
+    pub fn top<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
+        trace_collector: Option<trace::TraceCollector>,
+        boot: F,
+    ) -> ActorHandle {
+        let ac = Actor::new(None, trace_collector.clone());
+        let cause = trace_collector.as_ref().map(|_| trace::TurnCause::ActorBoot);
+        let account = Account::new(None, trace_collector);
+        ac.boot(None, account, cause, boot)
+    }
+
     /// Create a new actor. It still needs to be [`boot`ed][Self::boot].
-    pub fn new(parent_actor_id: Option<ActorId>) -> Self {
+    pub fn new(_parent_actor_id: Option<ActorId>, trace_collector: Option<trace::TraceCollector>) -> Self {
         let (tx, rx) = unbounded_channel();
         let actor_id = next_actor_id();
         let root = Facet::new(None);
-        tracing::debug!(?actor_id, ?parent_actor_id, root_facet_id = ?root.facet_id, "Actor::new");
+        tracing::debug!(?actor_id, ?_parent_actor_id, root_facet_id = ?root.facet_id, "Actor::new");
         let mut st = RunningActor {
             actor_id,
             tx,
@@ -1523,20 +1706,32 @@ impl Actor {
         };
         st.facet_nodes.insert(root.facet_id, root);
         let ac_ref = ActorRef { actor_id, state: Arc::new(Mutex::new(ActorState::Running(st))) };
-        Actor { rx, ac_ref }
+        Actor { rx, trace_collector, ac_ref }
     }
 
     fn link(self, t_parent: &mut Activation) -> Result<Self, Error> {
         if t_parent.active_facet().is_none() {
             panic!("No active facet when calling spawn_link");
         }
+        let account = Arc::clone(t_parent.account());
+        let mut h_to_child = None;
+        let mut h_to_parent = None;
         let is_alive = self.ac_ref.root_facet_ref().activate(
-            Account::new(crate::name!("link")), |t_child| {
-                t_parent.half_link(t_child);
-                t_child.half_link(t_parent);
+            &account,
+            None,
+            |t_child| {
+                h_to_child = Some(t_parent.half_link(t_child));
+                h_to_parent = Some(t_child.half_link(t_parent));
                 Ok(())
             });
         if is_alive {
+            let parent_actor = t_parent.state.actor_id;
+            t_parent.trace(|_| trace::ActionDescription::Link {
+                parent_actor: Box::new(trace::ActorId(AnyValue::new(parent_actor))),
+                parent_to_child: Box::new(protocol::Handle(h_to_child.unwrap().into())),
+                child_actor: Box::new(trace::ActorId(AnyValue::new(self.ac_ref.actor_id))),
+                child_to_parent: Box::new(protocol::Handle(h_to_parent.unwrap().into())),
+            });
             Ok(self)
         } else {
             Err(error("spawn_link'd actor terminated before link could happen", AnyValue::new(false)))
@@ -1549,38 +1744,58 @@ impl Actor {
     /// and then the mainloop is entered.
     pub fn boot<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         mut self,
-        name: tracing::Span,
+        name: Name,
+        boot_account: Arc<Account>,
+        boot_cause: Option<trace::TurnCause>,
         boot: F,
     ) -> ActorHandle {
-        ACTORS.write().insert(self.ac_ref.actor_id, (name.clone(), self.ac_ref.clone()));
-        name.record("actor_id", &self.ac_ref.actor_id);
+        let actor_id = self.ac_ref.actor_id;
+        ACTORS.write().insert(actor_id, (name.clone(), self.ac_ref.clone()));
+        let trace_collector = boot_account.trace_collector.clone();
+        if let Some(c) = &trace_collector {
+            c.record(actor_id, trace::ActorActivation::Start {
+                actor_name: Box::new(name.into()),
+            });
+        }
         tokio::spawn(async move {
             tracing::trace!("start");
-            self.run(|t| {
+            self.run(boot_account, boot_cause, move |t| {
                 t.facet(boot)?;
                 Ok(())
             }).await;
             let result = self.ac_ref.exit_status().expect("terminated");
+            if let Some(c) = trace_collector {
+                c.record(actor_id, trace::ActorActivation::Stop {
+                    status: Box::new(match &result {
+                        Ok(()) => trace::ExitStatus::Ok,
+                        Err(e) => trace::ExitStatus::Error(Box::new(e.clone())),
+                    }),
+                });
+            }
             match &result {
                 Ok(()) => tracing::trace!("normal stop"),
                 Err(e) => tracing::error!("error stop: {}", e),
             }
             result
-        }.instrument(name))
+        })
+        // }.instrument(tracing::info_span!(parent: None, "actor", ?actor_id).or_current()))
     }
 
     async fn run<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
+        boot_account: Arc<Account>,
+        boot_cause: Option<trace::TurnCause>,
         boot: F,
     ) -> () {
         let root_facet_ref = self.ac_ref.root_facet_ref();
 
         let terminate = |result: ActorResult| {
-            root_facet_ref.activate_exit(Account::new(crate::name!("shutdown")),
+            root_facet_ref.activate_exit(&Account::new(None, None),
+                                         None,
                                          |_| RunDisposition::Terminate(result));
         };
 
-        if !root_facet_ref.activate(Account::new(crate::name!("boot")), boot) {
+        if !root_facet_ref.activate(&boot_account, boot_cause, boot) {
             return;
         }
 
@@ -1602,15 +1817,17 @@ impl Actor {
                             ra.fields.remove(&field_id);
                         })
                     }
-                    SystemMessage::Turn(mut loaned_item) => {
+                    SystemMessage::Turn(cause, mut loaned_item) => {
                         tracing::trace!(actor_id = ?self.ac_ref.actor_id, "SystemMessage::Turn");
                         let actions = std::mem::take(&mut loaned_item.item);
-                        let is_alive = root_facet_ref.activate(
-                            Arc::clone(&loaned_item.account), |t| {
+                        if !root_facet_ref.activate(
+                            &loaned_item.account, cause, |t| {
                                 for action in actions.into_iter() { action(t)? }
                                 Ok(())
-                            });
-                        if !is_alive { return; }
+                            })
+                        {
+                            return;
+                        }
                     }
                     SystemMessage::Crash(e) => {
                         tracing::trace!(actor_id = ?self.ac_ref.actor_id,
@@ -1760,25 +1977,32 @@ impl RunningActor {
         &mut self,
         r: &Arc<Ref<M>>,
         handle: Handle,
+        describer: Option<ActionDescriber>,
     ) {
         let r = Arc::clone(r);
         self.cleanup_actions.insert(
             handle,
-            CleanupAction::ForAnother(Arc::clone(&r.mailbox), Box::new(
-                move |t| t.with_entity(&r, |t, e| {
+            CleanupAction::ForAnother(Arc::clone(&r.mailbox), (
+                describer,
+                Box::new(move |t| t.with_entity(&r, |t, e| {
                     tracing::trace!(?handle, "retracted");
                     if let Some(f) = t.active_facet() {
                         f.outbound_handles.remove(&handle);
                     }
                     e.retract(t, handle)
-                }))));
+                })))));
     }
 
-    fn cleanup(&mut self, ac_ref: &ActorRef, exit_status: &Arc<ActorResult>) {
-        let mut t = Activation::make(&ac_ref.facet_ref(self.root),
-                                     Account::new(crate::name!("cleanup")),
-                                     self);
-        if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok()) {
+    fn cleanup(
+        &mut self,
+        ac_ref: &ActorRef,
+        exit_status: &Arc<ActorResult>,
+        trace_collector: Option<trace::TraceCollector>,
+    ) {
+        let cause = trace_collector.as_ref().map(|_| trace::TurnCause::ActorCleanup);
+        let account = Account::new(Some(AnyValue::symbol("cleanup")), trace_collector.clone());
+        let mut t = Activation::make(&ac_ref.facet_ref(self.root), account, cause, trace_collector, self);
+        if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok(), trace::FacetStopReason::ActorStopping) {
             // This can only occur as the result of an internal error in this file's code.
             tracing::error!(?err, "unexpected error from terminate_facet");
             panic!("Unexpected error result from terminate_facet");
@@ -1787,8 +2011,8 @@ impl RunningActor {
         // TODO: We don't want that: we want (? do we?) exit hooks to run before linked_tasks are cancelled.
         // TODO: Example: send an error message in an exit_hook that is processed and delivered by a linked_task.
         for action in std::mem::take(&mut t.state.exit_hooks) {
-            if let Err(err) = action(&mut t, &exit_status) {
-                tracing::error!(?err, "error in exit hook");
+            if let Err(_err) = action(&mut t, &exit_status) {
+                tracing::error!(?_err, "error in exit hook");
             }
         }
     }
@@ -1817,19 +2041,17 @@ impl<T: Any + Send> Drop for Field<T> {
 impl Drop for Actor {
     fn drop(&mut self) {
         self.rx.close();
-        let _name = ACTORS.write().remove(&self.ac_ref.actor_id)
-            .map_or_else(|| crate::name!(parent: None, "DROPPED", actor_id=?self.ac_ref.actor_id),
-                         |(span, _ac_ref)| span);
-        let _scope = _name.enter();
+        ACTORS.write().remove(&self.ac_ref.actor_id);
+        // let _scope = tracing::info_span!(parent: None, "actor", actor_id = ?self.ac_ref.actor_id).entered();
         let mut g = self.ac_ref.state.lock();
         if let ActorState::Running(ref mut state) = *g {
-            tracing::warn!(actor_id = ?self.ac_ref.actor_id, "Force-terminated by Actor::drop");
+            tracing::warn!("Force-terminated by Actor::drop");
             let exit_status =
                 Arc::new(Err(error("Force-terminated by Actor::drop", AnyValue::new(false))));
-            state.cleanup(&self.ac_ref, &exit_status);
+            state.cleanup(&self.ac_ref, &exit_status, self.trace_collector.clone());
             *g = ActorState::Terminated { exit_status };
         }
-        tracing::debug!(actor_id = ?self.ac_ref.actor_id, "Actor::drop");
+        tracing::debug!("Actor::drop");
     }
 }
 
@@ -1851,16 +2073,26 @@ impl Drop for Facet {
 ///
 /// Primarily for use by [linked tasks][Activation::linked_task].
 #[must_use]
-pub fn external_event(mailbox: &Arc<Mailbox>, account: &Arc<Account>, action: Action) -> ActorResult {
-    send_actions(&mailbox.tx, account, vec![action])
+pub fn external_event(
+    mailbox: &Arc<Mailbox>,
+    cause: Option<trace::TurnCause>,
+    account: &Arc<Account>,
+    action: Action,
+) -> ActorResult {
+    send_actions(&mailbox.tx, cause, account, vec![action])
 }
 
 /// Directly injects `actions` into `mailbox`, billing subsequent activity against `account`.
 ///
 /// Primarily for use by [linked tasks][Activation::linked_task].
 #[must_use]
-pub fn external_events(mailbox: &Arc<Mailbox>, account: &Arc<Account>, actions: PendingEventQueue) -> ActorResult {
-    send_actions(&mailbox.tx, account, actions)
+pub fn external_events(
+    mailbox: &Arc<Mailbox>,
+    cause: Option<trace::TurnCause>,
+    account: &Arc<Account>,
+    actions: PendingEventQueue,
+) -> ActorResult {
+    send_actions(&mailbox.tx, cause, account, actions)
 }
 
 impl<M> Ref<M> {
@@ -1880,6 +2112,7 @@ impl<M> Ref<M> {
 
     fn internal_with_entity<R, F: FnOnce(&mut dyn Entity<M>) -> R>(&self, f: F) -> R {
         let mut g = self.target.lock();
+        // let _entry = tracing::info_span!("entity", r = ?self).entered();
         f(g.as_mut().expect("initialized").as_mut())
     }
 }
@@ -1889,6 +2122,10 @@ impl<M> Ref<M> {
     /// are compared by this identifier.
     pub fn oid(&self) -> usize {
         std::ptr::addr_of!(*self) as usize
+    }
+
+    pub fn debug_str(&self) -> String {
+        format!("{}/{}:{:016x}", self.mailbox.actor_id, self.facet_id, self.oid())
     }
 }
 
@@ -1920,7 +2157,7 @@ impl<M> Ord for Ref<M> {
 
 impl<M> std::fmt::Debug for Ref<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "⌜{}/{}:{:016x}⌝", self.mailbox.actor_id, self.facet_id, self.oid())
+        write!(f, "⌜{}⌝", self.debug_str())
     }
 }
 
@@ -2007,19 +2244,23 @@ impl Cap {
     pub fn sync(&self, t: &mut Activation, peer: Arc<Ref<Synced>>) {
         t.sync(&self.underlying, peer)
     }
+
+    pub fn debug_str(&self) -> String {
+        if self.attenuation.is_empty() {
+            self.underlying.debug_str()
+        } else {
+            format!("{}/{}:{:016x}\\{:?}",
+                    self.underlying.mailbox.actor_id,
+                    self.underlying.facet_id,
+                    self.underlying.oid(),
+                    self.attenuation)
+        }
+    }
 }
 
 impl std::fmt::Debug for Cap {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        if self.attenuation.is_empty() {
-            self.underlying.fmt(f)
-        } else {
-            write!(f, "⌜{}/{}:{:016x}\\{:?}⌝",
-                   self.underlying.mailbox.actor_id,
-                   self.underlying.facet_id,
-                   self.underlying.oid(),
-                   self.attenuation)
-        }
+        write!(f, "⌜{}⌝", self.debug_str())
     }
 }
 
@@ -2099,8 +2340,7 @@ pub async fn wait_for_all_actors_to_stop(wait_time: time::Duration) {
     if remaining.len() > 0 {
         tracing::warn!("Some actors remain after {:?}:", wait_time);
         for (name, actor) in remaining.into_values() {
-            let _entry = name.enter();
-            tracing::warn!(?actor, "still running, requesting shutdown");
+            tracing::warn!(?name, ?actor.actor_id, "actor still running, requesting shutdown");
             let g = actor.state.lock();
             if let ActorState::Running(state) = &*g {
                 state.shutdown();
@@ -2111,8 +2351,7 @@ pub async fn wait_for_all_actors_to_stop(wait_time: time::Duration) {
         if remaining.len() > 0 {
             tracing::error!("Some actors failed to stop after being explicitly shut down:");
             for (name, actor) in remaining.into_values() {
-                let _entry = name.enter();
-                tracing::error!(?actor, "failed to stop");
+                tracing::error!(?name, ?actor.actor_id, "actor failed to stop");
             }
         } else {
             tracing::debug!("All remaining actors have stopped.");
@@ -2120,23 +2359,6 @@ pub async fn wait_for_all_actors_to_stop(wait_time: time::Duration) {
     } else {
         tracing::debug!("All remaining actors have stopped.");
     }
-}
-
-/// A convenient Syndicate-enhanced variation on
-/// [`tracing::info_span`].
-///
-/// Includes fields `actor_id`, `task_id` and `oid`, so that they show
-/// up in those circumstances where they happen to be defined as part
-/// of the operation of the [`crate::actor`] module.
-#[macro_export]
-macro_rules! name {
-    () => {tracing::info_span!(actor_id = tracing::field::Empty,
-                               task_id = tracing::field::Empty,
-                               oid = tracing::field::Empty)};
-    ($($item:tt)*) => {tracing::info_span!($($item)*,
-                                           actor_id = tracing::field::Empty,
-                                           task_id = tracing::field::Empty,
-                                           oid = tracing::field::Empty)}
 }
 
 /// A convenient way of cloning a bunch of state shared among [entities][Entity], actions,

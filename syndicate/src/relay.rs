@@ -9,6 +9,7 @@ use crate::error::error;
 use crate::schemas::gatekeeper;
 use crate::schemas::protocol as P;
 use crate::schemas::sturdy;
+use crate::trace;
 
 use futures::Sink;
 use futures::SinkExt;
@@ -248,8 +249,10 @@ impl TunnelRelay {
             |io| Arc::clone(&tr.membranes.import_oid(t, &tr_ref, io).inc_ref().obj));
         dump_membranes!(tr.membranes);
         *tr_ref.lock() = Some(tr);
-        t.linked_task(crate::name!("writer"), output_loop(o, output_rx));
-        t.linked_task(crate::name!("reader"), input_loop(t.facet.clone(), i, tr_ref));
+        t.linked_task(Some(AnyValue::symbol("writer")),
+                      output_loop(o, output_rx));
+        t.linked_task(Some(AnyValue::symbol("reader")),
+                      input_loop(t.trace_collector(), t.facet.clone(), i, tr_ref));
         t.state.add_exit_hook(&self_entity);
         result
     }
@@ -619,11 +622,13 @@ impl DomainEncode<Arc<Cap>> for Membranes {
 }
 
 async fn input_loop(
+    trace_collector: Option<trace::TraceCollector>,
     facet: FacetRef,
     i: Input,
     relay: TunnelRelayRef,
 ) -> Result<LinkedTaskTermination, Error> {
-    let account = Account::new(crate::name!("input-loop"));
+    let account = Account::new(Some(AnyValue::symbol("input-loop")), trace_collector);
+    let cause = trace::TurnCause::external("input-loop");
     match i {
         Input::Packets(mut src) => {
             loop {
@@ -631,12 +636,15 @@ async fn input_loop(
                 match src.next().await {
                     None => break,
                     Some(bs) => {
-                        let is_alive = facet.activate(Arc::clone(&account), |t| {
-                            let mut g = relay.lock();
-                            let tr = g.as_mut().expect("initialized");
-                            tr.handle_inbound_datagram(t, &bs?)
-                        });
-                        if !is_alive { break; }
+                        if !facet.activate(
+                            &account, Some(cause.clone()), |t| {
+                                let mut g = relay.lock();
+                                let tr = g.as_mut().expect("initialized");
+                                tr.handle_inbound_datagram(t, &bs?)
+                            })
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -659,12 +667,15 @@ async fn input_loop(
                 match n {
                     0 => break,
                     _ => {
-                        let is_alive = facet.activate(Arc::clone(&account), |t| {
-                            let mut g = relay.lock();
-                            let tr = g.as_mut().expect("initialized");
-                            tr.handle_inbound_stream(t, &mut buf)
-                        });
-                        if !is_alive { break; }
+                        if !facet.activate(
+                            &account, Some(cause.clone()), |t| {
+                                let mut g = relay.lock();
+                                let tr = g.as_mut().expect("initialized");
+                                tr.handle_inbound_stream(t, &mut buf)
+                            })
+                        {
+                            break;
+                        }
                     }
                 }
             }

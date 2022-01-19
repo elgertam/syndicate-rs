@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![feature(min_specialization)]
 
 #[doc(inline)]
 pub use preserves::value;
@@ -29,13 +30,33 @@ pub mod schemas {
 
 pub mod skeleton;
 pub mod sturdy;
-pub mod tracer;
+pub mod trace;
 
 #[doc(inline)]
 pub use during::entity;
 
-#[doc(inline)]
-pub use tracer::convenient_logging;
+/// Sets up [`tracing`] logging in a reasonable way.
+///
+/// Useful at the top of `main` functions.
+pub fn convenient_logging() -> Result<(), Box<dyn std::error::Error>> {
+    let filter = match std::env::var(tracing_subscriber::filter::EnvFilter::DEFAULT_ENV) {
+        Err(std::env::VarError::NotPresent) =>
+            tracing_subscriber::filter::EnvFilter::default()
+            .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into()),
+        _ =>
+            tracing_subscriber::filter::EnvFilter::try_from_default_env()?,
+    };
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(true)
+        .with_thread_ids(true)
+        .with_max_level(tracing::Level::TRACE)
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Could not set tracing global subscriber");
+    Ok(())
+}
 
 preserves_schema::define_language!(language(): Language<actor::AnyValue> {
     syndicate: schemas::Language,

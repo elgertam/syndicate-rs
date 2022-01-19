@@ -9,6 +9,7 @@ use syndicate::actor::*;
 use syndicate::error::Error;
 use syndicate::error::error;
 use syndicate::relay;
+use syndicate::trace;
 use syndicate::value::NestedValue;
 
 use tokio::net::TcpStream;
@@ -37,16 +38,19 @@ pub fn run_io_relay(
 }
 
 pub fn run_connection(
+    trace_collector: Option<trace::TraceCollector>,
     facet: FacetRef,
     i: relay::Input,
     o: relay::Output,
     initial_ref: Arc<Cap>,
 ) {
-    facet.activate(Account::new(syndicate::name!("start-session")),
-                   |t| run_io_relay(t, i, o, initial_ref));
+    let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("start-session"));
+    let account = Account::new(Some(AnyValue::symbol("start-session")), trace_collector);
+    facet.activate(&account, cause, |t| run_io_relay(t, i, o, initial_ref));
 }
 
 pub async fn detect_protocol(
+    trace_collector: Option<trace::TraceCollector>,
     facet: FacetRef,
     stream: TcpStream,
     gateway: Arc<Cap>,
@@ -76,7 +80,7 @@ pub async fn detect_protocol(
             _ => unreachable!()
         }
     };
-    run_connection(facet, i, o, gateway);
+    run_connection(trace_collector, facet, i, o, gateway);
     Ok(())
 }
 

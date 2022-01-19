@@ -52,19 +52,19 @@ pub fn bench_pub(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let start = Instant::now();
             rt.block_on(async move {
-                Actor::new(None).boot(syndicate::name!("dataspace"), move |t| {
+                Actor::top(None, move |t| {
                     let ds = t.create(Dataspace::new(None));
                     let shutdown = t.create(ShutdownEntity);
-                    let account = Account::new(syndicate::name!("sender-account"));
-                    t.linked_task(syndicate::name!("sender"), async move {
+                    let account = Account::new(None, None);
+                    t.linked_task(Some(AnyValue::symbol("sender")), async move {
                         for _ in 0..iters {
-                            external_event(&ds.mailbox, &account, Box::new(
+                            external_event(&ds.mailbox, None, &account, Box::new(
                                 enclose!((ds) move |t| t.with_entity(
                                     &ds,
                                     |t, e| e.message(t, says(AnyValue::new("bench_pub"),
                                                              Value::ByteString(vec![]).wrap()))))))?
                         }
-                        external_event(&shutdown.mailbox, &account, Box::new(
+                        external_event(&shutdown.mailbox, None, &account, Box::new(
                             enclose!((shutdown) move |t| t.with_entity(
                                 &shutdown,
                                 |t, e| e.message(t, AnyValue::new(true))))))?;
@@ -83,7 +83,7 @@ pub fn bench_pub(c: &mut Criterion) {
             rt.block_on(async move {
                 let turn_count = Arc::new(AtomicU64::new(0));
 
-                Actor::new(None).boot(syndicate::name!("dataspace"), {
+                Actor::top(None, {
                     let iters = iters.clone();
                     let turn_count = Arc::clone(&turn_count);
 
@@ -103,7 +103,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             observer: shutdown,
                         });
 
-                        t.spawn(syndicate::name!("consumer"), move |t| {
+                        t.spawn(Some(AnyValue::symbol("consumer")), move |t| {
                             struct Receiver(Arc<AtomicU64>);
                             impl Entity<AnyValue> for Receiver {
                                 fn message(&mut self, _t: &mut Activation, _m: AnyValue) -> ActorResult {
@@ -139,10 +139,11 @@ pub fn bench_pub(c: &mut Criterion) {
                             });
 
                             let account = Arc::clone(t.account());
-                            t.linked_task(syndicate::name!("sender"), async move {
+                            t.linked_task(Some(AnyValue::symbol("sender")), async move {
                                 for _i in 0..iters {
                                     let ds = Arc::clone(&ds);
-                                    external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
+                                    external_event(
+                                        &Arc::clone(&ds.underlying.mailbox), None, &account, Box::new(
                                         move |t| t.with_entity(
                                             &ds.underlying,
                                             |t, e| e.message(t, says(AnyValue::new("bench_pub"),
@@ -150,7 +151,8 @@ pub fn bench_pub(c: &mut Criterion) {
                                 }
                                 {
                                     let ds = Arc::clone(&ds);
-                                    external_event(&Arc::clone(&ds.underlying.mailbox), &account, Box::new(
+                                    external_event(
+                                        &Arc::clone(&ds.underlying.mailbox), None, &account, Box::new(
                                         move |t| t.with_entity(
                                             &ds.underlying,
                                             |t, e| e.message(t, AnyValue::new(true)))))?;

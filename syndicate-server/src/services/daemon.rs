@@ -4,8 +4,10 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
+use syndicate::preserves::rec;
 use syndicate::schemas::service;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
+use syndicate::trace;
 use syndicate::value::NestedValue;
 
 use tokio::io::AsyncRead;
@@ -21,7 +23,7 @@ use crate::schemas::external_services::*;
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("daemon"), move |t| {
+    t.spawn(Some(AnyValue::symbol("daemon_listener")), move |t| {
         Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService>,
                    enclose!((config_ds, root_ds) move |t: &mut Activation| {
                        supervise_daemon(t, config_ds, root_ds, spec)
@@ -46,7 +48,7 @@ fn supervise_daemon(
             }));
         Supervisor::start(
             t,
-            syndicate::name!(parent: None, "daemon", id = ?spec.id),
+            Some(language().unparse(&spec)),
             SupervisorConfiguration::on_error_only(),
             enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
             enclose!((config_ds, root_ds) move |t|
@@ -162,7 +164,6 @@ struct DaemonInstance {
     config_ds: Arc<Cap>,
     log_ds: Arc<Cap>,
     service: AnyValue,
-    name: tracing::Span,
     cmd: process::Command,
     announce_presumed_readiness: bool,
     unready_configs: Arc<Field<isize>>,
@@ -236,9 +237,13 @@ impl DaemonInstance {
             Some(n) => AnyValue::new(n),
             None => AnyValue::symbol("unknown"),
         };
-        t.spawn(syndicate::name!(parent: self.name.clone(), "log"), move |t| {
-            t.linked_task(tracing::Span::current(), async move {
+        let trace_collector = t.trace_collector();
+        t.spawn(Some(rec![AnyValue::symbol("log"), kind.clone(), self.service.clone()]), move |t| {
+            t.linked_task(None, async move {
                 let mut r = BufReader::new(r);
+                let cause = trace_collector.as_ref().map(
+                    |_| trace::TurnCause::external(kind.value().as_symbol().unwrap()));
+                let account = Account::new(None, trace_collector);
                 loop {
                     let mut buf = Vec::new();
                     if r.read_until(b'\n', &mut buf).await? == 0 {
@@ -250,8 +255,7 @@ impl DaemonInstance {
                     };
                     let now = AnyValue::new(chrono::Utc::now().to_rfc3339());
                     if !facet.activate(
-                        Account::new(tracing::Span::current()),
-                        enclose!((pid, service, kind) |t| {
+                        &account, cause.clone(), enclose!((pid, service, kind) |t| {
                             log_ds.message(t, &(), &syndicate_macros::template!(
                                 "<log =now {
                                              pid: =pid,
@@ -304,13 +308,17 @@ impl DaemonInstance {
                 counter::adjust(t, &self.unready_configs, -1);
             }
 
+            let trace_collector = t.trace_collector();
             t.linked_task(
-                syndicate::name!(parent: self.name.clone(), "wait"),
+                Some(rec![AnyValue::symbol("wait"), self.service.clone()]),
                 enclose!((facet) async move {
                     tracing::trace!("waiting for process exit");
                     let status = child.wait().await?;
                     tracing::debug!(?status);
-                    facet.activate(Account::new(syndicate::name!("instance-terminated")), |t| {
+                    let cause = trace_collector.as_ref().map(
+                        |_| trace::TurnCause::external("instance-terminated"));
+                    let account = Account::new(Some(AnyValue::symbol("instance-terminated")), trace_collector);
+                    facet.activate(&account, cause, |t| {
                         let m = if status.success() { None } else { Some(format!("{}", status)) };
                         self.handle_exit(t, m)
                     });
@@ -378,9 +386,10 @@ fn run(
         Ok(())
     }))?;
 
+    let trace_collector = t.trace_collector();
     enclose!((config_ds, unready_configs, completed_processes)
              during!(t, config_ds.clone(), language(), <daemon #(&service.id) $config>, {
-                 enclose!((spec, config_ds, root_ds, unready_configs, completed_processes)
+                 enclose!((spec, config_ds, root_ds, unready_configs, completed_processes, trace_collector)
                           |t: &mut Activation| {
                               tracing::debug!(?config, "new config");
                               counter::adjust(t, &unready_configs, 1);
@@ -391,7 +400,7 @@ fn run(
                                       tracing::info!(?config);
                                       let config = config.elaborate();
                                       let facet = t.facet.clone();
-                                      t.linked_task(syndicate::name!("subprocess"), async move {
+                                      t.linked_task(Some(AnyValue::symbol("subprocess")), async move {
                                           let mut cmd = config.process.build_command().ok_or("Cannot start daemon process")?;
 
                                           let announce_presumed_readiness = match config.ready_on_start {
@@ -432,7 +441,6 @@ fn run(
                                               config_ds,
                                               log_ds: root_ds,
                                               service: spec,
-                                              name: tracing::Span::current(),
                                               cmd,
                                               announce_presumed_readiness,
                                               unready_configs,
@@ -441,7 +449,10 @@ fn run(
                                               protocol,
                                           };
 
-                                          facet.activate(Account::new(syndicate::name!("instance-startup")), |t| {
+                                          let cause = trace_collector.as_ref().map(
+                                              |_| trace::TurnCause::external("instance-startup"));
+                                          let account = Account::new(Some(AnyValue::symbol("instance-startup")), trace_collector);
+                                          facet.activate(&account, cause, |t| {
                                               daemon_instance.start(t)
                                           });
                                           Ok(LinkedTaskTermination::KeepFacet)

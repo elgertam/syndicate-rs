@@ -7,6 +7,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use syndicate::actor::*;
+use syndicate::preserves::rec;
+use syndicate::value::NestedValue;
 
 use tokio::runtime::Runtime;
 
@@ -88,14 +90,16 @@ pub fn bench_ring(c: &mut Criterion) {
                             self.i += 1;
                             let spawner_ref = Arc::clone(&self.self_ref);
                             ACTORS_CREATED.fetch_add(1, Ordering::Relaxed);
-                            t.spawn(syndicate::name!("forwarder", ?i), move |t| {
-                                let _ = t.prevent_inert_check();
-                                let f = t.create(Forwarder {
-                                    next,
+                            t.spawn(
+                                Some(rec![AnyValue::symbol("forwarder"), AnyValue::new(i)]),
+                                move |t| {
+                                    let _ = t.prevent_inert_check();
+                                    let f = t.create(Forwarder {
+                                        next,
+                                    });
+                                    t.message(&spawner_ref, f);
+                                    Ok(())
                                 });
-                                t.message(&spawner_ref, f);
-                                Ok(())
-                            });
                         } else {
                             let mut c_state = Counter {
                                 start: Instant::now(),
@@ -118,7 +122,7 @@ pub fn bench_ring(c: &mut Criterion) {
                 }
 
                 ACTORS_CREATED.fetch_add(1, Ordering::Relaxed);
-                Actor::new(None).boot(syndicate::name!("counter"), move |t| {
+                Actor::top(None, move |t| {
                     let _ = t.prevent_inert_check();
                     let mut s = Spawner {
                         self_ref: t.create_inert(),

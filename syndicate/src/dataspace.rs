@@ -20,7 +20,7 @@ use preserves_schema::Codec;
 /// A Dataspace object (entity).
 #[derive(Debug)]
 pub struct Dataspace {
-    pub name: tracing::Span,
+    pub name: Name,
     /// Index over assertions placed in the dataspace; used to
     /// efficiently route assertion changes and messages to observers.
     pub index: skeleton::Index,
@@ -31,10 +31,9 @@ pub struct Dataspace {
 
 impl Dataspace {
     /// Construct a new, empty dataspace.
-    pub fn new(name: Option<tracing::Span>) -> Self {
+    pub fn new(name: Name) -> Self {
         Self {
-            name: name.map_or_else(|| crate::name!("anonymous_dataspace"),
-                                   |n| crate::name!(parent: &n, "dataspace")),
+            name: name,
             index: skeleton::Index::new(),
             handle_map: Map::new(),
         }
@@ -62,10 +61,8 @@ impl Dataspace {
 
 impl Entity<_Any> for Dataspace {
     fn assert(&mut self, t: &mut Activation, a: _Any, h: Handle) -> ActorResult {
-        let _guard = self.name.enter();
-
         let is_new = self.index.insert(t, &a);
-        tracing::trace!(assertion = ?a, handle = ?h, ?is_new, "assert");
+        tracing::trace!(dataspace = ?self.name, assertion = ?a, handle = ?h, ?is_new, "assert");
 
         if is_new {
             if let Ok(o) = language().parse::<Observe>(&a) {
@@ -78,13 +75,11 @@ impl Entity<_Any> for Dataspace {
     }
 
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
-        let _guard = self.name.enter();
-
         match self.handle_map.remove(&h) {
-            None => tracing::warn!(handle = ?h, "retract of unknown handle"),
+            None => tracing::warn!(dataspace = ?self.name, handle = ?h, "retract of unknown handle"),
             Some(a) => {
                 let is_last = self.index.remove(t, &a);
-                tracing::trace!(assertion = ?a, handle = ?h, ?is_last, "retract");
+                tracing::trace!(dataspace = ?self.name, assertion = ?a, handle = ?h, ?is_last, "retract");
 
                 if is_last {
                     if let Ok(o) = language().parse::<Observe>(&a) {
@@ -97,9 +92,7 @@ impl Entity<_Any> for Dataspace {
     }
 
     fn message(&mut self, t: &mut Activation, m: _Any) -> ActorResult {
-        let _guard = self.name.enter();
-        tracing::trace!(body = ?m, "message");
-
+        tracing::trace!(dataspace = ?self.name, body = ?m, "message");
         self.index.send(t, &m);
         Ok(())
     }

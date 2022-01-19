@@ -2,9 +2,10 @@ use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::enclose;
+use syndicate::preserves::rec;
 use syndicate::relay;
 use syndicate::sturdy;
-use syndicate::value::Value;
+use syndicate::value::NestedValue;
 
 use tokio::net::TcpStream;
 
@@ -20,35 +21,30 @@ pub struct Config {
     dataspace: String,
 }
 
-#[inline]
-fn says(who: AnyValue, what: AnyValue) -> AnyValue {
-    let mut r = Value::simple_record("Says", 2);
-    r.fields_vec_mut().push(who);
-    r.fields_vec_mut().push(what);
-    r.finish().wrap()
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     syndicate::convenient_logging()?;
     let config = Config::from_args();
     let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;
     let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
-    Actor::new(None).boot(syndicate::name!("producer"), |t| {
+    Actor::top(None, |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
-            let padding: AnyValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
+            let padding = AnyValue::new(&vec![0u8; config.bytes_padding][..]);
             let action_count = config.action_count;
-            let account = Account::new(syndicate::name!("account"));
-            t.linked_task(syndicate::name!("sender"), async move {
+            let account = Account::new(None, None);
+            t.linked_task(Some(AnyValue::symbol("sender")), async move {
                 loop {
                     account.ensure_clear_funds().await;
                     let mut events: PendingEventQueue = Vec::new();
                     for _ in 0..action_count {
                         events.push(Box::new(enclose!((ds, padding) move |t| t.with_entity(
                             &ds.underlying, |t, e| e.message(
-                                t, says(Value::from("producer").wrap(), padding))))));
+                                t,
+                                rec![AnyValue::symbol("Says"),
+                                     AnyValue::new("producer"),
+                                     padding])))));
                     }
-                    external_events(&ds.underlying.mailbox, &account, events)?;
+                    external_events(&ds.underlying.mailbox, None, &account, events)?;
                 }
             });
             Ok(None)

@@ -1,7 +1,10 @@
+use preserves_schema::Codec;
+
 use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
+use syndicate::preserves::value::NestedValue;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 
 use crate::language::language;
@@ -11,11 +14,11 @@ use crate::schemas::internal_services::Milestone;
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("milestone"), move |t| {
+    t.spawn(Some(AnyValue::symbol("milestone_listener")), move |t| {
         Ok(during!(t, ds, language(), <run-service $spec: Milestone>, |t: &mut Activation| {
             Supervisor::start(
                 t,
-                syndicate::name!(parent: None, "milestone", name = ?spec.name),
+                Some(language().unparse(&spec)),
                 SupervisorConfiguration::default(),
                 |_, _| Ok(()),
                 enclose!((ds) move |t| enclose!((ds, spec) run(t, ds, spec))))

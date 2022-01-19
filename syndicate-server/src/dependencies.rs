@@ -5,6 +5,7 @@ use std::sync::Arc;
 use syndicate::actor::*;
 use syndicate::during::entity;
 use syndicate::enclose;
+use syndicate::preserves::rec;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::service;
 use syndicate::value::NestedValue;
@@ -16,10 +17,10 @@ use crate::schemas::internal_services;
 use syndicate_macros::during;
 
 pub fn boot(t: &mut Activation, ds: Arc<Cap>) {
-    t.spawn(syndicate::name!("dependencies"), move |t| {
+    t.spawn(Some(AnyValue::symbol("dependencies_listener")), move |t| {
         Ok(during!(t, ds, language(), <require-service $spec>, |t: &mut Activation| {
             tracing::debug!(?spec, "tracking dependencies");
-            t.spawn_link(syndicate::name!(parent: None, "dependencies", spec = ?spec),
+            t.spawn_link(Some(rec![AnyValue::symbol("dependencies"), language().unparse(&spec)]),
                          enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }))

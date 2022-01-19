@@ -1,5 +1,6 @@
 use preserves_schema::Codec;
 
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use syndicate::enclose;
 use syndicate::relay;
 use syndicate::schemas::service;
 use syndicate::schemas::transport_address;
+use syndicate::trace;
 
 use syndicate::value::Map;
 use syndicate::value::NestedValue;
@@ -50,6 +52,9 @@ struct ServerConfig {
 
     #[structopt(long)]
     no_banner: bool,
+
+    #[structopt(short = "t", long)]
+    trace_file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -83,13 +88,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::trace!("startup");
 
-    Actor::new(None).boot(tracing::Span::current(), move |t| {
-        let server_config_ds = Cap::new(&t.create(Dataspace::new(Some(syndicate::name!("config")))));
-        let log_ds = Cap::new(&t.create(Dataspace::new(Some(syndicate::name!("log")))));
+    let trace_collector = config.trace_file.clone().map(
+        |p| Ok::<trace::TraceCollector, io::Error>(trace::TraceCollector::ascii(
+            io::BufWriter::new(std::fs::File::create(p)?))))
+        .transpose()?;
+
+    Actor::top(trace_collector, move |t| {
+        let server_config_ds = Cap::new(&t.create(Dataspace::new(Some(AnyValue::symbol("config")))));
+        let log_ds = Cap::new(&t.create(Dataspace::new(Some(AnyValue::symbol("log")))));
 
         if config.inferior {
             tracing::info!("inferior server instance");
-            t.spawn(syndicate::name!("parent"), enclose!((server_config_ds) move |t| {
+            t.spawn(Some(AnyValue::symbol("parent")), enclose!((server_config_ds) move |t| {
                 protocol::run_io_relay(t,
                                        relay::Input::Bytes(Box::pin(tokio::io::stdin())),
                                        relay::Output::Bytes(Box::pin(tokio::io::stdout())),
@@ -154,7 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
-        t.spawn(tracing::Span::current(), enclose!((log_ds) move |t| {
+        t.spawn(Some(AnyValue::symbol("logger")), enclose!((log_ds) move |t| {
             let n_unknown: AnyValue = AnyValue::symbol("-");
             let n_pid: AnyValue = AnyValue::symbol("pid");
             let n_line: AnyValue = AnyValue::symbol("line");
