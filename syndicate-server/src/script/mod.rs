@@ -76,6 +76,12 @@ pub enum Instruction {
         pattern_template: AnyValue,
         expr: Expr,
     },
+    Cond {
+        value_var: String,
+        pattern_template: AnyValue,
+        on_match: Box<Instruction>,
+        on_nomatch: Box<Instruction>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -477,6 +483,17 @@ impl Env {
                     }
                 }
             }
+            Instruction::Cond { value_var, pattern_template, on_match, on_nomatch } => {
+                let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
+                let value = self.lookup(value_var, "value in conditional expression")?;
+                match pattern.match_value(&value) {
+                    None => self.eval(t, on_nomatch)?,
+                    Some(captures) => {
+                        self.extend(&binding_names, captures);
+                        self.eval(t, on_match)?
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -664,7 +681,7 @@ impl<'t> Parser<'t> {
         T::default()
     }
 
-    pub fn parse(&mut self, target: &str) -> Parsed<Instruction> {
+    pub fn parse(&mut self, target: &str, outer_target: &str) -> Parsed<Instruction> {
         if self.ateof() {
             return Parsed::Eof;
         }
@@ -679,7 +696,7 @@ impl<'t> Parser<'t> {
         if let Some(tokens) = self.peek().as_sequence() {
             self.drop();
             let mut inner_parser = Parser::new(tokens);
-            let instructions = inner_parser.parse_all(target);
+            let instructions = inner_parser.parse_all(target, outer_target);
             self.errors.extend(inner_parser.errors);
             return Parsed::Value(Instruction::Sequence { instructions });
         }
@@ -694,7 +711,7 @@ impl<'t> Parser<'t> {
                             Instruction::During { target, pattern_template, body } },
                         "?" => |target, pattern_template, body| { // "??"
                             Instruction::OnMessage { target, pattern_template, body } },
-                        "-" => match self.parse(target) { // "?-"
+                        "-" => match self.parse(target, outer_target) { // "?-"
                             Parsed::Value(i) => return Parsed::Value(Instruction::OnStop {
                                 body: Box::new(i),
                             }),
@@ -709,7 +726,7 @@ impl<'t> Parser<'t> {
                     }
                     let pattern_template = self.shift();
 
-                    return match self.parse(target) {
+                    return match self.parse(target, outer_target) {
                         Parsed::Eof =>
                             self.error(format!(
                                 "Missing instruction in react with pattern {:?}",
@@ -733,7 +750,7 @@ impl<'t> Parser<'t> {
                         let m = format!("Missing instruction after retarget: {:?}", self.peek());
                         return self.error(m);
                     }
-                    return self.parse(&s);
+                    return self.parse(&s, target);
                 }
                 Symbolic::Bare(s) => {
                     if s == "let" {
@@ -774,26 +791,30 @@ impl<'t> Parser<'t> {
                 }
                 Symbolic::Literal(s) => {
                     if s == "~" { // "=~"
-                        // s.drop();
-                        // if self.ateof() {
-                        //     return self.error("Missing pattern, true-instruction and false-continuation in match");
-                        // }
-                        // let match_template = self.shift();
-                        // return match self.parse(target) {
-                        //     Parsed::Eof =>
-                        //         self.error(format!(
-                        //             "Missing true-instruction in conditional with pattern {:?}",
-                        //             match_template)),
-                        //     Parsed::Skip =>
-                        //         Parsed::Skip,
-                        //     Parsed::Value(true_instruction) => {
-                        //         let false_instructions = self.parse_all();
-                        //         Parsed::Value(Instruction::Cond {
-                        //             value: target.to_owned(),
-                        //             pattern: match_template,
-                        //             on_match: true_instruction,
-                        //             on_nomatch: self.parse_all(
-                        // };
+                        self.drop();
+                        if self.ateof() {
+                            return self.error("Missing pattern, true-instruction and false-continuation in match");
+                        }
+                        let match_template = self.shift();
+                        return match self.parse(outer_target, outer_target) {
+                            Parsed::Eof =>
+                                self.error(format!(
+                                    "Missing true-instruction in conditional with pattern {:?}",
+                                    match_template)),
+                            Parsed::Skip =>
+                                Parsed::Skip,
+                            Parsed::Value(true_instruction) => {
+                                let false_instructions = self.parse_all(outer_target, outer_target);
+                                Parsed::Value(Instruction::Cond {
+                                    value_var: target.to_owned(),
+                                    pattern_template: match_template,
+                                    on_match: Box::new(true_instruction),
+                                    on_nomatch: Box::new(Instruction::Sequence {
+                                        instructions: false_instructions,
+                                    }),
+                                })
+                            }
+                        };
                     } else {
                         /* fall through */
                     }
@@ -807,10 +828,10 @@ impl<'t> Parser<'t> {
         }
     }
 
-    pub fn parse_all(&mut self, target: &str) -> Vec<Instruction> {
+    pub fn parse_all(&mut self, target: &str, outer_target: &str) -> Vec<Instruction> {
         let mut instructions = Vec::new();
         loop {
-            match self.parse(target) {
+            match self.parse(target, outer_target) {
                 Parsed::Value(i) => instructions.push(i),
                 Parsed::Skip => (),
                 Parsed::Eof => break,
@@ -820,7 +841,7 @@ impl<'t> Parser<'t> {
     }
 
     pub fn parse_top(&mut self, target: &str) -> Result<Option<Instruction>, Vec<String>> {
-        let instructions = self.parse_all(target);
+        let instructions = self.parse_all(target, target);
         if self.errors.is_empty() {
             match instructions.len() {
                 0 => Ok(None),
