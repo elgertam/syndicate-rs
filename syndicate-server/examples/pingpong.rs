@@ -14,7 +14,6 @@ use syndicate::value::Value;
 use tokio::net::TcpStream;
 
 use core::time::Duration;
-use tokio::time::interval;
 
 #[derive(Clone, Debug, StructOpt)]
 pub struct PingConfig {
@@ -172,39 +171,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 observer: Arc::clone(&consumer),
             });
 
-            t.linked_task(Some(AnyValue::symbol("tick")), async move {
-                let mut stats_timer = interval(Duration::from_secs(1));
-                loop {
-                    stats_timer.tick().await;
-                    let consumer = Arc::clone(&consumer);
-                    external_event(&Arc::clone(&consumer.underlying.mailbox),
-                                   None,
-                                   &Account::new(None, None),
-                                   Box::new(move |t| t.with_entity(
-                                       &consumer.underlying,
-                                       |t, e| e.message(t, AnyValue::new(true)))))?;
-                }
-            });
+            t.every(Duration::from_secs(1), move |t| {
+                consumer.message(t, &(), &AnyValue::new(true));
+                Ok(())
+            })?;
 
             if let PingPongMode::Ping(c) = &config.mode {
+                let facet = t.facet.clone();
                 let turn_count = c.turn_count;
                 let action_count = c.action_count;
                 let account = Arc::clone(t.account());
                 t.linked_task(Some(AnyValue::symbol("boot-ping")), async move {
                     let padding = AnyValue::bytestring(vec![0; bytes_padding]);
                     for _ in 0..turn_count {
-                        let mut events: PendingEventQueue = vec![];
                         let current_rec = simple_record2(send_label,
                                                          Value::from(now()).wrap(),
                                                          padding.clone());
-                        for _ in 0..action_count {
-                            let ds = Arc::clone(&ds);
-                            let current_rec = current_rec.clone();
-                            events.push(Box::new(move |t| t.with_entity(
-                                &ds.underlying,
-                                |t, e| e.message(t, current_rec))));
-                        }
-                        external_events(&ds.underlying.mailbox, None, &account, events)?
+                        facet.activate(&account, None, |t| {
+                            for _ in 0..action_count {
+                                ds.message(t, &(), &current_rec);
+                            }
+                            Ok(())
+                        });
                     }
                     Ok(LinkedTaskTermination::KeepFacet)
                 });

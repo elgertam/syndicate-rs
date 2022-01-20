@@ -132,7 +132,7 @@ impl TraceCollector {
     pub fn new<F: 'static + Send + FnMut(CollectorEvent)>(mut f: F) -> TraceCollector {
         let (tx, mut rx) = unbounded_channel::<TraceEntry>();
         tokio::spawn(async move {
-            let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
+            let mut timer = tokio::time::interval(std::time::Duration::from_millis(100));
             loop {
                 select! {
                     maybe_entry = rx.recv() => {

@@ -1,9 +1,6 @@
-use std::sync::Arc;
-
 use structopt::StructOpt;
 
 use syndicate::actor::*;
-use syndicate::enclose;
 use syndicate::preserves::rec;
 use syndicate::relay;
 use syndicate::sturdy;
@@ -25,27 +22,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
     Actor::top(None, |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
+            let facet = t.facet.clone();
             let account = Account::new(None, None);
             t.linked_task(Some(AnyValue::symbol("sender")), async move {
                 let presence = rec![AnyValue::symbol("Present"), AnyValue::new(std::process::id())];
-                let handle = syndicate::actor::next_handle();
-                let assert_e = || {
-                    external_event(
-                        &Arc::clone(&ds.underlying.mailbox), None, &account, Box::new(enclose!(
-                            (ds, presence, handle) move |t| t.with_entity(
-                                &ds.underlying, |t, e| e.assert(t, presence, handle)))))
-                };
-                let retract_e = || {
-                    external_event(
-                        &Arc::clone(&ds.underlying.mailbox), None, &account, Box::new(enclose!(
-                            (ds, handle) move |t| t.with_entity(
-                                &ds.underlying, |t, e| e.retract(t, handle)))))
-                };
-                assert_e()?;
                 loop {
+                    let mut handle = None;
+                    facet.activate(&account, None, |t| {
+                        handle = ds.assert(t, &(), &presence);
+                        Ok(())
+                    });
                     account.ensure_clear_funds().await;
-                    retract_e()?;
-                    assert_e()?;
+                    facet.activate(&account, None, |t| {
+                        if let Some(h) = handle {
+                            t.retract(h);
+                        }
+                        Ok(())
+                    });
                 }
             });
             Ok(None)

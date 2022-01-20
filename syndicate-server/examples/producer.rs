@@ -1,7 +1,6 @@
 use structopt::StructOpt;
 
 use syndicate::actor::*;
-use syndicate::enclose;
 use syndicate::preserves::rec;
 use syndicate::relay;
 use syndicate::sturdy;
@@ -29,22 +28,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (i, o) = TcpStream::connect("127.0.0.1:8001").await?.into_split();
     Actor::top(None, |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
+            let facet = t.facet.clone();
             let padding = AnyValue::new(&vec![0u8; config.bytes_padding][..]);
             let action_count = config.action_count;
             let account = Account::new(None, None);
             t.linked_task(Some(AnyValue::symbol("sender")), async move {
                 loop {
                     account.ensure_clear_funds().await;
-                    let mut events: PendingEventQueue = Vec::new();
-                    for _ in 0..action_count {
-                        events.push(Box::new(enclose!((ds, padding) move |t| t.with_entity(
-                            &ds.underlying, |t, e| e.message(
-                                t,
-                                rec![AnyValue::symbol("Says"),
-                                     AnyValue::new("producer"),
-                                     padding])))));
-                    }
-                    external_events(&ds.underlying.mailbox, None, &account, events)?;
+                    facet.activate(&account, None, |t| {
+                        for _ in 0..action_count {
+                            ds.message(t, &(), &rec![AnyValue::symbol("Says"),
+                                                     AnyValue::new("producer"),
+                                                     padding.clone()]);
+                        }
+                        Ok(())
+                    });
                 }
             });
             Ok(None)

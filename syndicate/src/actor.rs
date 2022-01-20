@@ -218,8 +218,7 @@ pub trait Entity<M>: Send {
 pub struct InertEntity;
 impl<M> Entity<M> for InertEntity {}
 
-type ActionDescriber = Box<dyn Send + FnOnce() -> trace::ActionDescription>;
-type TracedAction = (Option<ActionDescriber>, Action);
+type TracedAction = (Option<trace::TargetedTurnEvent>, Action);
 
 enum CleanupAction {
     ForMyself(TracedAction),
@@ -232,7 +231,7 @@ type Action = Box<dyn Send + FnOnce(&mut Activation) -> ActorResult>;
 type Block = Box<dyn Send + FnMut(&mut Activation) -> ActorResult>;
 
 #[doc(hidden)]
-pub type PendingEventQueue = Vec<Action>;
+pub type PendingEventQueue = Vec<TracedAction>;
 
 /// The main API for programming Syndicated Actor objects.
 ///
@@ -266,6 +265,7 @@ struct EventBuffer {
     pub account: Arc<Account>,
     queues: HashMap<ActorId, (UnboundedSender<SystemMessage>, PendingEventQueue)>,
     for_myself: PendingEventQueue,
+    final_actions: Vec<Box<dyn Send + FnOnce(&mut Activation)>>,
 }
 
 /// An `Account` records a "debt" in terms of outstanding work items.
@@ -745,21 +745,24 @@ impl<'activation> Activation<'activation> {
             f.outbound_handles.insert(handle);
             drop(f);
             self.state.insert_retract_cleanup_action(&r, handle, self.pending.desc.as_ref().map(
-                enclose!((r) |_| Box::new(move || trace::ActionDescription::Retract {
-                    target: Box::new(r.as_ref().into()),
-                    handle: Box::new(protocol::Handle(handle.into())),
-                }) as ActionDescriber)));
+                enclose!((r) move |_| trace::TargetedTurnEvent {
+                    target: r.as_ref().into(),
+                    detail: trace::TurnEvent::Retract {
+                        handle: Box::new(protocol::Handle(handle.into())),
+                    },
+                })));
             {
                 let r = Arc::clone(r);
-                self.pending.trace(|| trace::ActionDescription::Assert {
-                    target: Box::new(r.as_ref().into()),
+                let description = self.pending.trace_targeted(false, &r, || trace::TurnEvent::Assert {
                     assertion: Box::new((&a).into()),
                     handle: Box::new(protocol::Handle(handle.into())),
                 });
-                self.pending.queue_for(&r).push(Box::new(move |t| t.with_entity(&r, |t, e| {
-                    tracing::trace!(?handle, ?a, "asserted");
-                    e.assert(t, a, handle)
-                })));
+                self.pending.queue_for(&r).push((
+                    description,
+                    Box::new(move |t| t.with_entity(&r, |t, e| {
+                        tracing::trace!(?handle, ?a, "asserted");
+                        e.assert(t, a, handle)
+                    }))));
             }
         }
         handle
@@ -791,11 +794,12 @@ impl<'activation> Activation<'activation> {
                 self.state.cleanup_actions.insert(
                     handle,
                     CleanupAction::ForMyself((
-                        self.pending.desc.as_ref().map(enclose!((r, handle) move |_| Box::new(
-                            move || trace::ActionDescription::Retract {
-                                target: Box::new(r.as_ref().into()),
+                        self.pending.desc.as_ref().map(enclose!((r, handle) move |_| trace::TargetedTurnEvent {
+                            target: r.as_ref().into(),
+                            detail: trace::TurnEvent::Retract {
                                 handle: Box::new(protocol::Handle(handle.into())),
-                            }) as ActionDescriber)),
+                            }
+                        })),
                         Box::new(move |t| t.with_entity(&r, |t, e| {
                             tracing::trace!(?handle, "retracted");
                             if let Some(f) = t.active_facet() {
@@ -806,30 +810,34 @@ impl<'activation> Activation<'activation> {
             }
             {
                 let r = Arc::clone(r);
-                self.pending.trace(|| trace::ActionDescription::Assert {
-                    target: Box::new(r.as_ref().into()),
+                let description = self.pending.trace_targeted(true, &r, || trace::TurnEvent::Assert {
                     assertion: Box::new((&a).into()),
                     handle: Box::new(protocol::Handle(handle.into())),
                 });
-                self.pending.for_myself.push(Box::new(move |t| t.with_entity(&r, |t, e| {
-                    tracing::trace!(?handle, ?a, "asserted");
-                    e.assert(t, a, handle)
-                })));
+                self.pending.for_myself.push((
+                    description,
+                    Box::new(move |t| t.with_entity(&r, |t, e| {
+                        tracing::trace!(?handle, ?a, "asserted");
+                        e.assert(t, a, handle)
+                    }))));
             }
         }
         handle
     }
 
     fn half_link(&mut self, t_other: &mut Activation) -> Handle {
-        let other_actor_id = t_other.state.actor_id;
+        let this_actor_id = self.state.actor_id;
         let entity_ref = t_other.create::<AnyValue, _>(StopOnRetract);
         let handle = next_handle();
         tracing::trace!(?handle, ?entity_ref, "half_link");
         self.state.insert_retract_cleanup_action(&entity_ref, handle, self.pending.desc.as_ref().map(
-            move |_| Box::new(move || trace::ActionDescription::BreakLink {
-                peer: Box::new(trace::ActorId(AnyValue::new(other_actor_id))),
-                handle: Box::new(protocol::Handle(handle.into())),
-            }) as ActionDescriber));
+            enclose!((entity_ref) move |_| trace::TargetedTurnEvent {
+                target: entity_ref.as_ref().into(),
+                detail: trace::TurnEvent::BreakLink {
+                    source: Box::new(trace::ActorId(AnyValue::new(this_actor_id))),
+                    handle: Box::new(protocol::Handle(handle.into())),
+                },
+            })));
         self.active_facet().unwrap().outbound_handles.insert(handle);
         t_other.with_entity(&entity_ref, |t, e| e.assert(t, AnyValue::new(true), handle)).unwrap();
         handle
@@ -863,14 +871,15 @@ impl<'activation> Activation<'activation> {
     pub fn message<M: 'static + Send + std::fmt::Debug>(&mut self, r: &Arc<Ref<M>>, m: M) {
         tracing::trace!(?r, ?m, "message");
         let r = Arc::clone(r);
-        self.pending.trace(|| trace::ActionDescription::Message {
-            target: Box::new(r.as_ref().into()),
+        let description = self.pending.trace_targeted(false, &r, || trace::TurnEvent::Message {
             body: Box::new((&m).into()),
         });
-        self.pending.queue_for(&r).push(Box::new(move |t| t.with_entity(&r, |t, e| {
-            tracing::trace!(?m, "delivered");
-            e.message(t, m)
-        })))
+        self.pending.queue_for(&r).push((
+            description,
+            Box::new(move |t| t.with_entity(&r, |t, e| {
+                tracing::trace!(?m, "delivered");
+                e.message(t, m)
+            }))))
     }
 
     /// Core API: send message `m` to recipient `r`, which must be a
@@ -886,12 +895,12 @@ impl<'activation> Activation<'activation> {
     pub fn message_for_myself<M: 'static + Send + std::fmt::Debug>(&mut self, r: &Arc<Ref<M>>, m: M) {
         self.immediate_oid(r);
         let r = Arc::clone(r);
-        self.pending.trace(|| trace::ActionDescription::Message {
-            target: Box::new(r.as_ref().into()),
+        let description = self.pending.trace_targeted(true, &r, || trace::TurnEvent::Message {
             body: Box::new((&m).into()),
         });
-        self.pending.for_myself.push(Box::new(
-            move |t| t.with_entity(&r, |t, e| e.message(t, m))))
+        self.pending.for_myself.push((
+            description,
+            Box::new(move |t| t.with_entity(&r, |t, e| e.message(t, m)))))
     }
 
     /// Core API: begins a synchronisation with `r`.
@@ -901,11 +910,12 @@ impl<'activation> Activation<'activation> {
     /// the synchronisation request.
     pub fn sync<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
         let r = Arc::clone(r);
-        self.pending.trace(|| trace::ActionDescription::Sync {
-            target: Box::new(r.as_ref().into()),
+        let description = self.pending.trace_targeted(false, &r, || trace::TurnEvent::Sync {
+            peer: Box::new(peer.as_ref().into()),
         });
-        self.pending.queue_for(&r).push(Box::new(
-            move |t| t.with_entity(&r, |t, e| e.sync(t, peer))))
+        self.pending.queue_for(&r).push((
+            description,
+            Box::new(move |t| t.with_entity(&r, |t, e| e.sync(t, peer)))))
     }
 
     /// Registers the entity `r` in the list of stop actions for the active facet. If the facet
@@ -958,10 +968,10 @@ impl<'activation> Activation<'activation> {
     ///
     /// # Panics
     ///
-    /// Panics if any pending actions "`for_myself`" (resulting from
+    /// Panics if any pending "`final_actions`" or actions "`for_myself`" (resulting from
     /// [`assert_for_myself`][Self::assert_for_myself] or
-    /// [`message_for_myself`][Self::message_for_myself]) are
-    /// outstanding at the time of the call.
+    /// [`message_for_myself`][Self::message_for_myself]) are outstanding at the time of the
+    /// call.
     pub fn deliver(&mut self) {
         self.pending.deliver();
     }
@@ -1125,9 +1135,10 @@ impl<'activation> Activation<'activation> {
             link: false,
             id: Box::new(trace::ActorId(AnyValue::new(ac_ref.actor_id))),
         });
-        self.pending.for_myself.push(Box::new(move |t| {
-            ac.boot(name, Arc::clone(t.account()), Some(trace::TurnCause::ActorBoot), boot);
-            Ok(())
+        let cause = self.pending.desc.as_ref().map(
+            |d| trace::TurnCause::Turn { id: Box::new(d.id.clone()) });
+        self.pending.final_actions.push(Box::new(move |t| {
+            ac.boot(name, Arc::clone(t.account()), cause, boot);
         }));
         ac_ref
     }
@@ -1149,14 +1160,13 @@ impl<'activation> Activation<'activation> {
             link: true,
             id: Box::new(trace::ActorId(AnyValue::new(ac_ref.actor_id))),
         });
-        self.pending.for_myself.push(Box::new(move |t| {
+        let cause = self.pending.desc.as_ref().map(
+            |d| trace::TurnCause::Turn { id: Box::new(d.id.clone()) });
+        self.pending.final_actions.push(Box::new(move |t| {
             t.with_facet(true, facet_id, move |t| {
-                ac.link(t)?.boot(name,
-                                 Arc::clone(t.account()),
-                                 Some(trace::TurnCause::ActorBoot),
-                                 boot);
+                ac.link(t).boot(name, Arc::clone(t.account()), cause, boot);
                 Ok(())
-            })
+            }).unwrap()
         }));
         ac_ref
     }
@@ -1249,7 +1259,7 @@ impl<'activation> Activation<'activation> {
 
     fn stop_if_inert(&mut self) {
         let facet_id = self.facet.facet_id;
-        self.pending.for_myself.push(Box::new(move |t| {
+        self.pending.final_actions.push(Box::new(move |t| {
             tracing::trace!("Checking inertness of facet {} from facet {}", facet_id, t.facet.facet_id);
             if t.state.facet_exists_and_is_inert(facet_id) {
                 tracing::trace!(" - facet {} is inert, stopping it", facet_id);
@@ -1258,7 +1268,6 @@ impl<'activation> Activation<'activation> {
             } else {
                 tracing::trace!(" - facet {} is not inert", facet_id);
             }
-            Ok(())
         }))
     }
 
@@ -1432,11 +1441,21 @@ impl<'activation> Activation<'activation> {
             loop {
                 let actions = std::mem::take(&mut self.pending.for_myself);
                 if actions.is_empty() { break; }
-                for action in actions.into_iter() { action(self)? }
+                for (maybe_desc, action) in actions.into_iter() {
+                    if let Some(desc) = maybe_desc {
+                        self.pending.trace(|| trace::ActionDescription::DequeueInternal {
+                            event: Box::new(desc),
+                        });
+                    }
+                    action(self)?
+                }
             }
             if !self.repair_dataflow()? {
                 break;
             }
+        }
+        for final_action in std::mem::take(&mut self.pending.final_actions) {
+            final_action(self);
         }
         Ok(())
     }
@@ -1477,23 +1496,28 @@ impl EventBuffer {
             trace_collector,
             account,
             queues: HashMap::new(),
-            for_myself: Vec::new(),
+            for_myself: PendingEventQueue::new(),
+            final_actions: Vec::new(),
         }
     }
 
     fn execute_cleanup_action(&mut self, d: CleanupAction) {
         match d {
-            CleanupAction::ForAnother(mailbox, (tracer, action)) => {
-                if let Some(f) = tracer {
-                    self.trace(f);
+            CleanupAction::ForAnother(mailbox, (maybe_desc, action)) => {
+                if let Some(desc) = &maybe_desc {
+                    self.trace(|| trace::ActionDescription::Enqueue {
+                        event: Box::new(desc.clone()),
+                    })
                 }
-                self.queue_for_mailbox(&mailbox).push(action);
+                self.queue_for_mailbox(&mailbox).push((maybe_desc, action));
             }
-            CleanupAction::ForMyself((tracer, action)) => {
-                if let Some(f) = tracer {
-                    self.trace(f);
+            CleanupAction::ForMyself((maybe_desc, action)) => {
+                if let Some(desc) = &maybe_desc {
+                    self.trace(|| trace::ActionDescription::EnqueueInternal {
+                        event: Box::new(desc.clone()),
+                    })
                 }
-                self.for_myself.push(action);
+                self.for_myself.push((maybe_desc, action));
             }
         }
     }
@@ -1510,10 +1534,14 @@ impl EventBuffer {
     fn clear(&mut self) {
         self.queues = HashMap::new();
         self.for_myself = PendingEventQueue::new();
+        self.final_actions = Vec::new();
     }
 
     fn deliver(&mut self) {
         tracing::trace!("EventBuffer::deliver");
+        if !self.final_actions.is_empty() {
+            panic!("Unprocessed final_actions at deliver() time");
+        }
         if !self.for_myself.is_empty() {
             panic!("Unprocessed for_myself events remain at deliver() time");
         }
@@ -1543,6 +1571,27 @@ impl EventBuffer {
         if let Some(d) = &mut self.desc {
             d.record(f());
         }
+    }
+
+    #[inline(always)]
+    fn trace_targeted<M, F: FnOnce() -> trace::TurnEvent>(
+        &mut self,
+        internal: bool,
+        r: &Arc<Ref<M>>,
+        f: F,
+    ) -> Option<trace::TargetedTurnEvent> {
+        self.desc.as_mut().map(|d| {
+            let event = trace::TargetedTurnEvent {
+                target: r.as_ref().into(),
+                detail: f(),
+            };
+            d.record(if internal {
+                trace::ActionDescription::EnqueueInternal { event: Box::new(event.clone()) }
+            } else {
+                trace::ActionDescription::Enqueue { event: Box::new(event.clone()) }
+            });
+            event
+        })
     }
 }
 
@@ -1680,9 +1729,8 @@ impl Actor {
         boot: F,
     ) -> ActorHandle {
         let ac = Actor::new(None, trace_collector.clone());
-        let cause = trace_collector.as_ref().map(|_| trace::TurnCause::ActorBoot);
         let account = Account::new(None, trace_collector);
-        ac.boot(None, account, cause, boot)
+        ac.boot(None, account, Some(trace::TurnCause::external("top-level actor")), boot)
     }
 
     /// Create a new actor. It still needs to be [`boot`ed][Self::boot].
@@ -1709,7 +1757,7 @@ impl Actor {
         Actor { rx, trace_collector, ac_ref }
     }
 
-    fn link(self, t_parent: &mut Activation) -> Result<Self, Error> {
+    fn link(self, t_parent: &mut Activation) -> Self {
         if t_parent.active_facet().is_none() {
             panic!("No active facet when calling spawn_link");
         }
@@ -1732,9 +1780,9 @@ impl Actor {
                 child_actor: Box::new(trace::ActorId(AnyValue::new(self.ac_ref.actor_id))),
                 child_to_parent: Box::new(protocol::Handle(h_to_parent.unwrap().into())),
             });
-            Ok(self)
+            self
         } else {
-            Err(error("spawn_link'd actor terminated before link could happen", AnyValue::new(false)))
+            panic!("spawn_link'd actor terminated before link could happen");
         }
     }
 
@@ -1822,7 +1870,14 @@ impl Actor {
                         let actions = std::mem::take(&mut loaned_item.item);
                         if !root_facet_ref.activate(
                             &loaned_item.account, cause, |t| {
-                                for action in actions.into_iter() { action(t)? }
+                                for (maybe_desc, action) in actions.into_iter() {
+                                    if let Some(desc) = maybe_desc {
+                                        t.pending.trace(|| trace::ActionDescription::Dequeue {
+                                            event: Box::new(desc),
+                                        });
+                                    }
+                                    action(t)?;
+                                }
                                 Ok(())
                             })
                         {
@@ -1977,13 +2032,13 @@ impl RunningActor {
         &mut self,
         r: &Arc<Ref<M>>,
         handle: Handle,
-        describer: Option<ActionDescriber>,
+        description: Option<trace::TargetedTurnEvent>,
     ) {
         let r = Arc::clone(r);
         self.cleanup_actions.insert(
             handle,
             CleanupAction::ForAnother(Arc::clone(&r.mailbox), (
-                describer,
+                description,
                 Box::new(move |t| t.with_entity(&r, |t, e| {
                     tracing::trace!(?handle, "retracted");
                     if let Some(f) = t.active_facet() {
@@ -1999,7 +2054,7 @@ impl RunningActor {
         exit_status: &Arc<ActorResult>,
         trace_collector: Option<trace::TraceCollector>,
     ) {
-        let cause = trace_collector.as_ref().map(|_| trace::TurnCause::ActorCleanup);
+        let cause = Some(trace::TurnCause::Cleanup);
         let account = Account::new(Some(AnyValue::symbol("cleanup")), trace_collector.clone());
         let mut t = Activation::make(&ac_ref.facet_ref(self.root), account, cause, trace_collector, self);
         if let Err(err) = t._terminate_facet(t.state.root, exit_status.is_ok(), trace::FacetStopReason::ActorStopping) {
@@ -2067,32 +2122,6 @@ impl Drop for Facet {
 
         tracing::trace!(facet_id = ?self.facet_id, "Facet::drop");
     }
-}
-
-/// Directly injects `action` into `mailbox`, billing subsequent activity against `account`.
-///
-/// Primarily for use by [linked tasks][Activation::linked_task].
-#[must_use]
-pub fn external_event(
-    mailbox: &Arc<Mailbox>,
-    cause: Option<trace::TurnCause>,
-    account: &Arc<Account>,
-    action: Action,
-) -> ActorResult {
-    send_actions(&mailbox.tx, cause, account, vec![action])
-}
-
-/// Directly injects `actions` into `mailbox`, billing subsequent activity against `account`.
-///
-/// Primarily for use by [linked tasks][Activation::linked_task].
-#[must_use]
-pub fn external_events(
-    mailbox: &Arc<Mailbox>,
-    cause: Option<trace::TurnCause>,
-    account: &Arc<Account>,
-    actions: PendingEventQueue,
-) -> ActorResult {
-    send_actions(&mailbox.tx, cause, account, actions)
 }
 
 impl<M> Ref<M> {

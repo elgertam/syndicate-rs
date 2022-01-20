@@ -9,7 +9,6 @@ use syndicate::language;
 use syndicate::actor::*;
 use syndicate::during::entity;
 use syndicate::dataspace::Dataspace;
-use syndicate::enclose;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::dataspace_patterns as p;
 use syndicate::value::NestedValue;
@@ -53,23 +52,17 @@ pub fn bench_pub(c: &mut Criterion) {
             let start = Instant::now();
             rt.block_on(async move {
                 Actor::top(None, move |t| {
+                    let _ = t.prevent_inert_check();
+                    // The reason this works is that all the messages to `ds` will be delivered
+                    // before the message to `shutdown`, because `ds` and `shutdown` are in the
+                    // same Actor.
                     let ds = t.create(Dataspace::new(None));
                     let shutdown = t.create(ShutdownEntity);
-                    let account = Account::new(None, None);
-                    t.linked_task(Some(AnyValue::symbol("sender")), async move {
-                        for _ in 0..iters {
-                            external_event(&ds.mailbox, None, &account, Box::new(
-                                enclose!((ds) move |t| t.with_entity(
-                                    &ds,
-                                    |t, e| e.message(t, says(AnyValue::new("bench_pub"),
-                                                             Value::ByteString(vec![]).wrap()))))))?
-                        }
-                        external_event(&shutdown.mailbox, None, &account, Box::new(
-                            enclose!((shutdown) move |t| t.with_entity(
-                                &shutdown,
-                                |t, e| e.message(t, AnyValue::new(true))))))?;
-                        Ok(LinkedTaskTermination::KeepFacet)
-                    });
+                    for _ in 0..iters {
+                        t.message(&ds, says(AnyValue::new("bench_pub"),
+                                            Value::ByteString(vec![]).wrap()));
+                    }
+                    t.message(&shutdown, AnyValue::new(true));
                     Ok(())
                 }).await.unwrap().unwrap();
             });
@@ -138,27 +131,15 @@ pub fn bench_pub(c: &mut Criterion) {
                                 observer: shutdown,
                             });
 
-                            let account = Arc::clone(t.account());
-                            t.linked_task(Some(AnyValue::symbol("sender")), async move {
+                            t.after(core::time::Duration::from_secs(0), move |t| {
                                 for _i in 0..iters {
-                                    let ds = Arc::clone(&ds);
-                                    external_event(
-                                        &Arc::clone(&ds.underlying.mailbox), None, &account, Box::new(
-                                        move |t| t.with_entity(
-                                            &ds.underlying,
-                                            |t, e| e.message(t, says(AnyValue::new("bench_pub"),
-                                                                     Value::ByteString(vec![]).wrap())))))?
+                                    ds.message(t, &(), &says(AnyValue::new("bench_pub"),
+                                                             Value::ByteString(vec![]).wrap()));
                                 }
-                                {
-                                    let ds = Arc::clone(&ds);
-                                    external_event(
-                                        &Arc::clone(&ds.underlying.mailbox), None, &account, Box::new(
-                                        move |t| t.with_entity(
-                                            &ds.underlying,
-                                            |t, e| e.message(t, AnyValue::new(true)))))?;
-                                }
-                                Ok(LinkedTaskTermination::KeepFacet)
+                                ds.message(t, &(), &AnyValue::new(true));
+                                Ok(())
                             });
+
                             Ok(())
                         });
                         Ok(())

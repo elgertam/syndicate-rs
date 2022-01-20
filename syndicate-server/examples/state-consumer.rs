@@ -12,7 +12,6 @@ use syndicate::value::NestedValue;
 use tokio::net::TcpStream;
 
 use core::time::Duration;
-use tokio::time::interval;
 
 #[derive(Clone, Debug, StructOpt)]
 pub struct Config {
@@ -65,19 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 observer: Arc::clone(&consumer),
             });
 
-            t.linked_task(Some(AnyValue::symbol("tick")), async move {
-                let mut stats_timer = interval(Duration::from_secs(1));
-                loop {
-                    stats_timer.tick().await;
-                    let consumer = Arc::clone(&consumer);
-                    external_event(&Arc::clone(&consumer.underlying.mailbox),
-                                   None,
-                                   &Account::new(None, None),
-                                   Box::new(move |t| t.with_entity(
-                                       &consumer.underlying,
-                                       |t, e| e.message(t, AnyValue::new(true)))))?;
-                }
-            });
+            t.every(Duration::from_secs(1), move |t| {
+                consumer.message(t, &(), &AnyValue::new(true));
+                Ok(())
+            })?;
+
             Ok(None)
         });
         Ok(())
