@@ -31,8 +31,7 @@ TurnDescription = <turn @id TurnId @cause TurnCause @actions [ActionDescription 
 ; The cause of a turn.
 TurnCause =
 / @turn <caused-by @id TurnId>
-/ @actorBoot <actor-boot>
-/ @actorCleanup <actor-cleanup>
+/ <cleanup>
 / @linkedTaskRelease <linked-task-release @id TaskId @reason LinkedTaskReleaseReason>
 / @periodicActivation <periodic-activation @"`period` is in seconds" @period double>
 / <delay @causingTurn TurnId @"`amount` is in seconds" @amount double>
@@ -41,19 +40,34 @@ TurnCause =
 
 LinkedTaskReleaseReason = =cancelled / =normal .
 
+; An actual event carried within a turn.
+TurnEvent =
+/ <assert @assertion AssertionDescription @handle protocol.Handle>
+/ <retract @handle protocol.Handle>
+/ <message @body AssertionDescription>
+/ <sync @peer Target>
+/ ; A souped-up, disguised, special-purpose `retract` event.
+  @breakLink <break-link @source ActorId @handle protocol.Handle>
+.
+
+TargetedTurnEvent = <event @target Target @detail TurnEvent> .
+
 ; An action taken during a turn.
 ActionDescription =
-/ <assert @target Target @assertion AssertionDescription @handle protocol.Handle>
-/ <retract @target Target @handle protocol.Handle>
-/ <message @target Target @body AssertionDescription>
-/ <sync @target Target>
+/ ; The active party is processing a new `event` for `target` from the received Turn.
+  <dequeue @event TargetedTurnEvent>
+/ ; The active party has queued a new `event` to be processed later by `target`.
+  <enqueue @event TargetedTurnEvent>
+/ ; The active party is processing an internally-queued event for one of its own entities.
+  @dequeueInternal <dequeue-internal @event TargetedTurnEvent>
+/ ; The active party has scheduled an internally-queued event for one of its own entities.
+  @enqueueInternal <enqueue-internal @event TargetedTurnEvent>
 / <spawn @link bool @id ActorId>
 / <link
    @parentActor ActorId
    @childToParent protocol.Handle
    @childActor ActorId
    @parentToChild protocol.Handle>
-/ @breakLink <break-link @peer ActorId @handle protocol.Handle>
 / @facetStart <facet-start @path [FacetId ...]>
 / @facetStop <facet-stop @path [FacetId ...] @reason FacetStopReason>
 / @linkedTaskStart <linked-task-start @taskName Name @id TaskId>
