@@ -88,6 +88,9 @@ pub enum Output {
 
 type TunnelRelayRef = Arc<Mutex<Option<TunnelRelay>>>;
 
+#[derive(Debug)]
+struct SendPendingTurn;
+
 // There are other kinds of relay. This one has exactly two participants connected to each other.
 pub struct TunnelRelay
 {
@@ -96,7 +99,7 @@ pub struct TunnelRelay
     outbound_assertions: Map<P::Handle, Vec<Arc<WireSymbol>>>,
     membranes: Membranes,
     pending_outbound: Vec<P::TurnEvent<AnyValue>>,
-    self_entity: Arc<Ref<()>>,
+    self_entity: Arc<Ref<SendPendingTurn>>,
     output: UnboundedSender<LoanedItem<Vec<u8>>>,
     output_text: bool,
 }
@@ -481,7 +484,7 @@ impl TunnelRelay {
 
     pub fn send_event(&mut self, t: &mut Activation, remote_oid: sturdy::Oid, event: P::Event<AnyValue>) -> ActorResult {
         if self.pending_outbound.is_empty() {
-            t.message_for_myself(&self.self_entity, ());
+            t.message_for_myself(&self.self_entity, SendPendingTurn);
         }
         self.pending_outbound.push(P::TurnEvent { oid: P::Oid(remote_oid.0), event });
         Ok(())
@@ -705,8 +708,8 @@ async fn output_loop(
     }
 }
 
-impl Entity<()> for TunnelRefEntity {
-    fn message(&mut self, t: &mut Activation, _m: ()) -> ActorResult {
+impl Entity<SendPendingTurn> for TunnelRefEntity {
+    fn message(&mut self, t: &mut Activation, _m: SendPendingTurn) -> ActorResult {
         let mut g = self.relay_ref.lock();
         let tr = g.as_mut().expect("initialized");
         let events = std::mem::take(&mut tr.pending_outbound);
