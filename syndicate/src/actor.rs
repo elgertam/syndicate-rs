@@ -709,19 +709,22 @@ impl<'activation> Activation<'activation> {
     /// Retrieves the chain of facet IDs, in order, from the currently-active [`Facet`] up to
     /// and including the root facet of the active actor. Useful for debugging.
     pub fn facet_ids(&mut self) -> Vec<FacetId> {
-        self.facet_ids_for(self.facet.facet_id)
+        if let Some(f) = self.state.get_facet_immut(self.facet.facet_id) {
+            self.facet_ids_for(f)
+        } else {
+            Vec::new()
+        }
     }
 
-    fn facet_ids_for(&mut self, mut id: FacetId) -> Vec<FacetId> {
+    fn facet_ids_for<'a>(&self, f: &'a Facet) -> Vec<FacetId> {
         let mut ids = Vec::new();
-        loop {
-            ids.push(id);
-            match self.state.get_facet(id) {
+        ids.push(f.facet_id);
+        let mut id = f.parent_facet_id;
+        while let Some(parent_id) = id {
+            ids.push(parent_id);
+            match self.state.get_facet_immut(parent_id) {
                 None => break,
-                Some(f) => match f.parent_facet_id {
-                    None => break,
-                    Some(p) => id = p,
-                }
+                Some(pf) => id = pf.parent_facet_id,
             }
         }
         ids
@@ -1179,11 +1182,11 @@ impl<'activation> Activation<'activation> {
         boot: F,
     ) -> Result<FacetId, Error> {
         let f = Facet::new(Some(self.facet.facet_id));
+        self.trace(|t| trace::ActionDescription::FacetStart {
+            path: t.facet_ids_for(&f).iter().map(|i| trace::FacetId(AnyValue::new(u64::from(*i)))).collect(),
+        });
         let facet_id = f.facet_id;
         self.state.facet_nodes.insert(facet_id, f);
-        self.trace(|t| trace::ActionDescription::FacetStart {
-            path: t.facet_ids_for(facet_id).iter().map(|i| trace::FacetId(AnyValue::new(u64::from(*i)))).collect(),
-        });
         tracing::trace!(parent_id = ?self.facet.facet_id,
                         ?facet_id,
                         actor_facet_count = ?self.state.facet_nodes.len());
@@ -1279,7 +1282,7 @@ impl<'activation> Activation<'activation> {
     ) -> ActorResult {
         if let Some(mut f) = self.state.facet_nodes.remove(&facet_id) {
             self.trace(|t| trace::ActionDescription::FacetStop {
-                path: t.facet_ids_for(facet_id).iter().map(|i| trace::FacetId(AnyValue::new(u64::from(*i)))).collect(),
+                path: t.facet_ids_for(&f).iter().map(|i| trace::FacetId(AnyValue::new(u64::from(*i)))).collect(),
                 reason: Box::new(reason),
             });
             tracing::trace!(actor_facet_count = ?self.state.facet_nodes.len(),
@@ -2007,6 +2010,10 @@ impl RunningActor {
 
     fn get_facet(&mut self, facet_id: FacetId) -> Option<&mut Facet> {
         self.facet_nodes.get_mut(&facet_id)
+    }
+
+    fn get_facet_immut(&self, facet_id: FacetId) -> Option<&Facet> {
+        self.facet_nodes.get(&facet_id)
     }
 
     /// See the definition of an [inert facet][Facet#inert-facets].
