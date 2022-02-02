@@ -2118,7 +2118,8 @@ impl Drop for Facet {
         }
 
         if !self.outbound_handles.is_empty() {
-            panic!("Internal error: outbound_handles not empty at drop time");
+            panic!("Internal error: outbound_handles for {:?} not empty at drop time",
+                   self.facet_id);
         }
 
         tracing::trace!(facet_id = ?self.facet_id, "Facet::drop");
