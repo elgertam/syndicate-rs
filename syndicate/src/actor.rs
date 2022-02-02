@@ -573,7 +573,7 @@ impl From<ActorResult> for RunDisposition {
 impl FacetRef {
     /// Executes `f` in a new "[turn][Activation]" for `actor`. If `f` returns `Ok(())`,
     /// [commits the turn][Activation::commit] and performs the buffered actions; otherwise,
-    /// [abandons the turn][Activation::rollback] and discards the buffered actions.
+    /// abandons the turn and discards the buffered actions.
     ///
     /// Returns `true` if, at the end of the activation, `actor` had not yet terminated.
     ///
@@ -624,9 +624,8 @@ impl FacetRef {
                         true
                     }
                     RunDisposition::Terminate(exit_status) => {
-                        match exit_status {
-                            Err(_) => activation.rollback(),
-                            Ok(()) => activation.commit(),
+                        if exit_status.is_ok() {
+                            activation.commit();
                         }
                         let exit_status = Arc::new(exit_status);
                         state.cleanup(&self.actor,
@@ -969,12 +968,7 @@ impl<'activation> Activation<'activation> {
         &self.pending.account
     }
 
-    /// Discards all pending actions in this activation.
-    pub fn rollback(self) {
-        // Nothing to do
-    }
-
-    /// Delivers all pending actions in this activation.
+    /// Delivers all pending actions in this activation and resets it, ready for more.
     ///
     /// # Panics
     ///
