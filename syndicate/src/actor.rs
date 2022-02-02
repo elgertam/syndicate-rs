@@ -677,29 +677,36 @@ impl<'activation> Activation<'activation> {
         }
     }
 
-    fn with_facet<F>(&mut self, check_existence: bool, facet_id: FacetId, f: F) -> ActorResult
+    fn with_facet<F>(&mut self, facet_id: FacetId, f: F) -> ActorResult
     where
         F: FnOnce(&mut Activation) -> ActorResult,
     {
-        if !check_existence || self.state.facet_nodes.contains_key(&facet_id) {
-            tracing::trace!(check_existence, facet_id, "is_alive");
-            let old_facet_id = self.facet.facet_id;
-            self.facet.facet_id = facet_id;
-            // let _entry = tracing::info_span!("facet", ?facet_id).entered();
-            let result = f(self);
-            self.facet.facet_id = old_facet_id;
-            result
+        if self.state.facet_nodes.contains_key(&facet_id) {
+            tracing::trace!(facet_id, "alive=true");
+            self._with_facet(facet_id, f)
         } else {
-            tracing::trace!(facet_id, "not_alive");
+            tracing::trace!(facet_id, "alive=false");
             Ok(())
         }
+    }
+
+    fn _with_facet<F>(&mut self, facet_id: FacetId, f: F) -> ActorResult
+    where
+        F: FnOnce(&mut Activation) -> ActorResult,
+    {
+        let old_facet_id = self.facet.facet_id;
+        self.facet.facet_id = facet_id;
+        // let _entry = tracing::info_span!("facet", ?facet_id).entered();
+        let result = f(self);
+        self.facet.facet_id = old_facet_id;
+        result
     }
 
     #[doc(hidden)]
     pub fn with_entity<M, F>(&mut self, r: &Arc<Ref<M>>, f: F) -> ActorResult where
         F: FnOnce(&mut Activation, &mut dyn Entity<M>) -> ActorResult
     {
-        self.with_facet(true, r.facet_id, |t| r.internal_with_entity(|e| f(t, e)))
+        self.with_facet(r.facet_id, |t| r.internal_with_entity(|e| f(t, e)))
     }
 
     fn active_facet<'a>(&'a mut self) -> Option<&'a mut Facet> {
@@ -1166,7 +1173,7 @@ impl<'activation> Activation<'activation> {
         let cause = self.pending.desc.as_ref().map(
             |d| trace::TurnCause::Turn { id: Box::new(d.id.clone()) });
         self.pending.final_actions.push(Box::new(move |t| {
-            t.with_facet(true, facet_id, move |t| {
+            t.with_facet(facet_id, move |t| {
                 ac.link(t).boot(name, Arc::clone(t.account()), cause, boot);
                 Ok(())
             }).unwrap()
@@ -1191,7 +1198,7 @@ impl<'activation> Activation<'activation> {
                         ?facet_id,
                         actor_facet_count = ?self.state.facet_nodes.len());
         self.state.facet_children.entry(self.facet.facet_id).or_default().insert(facet_id);
-        self.with_facet(true /* TODO: tiny optimisation: "false" would be safe here */, facet_id, move |t| {
+        self._with_facet(facet_id, move |t| {
             boot(t)?;
             t.stop_if_inert();
             Ok(())
@@ -1292,7 +1299,7 @@ impl<'activation> Activation<'activation> {
             if let Some(p) = f.parent_facet_id {
                 self.state.facet_children.get_mut(&p).map(|children| children.remove(&facet_id));
             }
-            self.with_facet(false, facet_id, |t| {
+            self._with_facet(facet_id, |t| {
                 if let Some(children) = t.state.facet_children.remove(&facet_id) {
                     for child_id in children.into_iter() {
                         t._terminate_facet(child_id, alive, trace::FacetStopReason::ParentStopping)?;
@@ -1300,7 +1307,7 @@ impl<'activation> Activation<'activation> {
                 }
                 if alive {
                     let parent_facet_id = f.parent_facet_id;
-                    t.with_facet(false, parent_facet_id.unwrap_or(facet_id), |t| {
+                    t._with_facet(parent_facet_id.unwrap_or(facet_id), |t| {
                         for action in std::mem::take(&mut f.stop_actions) {
                             action(t)?;
                         }
@@ -1425,8 +1432,7 @@ impl<'activation> Activation<'activation> {
                 let block_ids = self.state.dataflow.take_observers_of(&field_id);
                 for block_id in block_ids.into_iter() {
                     if let Some((facet_id, mut block)) = self.state.blocks.remove(&block_id) {
-                        let result = self.with_facet(
-                            true, facet_id, |t| t.with_block(block_id, &mut block));
+                        let result = self.with_facet(facet_id, |t| t.with_block(block_id, &mut block));
                         self.state.blocks.insert(block_id, (facet_id, block));
                         result?;
                     }
