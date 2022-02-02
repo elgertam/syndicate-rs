@@ -572,8 +572,8 @@ impl From<ActorResult> for RunDisposition {
 
 impl FacetRef {
     /// Executes `f` in a new "[turn][Activation]" for `actor`. If `f` returns `Ok(())`,
-    /// [commits the turn][Activation::deliver] and performs the buffered actions; otherwise,
-    /// [abandons the turn][Activation::clear] and discards the buffered actions.
+    /// [commits the turn][Activation::commit] and performs the buffered actions; otherwise,
+    /// [abandons the turn][Activation::rollback] and discards the buffered actions.
     ///
     /// Returns `true` if, at the end of the activation, `actor` had not yet terminated.
     ///
@@ -592,7 +592,7 @@ impl FacetRef {
     /// Executes `f` in a new "[turn][Activation]" for `actor`. If `f` returns
     /// `Some(exit_status)`, terminates `actor` with that `exit_status`. Otherwise, if `f`
     /// returns `None`, leaves `actor` in runnable state. [Commits buffered
-    /// actions][Activation::deliver] unless `actor` terminates with an `Err` status.
+    /// actions][Activation::commit] unless `actor` terminates with an `Err` status.
     ///
     /// Returns `true` if, at the end of the activation, `actor` had not yet terminated.
     ///
@@ -619,12 +619,15 @@ impl FacetRef {
                                      state);
                 let f_result = f(&mut activation);
                 let is_alive = match activation.restore_invariants(f_result) {
-                    RunDisposition::Continue => true,
+                    RunDisposition::Continue => {
+                        activation.commit();
+                        true
+                    }
                     RunDisposition::Terminate(exit_status) => {
-                        if exit_status.is_err() {
-                            activation.clear();
+                        match exit_status {
+                            Err(_) => activation.rollback(),
+                            Ok(()) => activation.commit(),
                         }
-                        drop(activation);
                         let exit_status = Arc::new(exit_status);
                         state.cleanup(&self.actor,
                                       &exit_status,
@@ -967,14 +970,11 @@ impl<'activation> Activation<'activation> {
     }
 
     /// Discards all pending actions in this activation.
-    pub fn clear(&mut self) {
-        self.pending.clear();
+    pub fn rollback(self) {
+        // Nothing to do
     }
 
     /// Delivers all pending actions in this activation.
-    ///
-    /// This is called automatically when an `Activation` is
-    /// `Drop`ped.
     ///
     /// # Panics
     ///
@@ -982,8 +982,8 @@ impl<'activation> Activation<'activation> {
     /// [`assert_for_myself`][Self::assert_for_myself] or
     /// [`message_for_myself`][Self::message_for_myself]) are outstanding at the time of the
     /// call.
-    pub fn deliver(&mut self) {
-        self.pending.deliver();
+    pub fn commit(&mut self) {
+        self.pending.commit();
     }
 
     /// Construct an entity with behaviour [`InertEntity`] within the active facet.
@@ -1540,13 +1540,7 @@ impl EventBuffer {
             .or_insert((mailbox.tx.clone(), Vec::new())).1
     }
 
-    fn clear(&mut self) {
-        self.queues = HashMap::new();
-        self.for_myself = PendingEventQueue::new();
-        self.final_actions = Vec::new();
-    }
-
-    fn deliver(&mut self) {
+    fn commit(&mut self) {
         tracing::trace!("EventBuffer::deliver");
         if !self.final_actions.is_empty() {
             panic!("Unprocessed final_actions at deliver() time");
@@ -1601,12 +1595,6 @@ impl EventBuffer {
             });
             event
         })
-    }
-}
-
-impl Drop for EventBuffer {
-    fn drop(&mut self) {
-        self.deliver()
     }
 }
 

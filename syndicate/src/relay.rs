@@ -404,7 +404,7 @@ impl TunnelRelay {
                         }
                     }
                 }
-                t.deliver();
+                t.commit();
                 Ok(())
             }
         }
