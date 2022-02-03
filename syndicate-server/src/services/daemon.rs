@@ -139,7 +139,7 @@ impl DaemonProcessSpec {
             },
             DaemonProcessSpec::OneShot { setup } => FullDaemonProcess {
                 process: Process::Simple(setup).elaborate(),
-                ready_on_start: ReadyOnStart::Absent,
+                ready_on_start: ReadyOnStart::Present { ready_on_start: false },
                 restart: RestartField::Present { restart: Box::new(RestartPolicy::OnError) },
                 protocol: ProtocolField::Absent,
             },
@@ -212,7 +212,6 @@ impl DaemonInstance {
                     t.facet(|t| {
                         let _ = t.prevent_inert_check();
                         counter::adjust(t, &self.completed_processes, 1);
-                        counter::adjust(t, &self.unready_configs, -1);
                         Ok(())
                     })?;
                     ()
