@@ -38,10 +38,13 @@ State =
   =failed
 / ; The service has completed execution.
   =complete
+/ ; Extension or user-defined state
+  @userDefined any
 .
 
-; Asserts that, when `depender` is `require-service`d, it should not
-; be started until `dependee` has been asserted.
+; Asserts that, when `depender` is `require-service`d, it should not be started until
+; `dependee` has been asserted, and also that `dependee`'s `serviceName` should be
+; `require-service`d.
 ServiceDependency = <depends-on @depender any @dependee ServiceState>.
 
 ; Asserts that the service is a "system layer" service. If *not*
