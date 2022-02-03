@@ -94,32 +94,6 @@ impl preserves::value::DomainEncode<Arc<Cap>> for CapEncoder {
         d: &Arc<Cap>,
     ) -> std::io::Result<()> {
         w.write_string(&d.debug_str())
-
-        // use preserves::value::writer::CompoundWriter;
-        // use preserves::value::boundary as B;
-        // let mut c = w.start_record(Some(3))?;
-
-        // let mut b = B::start(B::Item::RecordLabel);
-        // c.boundary(&b)?;
-        // c.write_symbol("cap")?;
-
-        // b.shift(Some(B::Item::RecordField));
-        // c.boundary(&b)?;
-        // c.write_u64(d.underlying.mailbox.actor_id)?;
-
-        // b.shift(Some(B::Item::RecordField));
-        // c.boundary(&b)?;
-        // c.write_u64(u64::from(d.underlying.facet_id))?;
-
-        // b.shift(Some(B::Item::RecordField));
-        // c.boundary(&b)?;
-        // c.write_u64(d.underlying.oid() as u64)?;
-
-        // // TODO: write attenuation?
-
-        // b.shift(None);
-        // c.boundary(&b)?;
-        // w.end_record(c)
     }
 }
 
