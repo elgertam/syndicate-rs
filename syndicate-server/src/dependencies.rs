@@ -3,16 +3,13 @@ use preserves_schema::Codec;
 use std::sync::Arc;
 
 use syndicate::actor::*;
-use syndicate::during::entity;
 use syndicate::enclose;
 use syndicate::preserves::rec;
-use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::service;
 use syndicate::value::NestedValue;
 
 use crate::counter;
 use crate::language::language;
-use crate::schemas::internal_services;
 
 use syndicate_macros::during;
 
@@ -28,31 +25,6 @@ pub fn boot(t: &mut Activation, ds: Arc<Cap>) {
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, service_name: AnyValue) -> ActorResult {
-    if !service_name.value().is_simple_record("milestone", Some(1)) {
-        let system_layer_dep = service::ServiceDependency {
-            depender: service_name.clone(),
-            dependee: service::ServiceState {
-                service_name: language().unparse(&internal_services::Milestone {
-                    name: AnyValue::symbol("system-layer"),
-                }),
-                state: service::State::Ready,
-            },
-        };
-        let milestone_monitor = entity(ds.assert(t, language(), &system_layer_dep))
-            .on_asserted(enclose!((ds) move |handle, t, _captures: AnyValue| {
-                ds.update::<_, service::ServiceDependency>(t, handle, language(), None);
-                Ok(Some(Box::new(enclose!((ds, system_layer_dep) move |handle, t| {
-                    ds.update(t, handle, language(), Some(&system_layer_dep));
-                    Ok(())
-                }))))
-            }))
-            .create_cap(t);
-        ds.assert(t, language(), &Observe {
-            pattern: syndicate_macros::pattern!{<system-layer-service #(&service_name)>},
-            observer: milestone_monitor,
-        });
-    }
-
     let obstacle_count = t.named_field("obstacle_count", 1isize);
     t.dataflow(enclose!((service_name, obstacle_count) move |t| {
         tracing::trace!(?service_name, obstacle_count = ?t.get(&obstacle_count));
