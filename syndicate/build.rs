@@ -30,7 +30,7 @@ fn main() -> std::io::Result<()> {
     c.plugins.push(Box::new(syndicate_plugins::PatternPlugin));
     c.add_external_module(ExternalModule::new(vec!["EntityRef".to_owned()], "crate::actor"));
 
-    let inputs = expand_inputs(&vec!["../../syndicate-protocols/schema-bundle.bin".to_owned()])?;
+    let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
     c.load_schemas_and_bundles(&inputs)?;
     compile(&c)
 }
