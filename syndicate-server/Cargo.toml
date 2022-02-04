@@ -11,11 +11,11 @@ license = "Apache-2.0"
 
 [build-dependencies]
 preserves-schema = "^2"
-syndicate = { path = "../syndicate", version = "^0.22.0"}
+syndicate = { path = "../syndicate", version = "^0.23.0"}
 
 [dependencies]
 preserves-schema = "^2"
-syndicate = { path = "../syndicate", version = "^0.22.0"}
+syndicate = { path = "../syndicate", version = "^0.23.0"}
 syndicate-macros = { path = "../syndicate-macros", version = "^0.17.0"}
 
 chrono = "0.4"
