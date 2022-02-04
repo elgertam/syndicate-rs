@@ -88,9 +88,6 @@ pub enum Output {
 
 type TunnelRelayRef = Arc<Mutex<Option<TunnelRelay>>>;
 
-#[derive(Debug)]
-struct SendPendingTurn;
-
 // There are other kinds of relay. This one has exactly two participants connected to each other.
 pub struct TunnelRelay
 {
@@ -99,7 +96,6 @@ pub struct TunnelRelay
     outbound_assertions: Map<P::Handle, Vec<Arc<WireSymbol>>>,
     membranes: Membranes,
     pending_outbound: Vec<P::TurnEvent<AnyValue>>,
-    self_entity: Arc<Ref<SendPendingTurn>>,
     output: UnboundedSender<LoanedItem<Vec<u8>>>,
     output_text: bool,
 }
@@ -243,7 +239,6 @@ impl TunnelRelay {
                 next_export_oid: 0,
             },
             pending_outbound: Vec::new(),
-            self_entity: self_entity.clone(),
         };
         if let Some(ir) = initial_ref {
             tr.membranes.export_ref(ir).inc_ref();
@@ -404,8 +399,7 @@ impl TunnelRelay {
                         }
                     }
                 }
-                t.commit();
-                Ok(())
+                t.commit()
             }
         }
     }
@@ -484,7 +478,19 @@ impl TunnelRelay {
 
     pub fn send_event(&mut self, t: &mut Activation, remote_oid: sturdy::Oid, event: P::Event<AnyValue>) -> ActorResult {
         if self.pending_outbound.is_empty() {
-            t.message_for_myself(&self.self_entity, SendPendingTurn);
+            let self_ref = Arc::clone(&self.self_ref);
+            t.pre_commit(move |t| {
+                let mut g = self_ref.lock();
+                let tr = g.as_mut().expect("initialized");
+                let events = std::mem::take(&mut tr.pending_outbound);
+                tr.send_packet(&t.account(),
+                               events.len(),
+                               P::Packet::Turn(Box::new(P::Turn(events.clone()))))?;
+                for P::TurnEvent { oid, event } in events.into_iter() {
+                    tr.outbound_event_bookkeeping(t, sturdy::Oid(oid.0), &event)?;
+                }
+                Ok(())
+            });
         }
         self.pending_outbound.push(P::TurnEvent { oid: P::Oid(remote_oid.0), event });
         Ok(())
@@ -708,26 +714,16 @@ async fn output_loop(
     }
 }
 
-impl Entity<SendPendingTurn> for TunnelRefEntity {
-    fn message(&mut self, t: &mut Activation, _m: SendPendingTurn) -> ActorResult {
-        let mut g = self.relay_ref.lock();
-        let tr = g.as_mut().expect("initialized");
-        let events = std::mem::take(&mut tr.pending_outbound);
-        tr.send_packet(&t.account(), events.len(), P::Packet::Turn(Box::new(P::Turn(events.clone()))))?;
-        for P::TurnEvent { oid, event } in events.into_iter() {
-            tr.outbound_event_bookkeeping(t, sturdy::Oid(oid.0), &event)?;
-        }
-        Ok(())
-    }
-
-    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
+impl Entity<()> for TunnelRefEntity {
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) {
         if let Err(e) = &**exit_status {
             let e = e.clone();
             let mut g = self.relay_ref.lock();
             let tr = g.as_mut().expect("initialized");
-            tr.send_packet(&t.account(), 1, P::Packet::Error(Box::new(e)))?;
+            if let Err(f) = tr.send_packet(&t.account(), 1, P::Packet::Error(Box::new(e))) {
+                tracing::error!("Failed to send error packet: {:?}", f);
+            }
         }
-        Ok(())
     }
 }
 

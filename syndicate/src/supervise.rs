@@ -72,17 +72,15 @@ impl Entity<StartNow> for Supervisor
 
     fn stop(&mut self, t: &mut Activation) -> ActorResult {
         let _entry = tracing::info_span!("supervisor", name = ?self.child_name).entered();
-        let exit_status =
-            self.ac_ref.take().expect("valid supervisee ActorRef")
-            .exit_status()
-            .expect("supervisee to have terminated");
-        tracing::debug!(?exit_status);
-        match exit_status {
-            Ok(()) if self.config.restart_policy == RestartPolicy::OnErrorOnly => {
+        match self.ac_ref.take().expect("valid supervisee ActorRef").exit_status() {
+            None =>
+                tracing::debug!("Supervisor shut down; supervisee will exit soon"),
+            Some(Ok(())) if self.config.restart_policy == RestartPolicy::OnErrorOnly => {
                 tracing::trace!("Not restarting: normal exit, restart_policy is OnErrorOnly");
                 t.set(&self.state, State::Complete);
             },
-            _ => {
+            Some(exit_status) => {
+                tracing::debug!(?exit_status);
                 tracing::trace!("Restarting: restart_policy is Always or exit was abnormal");
                 t.set(&self.state,
                       if exit_status.is_ok() { State::Complete } else { State::Failed });

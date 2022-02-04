@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 use structopt::StructOpt;
 
 use syndicate::actor::*;
+use syndicate::enclose;
 use syndicate::language;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
@@ -109,21 +111,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut event_counter: u64 = 0;
                 let mut rtt_ns_samples: Vec<u64> = vec![0; report_latency_every];
                 let mut rtt_batch_count: usize = 0;
-                let mut current_reply = None;
-                let self_ref = t.create_inert();
-                self_ref.become_entity(
-                    syndicate::entity(Arc::clone(&self_ref))
-                        .on_message(move |self_ref, t, m: AnyValue| {
+                let current_reply = Arc::new(Mutex::new(None));
+                Cap::new(&t.create(
+                    syndicate::entity(())
+                        .on_message(move |(), t, m: AnyValue| {
                             match m.value().as_boolean() {
-                                Some(true) => {
+                                Some(_) => {
                                     tracing::info!("{:?} turns, {:?} events in the last second",
                                                    turn_counter,
                                                    event_counter);
                                     turn_counter = 0;
                                     event_counter = 0;
-                                }
-                                Some(false) => {
-                                    current_reply = None;
                                 }
                                 None => {
                                     event_counter += 1;
@@ -136,9 +134,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                            timestamp.clone(),
                                                                            padding.clone()));
                                     } else {
-                                        if let None = current_reply {
+                                        let mut g = current_reply.lock().expect("unpoisoned");
+                                        if let None = *g {
                                             turn_counter += 1;
-                                            t.message_for_myself(&self_ref, AnyValue::new(false));
+                                            t.pre_commit(enclose!((current_reply) move |_| {
+                                                *current_reply.lock().expect("unpoisoned") = None;
+                                                Ok(())
+                                            }));
                                             let rtt_ns = now() - timestamp.value().to_u64()?;
                                             rtt_ns_samples[rtt_batch_count] = rtt_ns;
                                             rtt_batch_count += 1;
@@ -149,18 +151,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 rtt_batch_count = 0;
                                             }
 
-                                            current_reply = Some(
-                                                simple_record2(&send_label,
-                                                               Value::from(now()).wrap(),
-                                                               padding.clone()));
+                                            *g = Some(simple_record2(&send_label,
+                                                                     Value::from(now()).wrap(),
+                                                                     padding.clone()));
                                         }
-                                        ds.message(t, &(), current_reply.as_ref().expect("some reply"));
+                                        ds.message(t, &(), g.as_ref().expect("some reply"));
                                     }
                                 }
                             }
                             Ok(())
-                        }));
-                Cap::new(&self_ref)
+                        })))
             };
 
             ds.assert(t, language(), &Observe {

@@ -17,7 +17,7 @@ where
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
     Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
-    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
+    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>),
 {
     state: E,
     assertion_handler: Option<Fa>,
@@ -54,7 +54,7 @@ pub fn entity<M: 'static + Send, E>(
                   fn (&mut E, &mut Activation, M) -> DuringResult<E>,
                   fn (&mut E, &mut Activation, M) -> ActorResult,
                   fn (&mut E, &mut Activation) -> ActorResult,
-                  fn (&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult>
+                  fn (&mut E, &mut Activation, &Arc<ActorResult>)>
 where
     E: 'static + Send,
 {
@@ -68,7 +68,7 @@ where
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
     Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
-    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
+    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>),
 {
     pub fn new(
         state: E,
@@ -154,7 +154,7 @@ where
 
     pub fn on_exit<Fx1>(self, exit_handler: Fx1) -> DuringEntity<M, E, Fa, Fm, Fs, Fx1>
     where
-        Fx1: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
+        Fx1: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>),
     {
         DuringEntity {
             state: self.state,
@@ -187,7 +187,7 @@ where
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, AnyValue) -> ActorResult,
     Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
-    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
+    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>),
 {
     pub fn create_cap(self, t: &mut Activation) -> Arc<Cap>
     {
@@ -202,7 +202,7 @@ where
     Fa: 'static + Send + FnMut(&mut E, &mut Activation, M) -> DuringResult<E>,
     Fm: 'static + Send + FnMut(&mut E, &mut Activation, M) -> ActorResult,
     Fs: 'static + Send + FnMut(&mut E, &mut Activation) -> ActorResult,
-    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>) -> ActorResult,
+    Fx: 'static + Send + FnMut(&mut E, &mut Activation, &Arc<ActorResult>),
 {
     fn assert(&mut self, t: &mut Activation, a: M, h: Handle) -> ActorResult {
         match &mut self.assertion_handler {
@@ -232,10 +232,9 @@ where
         }
     }
 
-    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) -> ActorResult {
-        match &mut self.exit_handler {
-            Some(handler) => handler(&mut self.state, t, exit_status),
-            None => Ok(()),
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) {
+        if let Some(handler) = &mut self.exit_handler {
+            handler(&mut self.state, t, exit_status);
         }
     }
 }
