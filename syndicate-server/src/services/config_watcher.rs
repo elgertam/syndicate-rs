@@ -145,13 +145,20 @@ fn initial_scan(
             scan_file(t, path_state, env);
         } else {
             match fs::read_dir(&env.path) {
-                Ok(entries) => for er in entries {
-                    match er {
-                        Ok(e) =>
-                            initial_scan(t, path_state, config_ds, env.clone_with_path(e.path())),
-                        Err(e) =>
-                            tracing::warn!(
-                                "initial_scan: transient during scan of {:?}: {:?}", &env.path, e),
+                Ok(unsorted_entries) => {
+                    let mut entries: Vec<fs::DirEntry> = Vec::new();
+                    for er in unsorted_entries {
+                        match er {
+                            Ok(e) =>
+                                entries.push(e),
+                            Err(e) =>
+                                tracing::warn!(
+                                    "initial_scan: transient during scan of {:?}: {:?}", &env.path, e),
+                        }
+                    }
+                    entries.sort_by_key(|e| e.file_name());
+                    for e in entries {
+                        initial_scan(t, path_state, config_ds, env.clone_with_path(e.path()));
                     }
                 }
                 Err(e) => tracing::warn!("initial_scan: enumerating {:?}: {:?}", &env.path, e),
