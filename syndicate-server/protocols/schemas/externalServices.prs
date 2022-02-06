@@ -40,6 +40,9 @@ RestartPolicy =
   ; terminates abnormally, restart the whole daemon (all processes
   ; within the daemon).
   =all
+/ ; Treat both normal and abnormal termination as normal termination; that is, never restart,
+  ; and enter state "complete" even if the process fails.
+  =never
 .
 
 Protocol =

@@ -199,6 +199,7 @@ impl DaemonInstance {
                             Err(s.as_str())?
                         }
                     },
+                RestartPolicy::Never => SignalSuccessfulCompletion,
             };
 
             match error_message {
