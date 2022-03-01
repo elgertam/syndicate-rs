@@ -15,8 +15,10 @@ use syndicate::schemas::dataspace_patterns as P;
 use syndicate::schemas::sturdy;
 use syndicate::value::Map;
 use syndicate::value::NestedValue;
+use syndicate::value::NoEmbeddedDomainCodec;
 use syndicate::value::Record;
 use syndicate::value::Set;
+use syndicate::value::TextWriter;
 use syndicate::value::Value;
 
 use crate::language::language;
@@ -92,6 +94,9 @@ pub enum Expr {
     Dataspace,
     Timestamp,
     Facet,
+    Stringify {
+        expr: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +509,11 @@ impl Env {
             Expr::Dataspace => Ok(AnyValue::domain(Cap::new(&t.create(Dataspace::new(None))))),
             Expr::Timestamp => Ok(AnyValue::new(chrono::Utc::now().to_rfc3339())),
             Expr::Facet => Ok(AnyValue::domain(Cap::new(&t.create(FacetHandle::new())))),
+            Expr::Stringify { expr } => {
+                let v = self.eval_expr(t, expr)?;
+                let s = TextWriter::encode(&mut NoEmbeddedDomainCodec, &v)?;
+                Ok(AnyValue::new(s))
+            }
         }
     }
 
@@ -870,6 +880,11 @@ impl<'t> Parser<'t> {
         if self.peek() == &Value::symbol("facet") {
             self.drop();
             return Some(Expr::Facet);
+        }
+
+        if self.peek() == &Value::symbol("stringify") {
+            self.drop();
+            return Some(Expr::Stringify { expr: Box::new(self.parse_expr()?) });
         }
 
         return Some(Expr::Template{ template: self.shift() });
