@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-server"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "chrono",
  "futures",
