@@ -13,36 +13,6 @@ use preserves::value::TextWriter;
 use syndicate::language;
 use syndicate::preserves_schema::Codec;
 
-// #[derive(Subcommand, Clone, Debug)]
-// enum Key {
-//     KeyPhrase {
-//         text: String,
-//     },
-//     KeyHex {
-//         hex: String,
-//     },
-// }
-
-// #[derive(Subcommand, Clone, Debug)]
-// enum Mode {
-//     Completions {
-//         #[arg(value_enum)]
-//         dialect: Shell,
-//     },
-//     Mint {
-//         oid: String,
-//         #[command(subcommand)]
-//         key: Key,
-//     },
-// }
-
-// #[derive(Parser, Clone, Debug)]
-// #[command(version)]
-// struct CommandLine {
-//     #[command(subcommand)]
-//     command: Mode,
-// }
-
 fn cli() -> Command {
     Command::new("syndicate-macaroon")
         .subcommand_required(true)
