@@ -5,6 +5,7 @@ members = [
   "syndicate",
   "syndicate-macros",
   "syndicate-server",
+  "syndicate-tools",
   ]
 
 # [patch.crates-io]
