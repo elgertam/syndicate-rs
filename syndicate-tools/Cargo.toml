@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-tools"
-version = "0.1.0"
+version = "0.0.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
