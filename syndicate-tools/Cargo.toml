@@ -11,7 +11,7 @@ license = "Apache-2.0"
 
 [dependencies]
 preserves = "^2"
-syndicate = { path = "../syndicate", version = "^0.23.0"}
+syndicate = { path = "../syndicate", version = "^0.24.0"}
 
 clap = { version = "^4.0", features = ["derive"] }
 clap_complete = "^4.0"
