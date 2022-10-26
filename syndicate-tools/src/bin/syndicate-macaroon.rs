@@ -1,70 +1,91 @@
 use std::io;
+use std::str::FromStr;
 
-use clap::arg;
-use clap::value_parser;
 use clap::ArgGroup;
-use clap::Command;
-use clap::Id;
+use clap::CommandFactory;
+use clap::Parser;
+use clap::Subcommand;
+use clap::arg;
 use clap_complete::{generate, Shell};
 use preserves::hex::HexParser;
+use preserves::value::BytesBinarySource;
+use preserves::value::NestedValue;
 use preserves::value::NoEmbeddedDomainCodec;
+use preserves::value::Reader;
+use preserves::value::TextReader;
 use preserves::value::ViaCodec;
 use preserves::value::TextWriter;
 use syndicate::language;
 use syndicate::preserves_schema::Codec;
+use syndicate::preserves_schema::ParseError;
+use syndicate::sturdy::_Any;
 
-fn cli() -> Command {
-    Command::new("syndicate-macaroon")
-        .subcommand_required(true)
-        .subcommand(
-            Command::new("mint")
-                .about("Mint a fresh macaroon")
-                .arg(arg!(--oid <value> "Preserves value to use as SturdyRef OID").required(true))
-                .arg(arg!(--phrase <text> "Key phrase"))
-                .arg(arg!(--hex <hex> "Key bytes, encoded as hex"))
-                .group(
-                    ArgGroup::new("key")
-                        .args(["phrase", "hex"])
-                        .required(true)))
-        .subcommand(
-            Command::new("completions")
-                .about("Generate shell completions for this command")
-                .arg(arg!(<shell> "Shell dialect to generate").value_parser(value_parser!(Shell))))
+#[derive(Clone, Debug)]
+struct Preserves<N: NestedValue>(N);
+
+#[derive(Subcommand, Debug)]
+enum Action {
+    #[command(group(ArgGroup::new("key").required(true)))]
+    /// Generate a fresh SturdyRef from an OID value and a key
+    Mint {
+        #[arg(long, value_name="VALUE")]
+        /// Preserves value to use as SturdyRef OID
+        oid: Preserves<_Any>,
+
+        #[arg(long, group="key")]
+        /// Key phrase
+        phrase: Option<String>,
+
+        #[arg(long, group="key")]
+        /// Key bytes, encoded as hex
+        hex: Option<String>,
+    },
+
+    /// Emit shell completion code
+    Completions {
+        /// Shell dialect to generate
+        shell: Shell,
+    }
+}
+
+#[derive(Parser, Debug)]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    action: Action,
+}
+
+impl<N: NestedValue> FromStr for Preserves<N> {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Preserves(TextReader::new(&mut BytesBinarySource::new(s.as_bytes()),
+                                     ViaCodec::new(NoEmbeddedDomainCodec)).demand_next(false)?))
+    }
 }
 
 fn main() -> io::Result<()> {
-    let args = cli().get_matches();
+    let args = <Cli as Parser>::parse();
 
-    if let Some(args) = args.subcommand_matches("completions") {
-        let shell = args.get_one::<Shell>("shell").unwrap().clone();
-        let mut cmd = cli();
-        let name = cmd.get_name().to_string();
-        generate(shell, &mut cmd, name, &mut io::stdout());
-    }
+    match args.action {
+        Action::Completions { shell } => {
+            let mut cmd = <Cli as CommandFactory>::command();
+            let name = cmd.get_name().to_string();
+            generate(shell, &mut cmd, name, &mut io::stdout());
+        }
 
-    if let Some(args) = args.subcommand_matches("mint") {
-        let oid_str = args.get_one::<String>("oid").unwrap();
-        let oid = match preserves::value::text::from_str(&oid_str, ViaCodec::new(NoEmbeddedDomainCodec)) {
-            Ok(oid) => oid,
-            Err(e) => {
-                eprintln!("Could not parse oid: {}", e);
-                std::process::exit(1);
-            }
-        };
-        let key = match args.get_one::<Id>("key").unwrap().as_str() {
-            "hex" => {
-                let hex = args.get_one::<String>("hex").unwrap();
-                HexParser::Liberal.decode(hex).expect("hex encoded sturdyref")
-            }
-            "phrase" => {
-                let text = args.get_one::<String>("phrase").unwrap();
-                text.as_bytes().to_owned()
-            }
-            &_ => unreachable!(),
-        };
-        let m = syndicate::sturdy::SturdyRef::mint(oid, &key);
-        println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec,
-                                          &language().unparse(&m))?);
+        Action::Mint { oid, phrase, hex } => {
+            let key =
+                if let Some(hex) = hex {
+                    HexParser::Liberal.decode(&hex).expect("hex encoded sturdyref")
+                } else if let Some(phrase) = phrase {
+                    phrase.as_bytes().to_owned()
+                } else {
+                    unreachable!()
+                };
+            let m = syndicate::sturdy::SturdyRef::mint(oid.0, &key);
+            println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec,
+                                              &language().unparse(&m))?);
+        }
     }
 
     Ok(())
