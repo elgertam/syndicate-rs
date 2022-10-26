@@ -48,3 +48,6 @@ harness = false
 [[bench]]
 name = "ring"
 harness = false
+
+[package.metadata.workspaces]
+independent = true

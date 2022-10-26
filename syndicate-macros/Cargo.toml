@@ -22,3 +22,6 @@ syn = "^1.0"
 [dev-dependencies]
 tokio = { version = "1.10", features = ["io-std"] }
 tracing = "0.1"
+
+[package.metadata.workspaces]
+independent = true
