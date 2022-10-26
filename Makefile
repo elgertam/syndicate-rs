@@ -11,22 +11,15 @@ test:
 test-all:
 	cargo test --all-targets
 
-# Try
-#
-#   make release-minor
-#
-# to check things, and
-#
-#   make release-minor RELEASE_DRY_RUN=
-#
-# to do things for real.
+ws-bump:
+	cargo workspaces version \
+		--no-global-tag \
+		--individual-tag-prefix '%nv' \
+		--allow-branch 'main'
 
-RELEASE_DRY_RUN=--dry-run
-release-%:
-	PUBLISH_GRACE_SLEEP=15 cargo release \
-		$(RELEASE_DRY_RUN) \
-		-vv --no-dev-version --exclude-unchanged \
-		$*
+ws-publish:
+	cargo workspaces publish \
+		--from-git
 
 pull-protocols:
 	git subtree pull -P syndicate/protocols \
