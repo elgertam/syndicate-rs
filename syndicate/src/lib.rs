@@ -61,3 +61,18 @@ pub fn convenient_logging() -> Result<(), Box<dyn std::error::Error>> {
 preserves_schema::define_language!(language(): Language<actor::AnyValue> {
     syndicate: schemas::Language,
 });
+
+#[cfg(test)]
+mod protocol_test {
+    use crate::*;
+    use preserves::value::{BytesBinarySource, BinarySource, IOValueDomainCodec, ViaCodec, IOValue};
+    use preserves_schema::Deserialize;
+
+    #[test] fn decode_sync() {
+        let input_str = "[[2 <sync #![0 11]>]]";
+        let mut src = BytesBinarySource::new(input_str.as_bytes());
+        let mut r = src.text::<IOValue, _>(ViaCodec::new(IOValueDomainCodec));
+        let packet: schemas::protocol::Packet<IOValue> = schemas::protocol::Packet::deserialize(&mut r).unwrap();
+        println!("{:?}", packet);
+    }
+}
