@@ -395,7 +395,7 @@ impl TunnelRelay {
                                 peer: Arc::clone(&peer),
                                 pins,
                             });
-                            t.sync(&peer.underlying, k);
+                            target.sync(t, k);
                         }
                     }
                 }
