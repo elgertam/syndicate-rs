@@ -58,6 +58,11 @@ pub fn convenient_logging() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Retrieve the version of the Syndicate crate.
+pub fn syndicate_package_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 preserves_schema::define_language!(language(): Language<actor::AnyValue> {
     syndicate: schemas::Language,
 });

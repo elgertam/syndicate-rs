@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!(r"{}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
         eprintln!(r"                  /____/");
         eprintln!(r"");
-        eprintln!(r" {}version {}{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), NORMAL);
+        eprintln!(r" {}version {} [syndicate {}]{}", BRIGHT_YELLOW, env!("CARGO_PKG_VERSION"), syndicate::syndicate_package_version(), NORMAL);
         eprintln!(r"");
         eprintln!(r" documentation & reference material: https://syndicate-lang.org/");
         eprintln!(r" source code & bugs: https://git.syndicate-lang.org/syndicate-lang/syndicate-rs");
