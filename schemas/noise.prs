@@ -1,28 +1,28 @@
 version 1 .
 
-; Noise_IK_25519_XSalsa20Poly1305_SHA512
-; Noise_NK_25519_XSalsa20Poly1305_SHA512
-;
-; Most noise instantiations use ChaChaPoly (or AESGCM) but because e.g. tweetnacl offers
-; XSalsa20 instead of ChaCha, I think I'll go with that.
+; Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s, just like Wireguard
+; Noise_NKpsk2_25519_ChaChaPoly_BLAKE2s
 
-; IK:
+; - ephemeral public keys are 32 bytes
+; - pre-shared-keys (PSKs) are 32 bytes
+; - authentication tags (on each AEAD encrypted payload) are 16 bytes each
+
+; IKpsk2:
 ;   <- s                    (for us, the object's static key is in the cap ref)
 ;   ...
 ;   -> e, es, s, ss
-;   <- e, ee, se
+;   <- e, ee, se, psk
 ;
-; NK:
+; NKpsk2:
 ;   <- s                    (for us, the object's static key is in the cap ref)
 ;   ...
 ;   -> e, es
-;   <- e, ee
-;
-; NKpsk2, IKpsk2
+;   <- e, ee, psk
 
 ; Assertion. Handshake is an ephemeral public key followed by either an encrypted public-key
 ; (IK) or an encrypted empty payload (NK).
 Connect = <connect @handshake bytes @initiatorSession #!any> .
 
-; Assertion (to initiatorSession). Handshake is an encrypted ephemeral public key.
+; Assertion (to initiatorSession). Handshake is an encrypted ephemeral public key followed by a
+; (differently-)encrypted PSK (which may be all zeros when no PSK is relevant).
 Accept = <accept @handshake bytes @responderSession #!any> .
