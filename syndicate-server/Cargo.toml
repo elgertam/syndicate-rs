@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-server"
-version = "0.27.1"
+version = "0.28.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
@@ -11,12 +11,12 @@ license = "Apache-2.0"
 
 [build-dependencies]
 preserves-schema = "3.0"
-syndicate = { path = "../syndicate", version = "0.24"}
+syndicate = { path = "../syndicate", version = "0.25.0"}
 
 [dependencies]
 preserves-schema = "3.0"
-syndicate = { path = "../syndicate", version = "0.24"}
-syndicate-macros = { path = "../syndicate-macros", version = "0.19"}
+syndicate = { path = "../syndicate", version = "0.25.0"}
+syndicate-macros = { path = "../syndicate-macros", version = "0.20.0"}
 
 chrono = "0.4"
 futures = "0.3"
