@@ -16,7 +16,7 @@ vendored-openssl = ["openssl/vendored"]
 preserves-schema = "3.0"
 
 [dependencies]
-preserves = "2.4"
+preserves = "3.0"
 preserves-schema = "3.0"
 
 tokio = { version = "1.10", features = ["io-util", "macros", "rt", "rt-multi-thread", "time"] }
