@@ -1,0 +1,28 @@
+version 1 .
+
+; Noise_IK_25519_XSalsa20Poly1305_SHA512
+; Noise_NK_25519_XSalsa20Poly1305_SHA512
+;
+; Most noise instantiations use ChaChaPoly (or AESGCM) but because e.g. tweetnacl offers
+; XSalsa20 instead of ChaCha, I think I'll go with that.
+
+; IK:
+;   <- s                    (for us, the object's static key is in the cap ref)
+;   ...
+;   -> e, es, s, ss
+;   <- e, ee, se
+;
+; NK:
+;   <- s                    (for us, the object's static key is in the cap ref)
+;   ...
+;   -> e, es
+;   <- e, ee
+;
+; NKpsk2, IKpsk2
+
+; Assertion. Handshake is an ephemeral public key followed by either an encrypted public-key
+; (IK) or an encrypted empty payload (NK).
+Connect = <connect @handshake bytes @initiatorSession #!any> .
+
+; Assertion (to initiatorSession). Handshake is an encrypted ephemeral public key.
+Accept = <accept @handshake bytes @responderSession #!any> .
