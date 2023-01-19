@@ -1,28 +1,55 @@
 version 1 .
 
-; Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s, just like Wireguard
-; Noise_NKpsk2_25519_ChaChaPoly_BLAKE2s
+; https://noiseprotocol.org/
 
-; - ephemeral public keys are 32 bytes
-; - pre-shared-keys (PSKs) are 32 bytes
-; - authentication tags (on each AEAD encrypted payload) are 16 bytes each
+; Assertion.
+Connect = <connect @serviceSelector any @initiatorSession #!any> .
 
-; IKpsk2:
-;   <- s                    (for us, the object's static key is in the cap ref)
-;   ...
-;   -> e, es, s, ss
-;   <- e, ee, se, psk
+; Assertion (to initiatorSession).
+Accept = <accept @responderSession #!any> .
+
+; Sessions proceed by sending Packets to the initiatorSession and responderSession according to
+; the Noise protocol definition. Each Packet represents a complete logical unit of
+; communication; for example, a complete Turn when layering the Syndicate protocol over Noise.
+; Note well the restriction on Noise messages: no individual complete packet or packet fragment
+; may exceed 65535 bytes (N.B. not 65536!). When `fragmented`, each portion of a Packet is a
+; complete Noise "transport message"; when `complete`, the whole thing is likewise a complete
+; "transport message".
+Packet = @complete bytes / @fragmented [bytes ...] .
+
+; When layering Syndicate protocol over noise,
 ;
-; NKpsk2:
-;   <- s                    (for us, the object's static key is in the cap ref)
-;   ...
-;   -> e, es
-;   <- e, ee, psk
+;  - protocol.Packets MUST be encoded using the machine-oriented Preserves syntax
+;  - zero or more Turns are permitted per noise.Packet
+;  - each Turn must fit inside a single noise.Packet (fragment if needed)
+;  - payloads inside a noise.Packet may be padded at the end with byte 0x80 (128), which
+;    encodes `#f` in the machine-oriented Preserves syntax.
+;
+; In summary, each noise.Packet, once (reassembled and) decrypted, will be a sequence of zero
+; or more machine-encoded protocol.Packets, followed by zero or more 0x80 bytes.
 
-; Assertion. Handshake is an ephemeral public key followed by either an encrypted public-key
-; (IK) or an encrypted empty payload (NK).
-Connect = <connect @handshake bytes @initiatorSession #!any> .
+Endpoint = <noise @spec EndpointSpec> .
+EndpointSpec = {
+  ; Possible transports, in preference order. Could contain e.g. transportAddress.Tcp values or
+  ; similar. These are just suggestions; it's quite possible the endpoint is reachable by some
+  ; means not listed.
+  transports: [any ...]
+  ; The responder's static public key. If not required (uncommon!), supply the empty ByteString.
+  key: bytes
+}
+& @protocol EndpointProtocol
+& @ref EndpointRef
+& @preSharedKeys EndpointPreSharedKeys
+.
 
-; Assertion (to initiatorSession). Handshake is an encrypted ephemeral public key followed by a
-; (differently-)encrypted PSK (which may be all zeros when no PSK is relevant).
-Accept = <accept @handshake bytes @responderSession #!any> .
+; If absent, a default of DefaultProtocol is used. Most endpoints will speak the default.
+EndpointProtocol = @present { protocol: string } / @invalid { protocol: any } / @absent {} .
+DefaultProtocol = "Noise_NK_25519_ChaChaPoly_BLAKE2s" .
+
+; If present, OID 0 at the responder end is a Gatekeeper, and the named ref should be resolvable.
+; If absent, OID 0 at the responder directly denotes the entity of interest.
+EndpointRef = @present { ref: sturdy.SturdyRef } / @invalid { ref: any } / @absent {} .
+
+; If present, Noise pre-shared-keys (PSKs) are drawn from the sequence as required; if the
+; sequence is exhausted or not supplied, an all-zeros key is used each time a PSK is needed.
+EndpointPreSharedKeys = @present { preSharedKeys: [bytes ...] } / @invalid { preSharedKeys: any } / @absent {} .
