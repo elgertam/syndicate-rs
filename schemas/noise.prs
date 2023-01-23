@@ -19,6 +19,7 @@ Packet = @complete bytes / @fragmented [bytes ...] .
 
 ; When layering Syndicate protocol over noise,
 ;
+;  - the canonical encoding of the serviceSelector is the prologue
 ;  - protocol.Packets MUST be encoded using the machine-oriented Preserves syntax
 ;  - zero or more Turns are permitted per noise.Packet
 ;  - each Turn must fit inside a single noise.Packet (fragment if needed)
