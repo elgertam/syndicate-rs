@@ -1,0 +1,66 @@
+version 1 .
+
+; https://noiseprotocol.org/
+
+; Assertion.
+Connect = <connect @serviceSelector any @initiatorSession #!any> .
+
+; Assertion (to initiatorSession).
+Accept = <accept @responderSession #!any> .
+
+; Sessions proceed by sending Packets to the initiatorSession and responderSession according to
+; the Noise protocol definition. Each Packet represents a complete logical unit of
+; communication; for example, a complete Turn when layering the Syndicate protocol over Noise.
+; Note well the restriction on Noise messages: no individual complete packet or packet fragment
+; may exceed 65535 bytes (N.B. not 65536!). When `fragmented`, each portion of a Packet is a
+; complete Noise "transport message"; when `complete`, the whole thing is likewise a complete
+; "transport message".
+Packet = @complete bytes / @fragmented [bytes ...] .
+
+; When layering Syndicate protocol over noise,
+;
+;  - the canonical encoding of the serviceSelector is the prologue
+;  - protocol.Packets MUST be encoded using the machine-oriented Preserves syntax
+;  - zero or more Turns are permitted per noise.Packet
+;  - each Turn must fit inside a single noise.Packet (fragment if needed)
+;  - payloads inside a noise.Packet may be padded at the end with byte 0x80 (128), which
+;    encodes `#f` in the machine-oriented Preserves syntax.
+;
+; In summary, each noise.Packet, once (reassembled and) decrypted, will be a sequence of zero
+; or more machine-encoded protocol.Packets, followed by zero or more 0x80 bytes.
+
+; A `Route` describes a network path that can be followed to reach some target entity.
+;
+; It starts with zero or more possible non-Syndicate `transports`, in preference order. These
+; could be `transportAddress.Tcp` values or similar. They are just suggestions; it's quite
+; possible the endpoint is reachable by some means not listed. The network outside Syndicate
+; is, after all, pretty diverse! In particular, *zero* `transports` may be provided, in which
+; case some out-of-band means has to be used to make that first connection.
+;
+; The `transports` give instructions for contacting the first entity in the `Route` path. Often
+; this will be a `gatekeeper`, or a `noise` protocol endpoint, or both. Occasionally, it may
+; even be the desired target entity. Subsequent `steps` describe how to proceed from the
+; initial entity to the target.
+Route = <route @transports [any ...] @steps RouteStep ...> .
+RouteStep = NoiseStep / GatekeeperStep .
+
+GatekeeperStep = sturdy.SturdyRef .
+
+NoiseStep = <noise @spec NoiseSpec> .
+NoiseSpec = {
+  ; The `serviceSelector` to use in a `Connect`.
+  service: any,
+  ; The responder's static public key. If not required (uncommon!), supply the empty ByteString.
+  key: bytes,
+}
+& @protocol NoiseProtocol
+& @preSharedKeys NoisePreSharedKeys
+.
+
+; If absent, a default of DefaultProtocol is used. Most services will speak the default.
+NoiseProtocol = @present { protocol: string } / @invalid { protocol: any } / @absent {} .
+DefaultProtocol = "Noise_NK_25519_ChaChaPoly_BLAKE2s" .
+
+; If present, Noise pre-shared-keys (PSKs) are drawn from the sequence as required; if the
+; sequence is exhausted or not supplied, an all-zeros key is used each time a PSK is needed.
+NoisePreSharedKeys = @present { preSharedKeys: [bytes ...] } / @invalid { preSharedKeys: any } / @absent {} .

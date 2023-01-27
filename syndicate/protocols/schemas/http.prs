@@ -1,0 +1,51 @@
+version 1 .
+
+; Assertion in driver DS
+; Causes creation of server and route
+HttpBinding = <http-bind @host HostPattern @port int @method MethodPattern @path PathPattern @handler #!HttpRequest> .
+
+; Assertion in driver DS
+; Describes active server and route
+HttpService = <http-service @host HostPattern @port int @method MethodPattern @path PathPattern> .
+
+; Assertion in driver DS
+; Describes active listener
+HttpListener = <http-listener @port int> .
+
+HostPattern = @host string / @any #f .
+PathPattern = [PathPatternElement ...] .
+PathPatternElement = @label string / @wildcard =_ / @rest =... .
+
+MethodPattern = @any #f / @specific @"Lowercase" symbol .
+
+; Assertion in driver DS
+HttpRequest = <http-request
+               @sequenceNumber int
+               @host string
+               @port int
+               @method @"Lowercase" symbol
+               @path [string ...]
+               @headers Headers
+               @query {symbol: [QueryValue ...] ...:...}
+               @body RequestBody> .
+
+Headers = {@"Lowercase" symbol: string ...:...} .
+QueryValue = @string string / <file @filename string @headers Headers @body bytes> .
+RequestBody = @present bytes / @absent #f .
+
+; Assertion to handler entity
+HttpContext = <request @req HttpRequest @res #!HttpResponse> .
+
+@<TODO "trailers?">
+; Messages
+HttpResponse =
+/ <status @code int @message string>
+/ <header @name symbol @value string>
+/ <chunk @chunk Chunk>
+/ <done @chunk Chunk>
+.
+
+Chunk = @string string / @bytes bytes .
+
+; e.g. text/plain, text/html, application/json
+MimeType = symbol .
