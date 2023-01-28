@@ -133,7 +133,7 @@ mod pattern_plugin {
                 SimplePattern::Lit { value } => Some(lift_literal(&from_io(value)?)),
                 SimplePattern::Ref(r) => s.cycle_check(
                     r,
-                    |ctxt, r| ctxt.bundle.lookup_definition(r),
+                    |ctxt, r| ctxt.bundle.lookup_definition(r).map(|v| v.0),
                     |s, d| d.and_then(|d| d.wc(s)).or_else(|| Some(discard())),
                     || Some(discard())),
             }
@@ -169,8 +169,19 @@ fn main() -> std::io::Result<()> {
                             "syndicate::schemas::transport_address")
             .set_fallback_language_types(
                 |v| vec![format!("syndicate::schemas::Language<{}>", v)].into_iter().collect()));
+    c.add_external_module(
+        ExternalModule::new(vec!["gatekeeper".to_owned()], "syndicate::schemas::gatekeeper")
+            .set_fallback_language_types(
+                |v| vec![format!("syndicate::schemas::Language<{}>", v)].into_iter().collect())
+    );
+    c.add_external_module(
+        ExternalModule::new(vec!["noise".to_owned()], "syndicate::schemas::noise")
+            .set_fallback_language_types(
+                |v| vec![format!("syndicate::schemas::Language<{}>", v)].into_iter().collect())
+    );
 
     let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
-    c.load_schemas_and_bundles(&inputs)?;
+    let xref = expand_inputs(&vec!["../syndicate/protocols/schema-bundle.bin".to_owned()])?;
+    c.load_schemas_and_bundles(&inputs, &xref)?;
     compile(&c)
 }

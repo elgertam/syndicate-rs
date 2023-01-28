@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::during::DuringResult;
-use syndicate::schemas::gatekeeper;
 use syndicate::value::NestedValue;
+use syndicate::schemas::gatekeeper;
 
 use crate::language::language;
+use crate::schemas::gatekeeper_mux::{Api, NoiseService};
 
 // pub fn bind(
 //     t: &mut Activation,
@@ -21,7 +22,18 @@ use crate::language::language;
 //     ds.assert(t, language(), &gatekeeper::Bind { oid, key: key.to_vec(), target });
 // }
 
-pub fn handle_resolve(
+pub fn handle_assertion(
+    ds: &mut Arc<Cap>,
+    t: &mut Activation,
+    a: Api<AnyValue>,
+) -> DuringResult<Arc<Cap>> {
+    match a {
+        Api::Resolve(resolve_box) => handle_resolve(ds, t, *resolve_box),
+        Api::Connect(_) => todo!(),
+    }
+}
+
+fn handle_resolve(
     ds: &mut Arc<Cap>,
     t: &mut Activation,
     a: gatekeeper::Resolve,

@@ -30,6 +30,7 @@ mod schemas {
     include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
 }
 
+use language::Language;
 use language::language;
 use schemas::internal_services;
 
@@ -107,9 +108,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }));
         }
 
-        let gatekeeper = Cap::guard(Arc::clone(&language().syndicate), t.create(
+        let gatekeeper = Cap::guard(Arc::clone(Language::arc()), t.create(
             syndicate::entity(Arc::clone(&server_config_ds))
-                .on_asserted(gatekeeper::handle_resolve)));
+                .on_asserted(gatekeeper::handle_assertion)));
 
         let mut env = Map::new();
         env.insert("config".to_owned(), AnyValue::domain(Arc::clone(&server_config_ds)));

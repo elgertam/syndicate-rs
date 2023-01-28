@@ -33,7 +33,7 @@ impl Dataspace {
     /// Construct a new, empty dataspace.
     pub fn new(name: Name) -> Self {
         Self {
-            name: name,
+            name,
             index: skeleton::Index::new(),
             handle_map: Map::new(),
         }

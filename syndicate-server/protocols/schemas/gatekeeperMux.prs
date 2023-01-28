@@ -1,0 +1,5 @@
+version 1 .
+
+API = gatekeeper.Resolve / noise.Connect .
+
+NoiseService = <noise @serviceSelector any @responderListener #!noise.Connect> .
