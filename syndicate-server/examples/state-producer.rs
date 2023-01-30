@@ -15,7 +15,7 @@ pub struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ActorResult {
     syndicate::convenient_logging()?;
     let config = Config::from_args();
     let sturdyref = sturdy::SturdyRef::from_hex(&config.dataspace)?;

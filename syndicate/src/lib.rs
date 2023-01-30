@@ -38,7 +38,7 @@ pub use during::entity;
 /// Sets up [`tracing`] logging in a reasonable way.
 ///
 /// Useful at the top of `main` functions.
-pub fn convenient_logging() -> Result<(), Box<dyn std::error::Error>> {
+pub fn convenient_logging() -> actor::ActorResult {
     let filter = match std::env::var(tracing_subscriber::filter::EnvFilter::DEFAULT_ENV) {
         Err(std::env::VarError::NotPresent) =>
             tracing_subscriber::filter::EnvFilter::default()

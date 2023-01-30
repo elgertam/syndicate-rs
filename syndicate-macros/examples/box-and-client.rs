@@ -6,7 +6,7 @@ use syndicate::schemas::dataspace::Observe;
 use syndicate::value::NestedValue;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ActorResult {
     syndicate::convenient_logging()?;
     Actor::top(None, |t| {
         let ds = Cap::new(&t.create(Dataspace::new(None)));

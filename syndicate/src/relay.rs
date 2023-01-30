@@ -313,7 +313,7 @@ impl TunnelRelay {
                 tracing::info!(message = ?b.message.clone(),
                                detail = ?b.detail.clone(),
                                "received Error from peer");
-                Err(*b)
+                Err(*b)?
             }
             P::Packet::Turn(b) => {
                 let P::Turn(events) = *b;
@@ -338,7 +338,7 @@ impl TunnelRelay {
                                 &mut |r| Ok(pins.push(self.membranes.lookup_ref(r))))?;
                             if let Some(local_handle) = target.assert(t, &(), &a) {
                                 if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, pins)) {
-                                    return Err(error("Assertion with duplicate handle", AnyValue::new(false)));
+                                    return Err(error("Assertion with duplicate handle", AnyValue::new(false)))?;
                                 }
                             } else {
                                 self.membranes.release(pins);
@@ -348,7 +348,7 @@ impl TunnelRelay {
                         P::Event::Retract(b) => {
                             let P::Retract { handle: remote_handle } = *b;
                             let (local_handle, previous_pins) = match self.inbound_assertions.remove(&remote_handle) {
-                                None => return Err(error("Retraction of nonexistent handle", language().unparse(&remote_handle))),
+                                None => return Err(error("Retraction of nonexistent handle", language().unparse(&remote_handle)))?,
                                 Some(wss) => wss,
                             };
                             self.membranes.release(previous_pins);
@@ -715,7 +715,7 @@ async fn output_loop(
 }
 
 impl Entity<()> for TunnelRefEntity {
-    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) {
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ExitStatus>) {
         if let Err(e) = &**exit_status {
             let e = e.clone();
             let mut g = self.relay_ref.lock();

@@ -59,7 +59,7 @@ struct ServerConfig {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ActorResult {
     let config = Arc::new(ServerConfig::from_args());
 
     syndicate::convenient_logging()?;

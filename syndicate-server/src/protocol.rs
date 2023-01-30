@@ -19,7 +19,7 @@ use tungstenite::Message;
 struct ExitListener;
 
 impl Entity<()> for ExitListener {
-    fn exit_hook(&mut self, _t: &mut Activation, exit_status: &Arc<ActorResult>) {
+    fn exit_hook(&mut self, _t: &mut Activation, exit_status: &Arc<ExitStatus>) {
         tracing::info!(?exit_status, "disconnect");
     }
 }

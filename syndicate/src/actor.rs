@@ -82,8 +82,14 @@ pub type FieldId = NonZeroU64;
 /// The type of process-unique field observer block IDs.
 pub type BlockId = NonZeroU64;
 
+/// Error responses to events must have type `ActorError`.
+pub type ActorError = Box<dyn std::error::Error + Sync + Send + 'static>;
+
 /// Responses to events must have type `ActorResult`.
-pub type ActorResult = Result<(), Error>;
+pub type ActorResult = Result<(), ActorError>;
+
+/// Final exit status of an actor.
+pub type ExitStatus = Result<(), Error>;
 
 /// The [`Actor::boot`] method returns an `ActorHandle`, representing
 /// the actor's mainloop task.
@@ -207,7 +213,7 @@ pub trait Entity<M>: Send {
     /// [RunningActor::add_exit_hook].
     ///
     /// The default implementation does nothing.
-    fn exit_hook(&mut self, turn: &mut Activation, exit_status: &Arc<ActorResult>) {
+    fn exit_hook(&mut self, turn: &mut Activation, exit_status: &Arc<ExitStatus>) {
     }
 }
 
@@ -352,7 +358,7 @@ pub enum ActorState {
     Terminated {
         /// The exit status of the actor: `Ok(())` for normal
         /// termination, `Err(_)` for abnormal termination.
-        exit_status: Arc<ActorResult>,
+        exit_status: Arc<ExitStatus>,
     },
 }
 
@@ -368,7 +374,7 @@ pub struct RunningActor {
     #[doc(hidden)]
     pub fields: HashMap<FieldId, Box<dyn Any + Send>>,
     blocks: HashMap<BlockId, (FacetId, Block)>,
-    exit_hooks: Vec<Box<dyn Send + FnOnce(&mut Activation, &Arc<ActorResult>)>>,
+    exit_hooks: Vec<Box<dyn Send + FnOnce(&mut Activation, &Arc<ExitStatus>)>>,
     #[doc(hidden)]
     pub outbound_assertions: OutboundAssertions,
     #[doc(hidden)]
@@ -665,7 +671,7 @@ impl FacetRef {
                 match maybe_exit_status {
                     None => true,
                     Some(exit_status) => {
-                        g.terminate(exit_status, &self.actor, &account.trace_collector);
+                        g.terminate(exit_status.map_err(|e| e.into()), &self.actor, &account.trace_collector);
                         false
                     }
                 }
@@ -1253,7 +1259,7 @@ impl<'activation> Activation<'activation> {
     pub fn facet<F: FnOnce(&mut Activation) -> ActorResult>(
         &mut self,
         boot: F,
-    ) -> Result<FacetId, Error> {
+    ) -> Result<FacetId, ActorError> {
         let f = Facet::new(Some(self.facet.facet_id));
         self.trace(|t| trace::ActionDescription::FacetStart {
             path: t.facet_ids_for(&f).iter().map(|i| trace::FacetId(AnyValue::new(u64::from(*i)))).collect(),
@@ -1502,7 +1508,7 @@ impl<'activation> Activation<'activation> {
         Ok(())
     }
 
-    fn repair_dataflow(&mut self) -> Result<bool, Error> {
+    fn repair_dataflow(&mut self) -> Result<bool, ActorError> {
         let mut pass_number = 0;
         while !self.state.dataflow.is_clean() {
             pass_number += 1;
@@ -1688,8 +1694,8 @@ fn send_actions(
     t: PendingEventQueue,
 ) -> ActorResult {
     let token_count = t.len();
-    tx.send(SystemMessage::Turn(caused_by, LoanedItem::new(account, token_count, t)))
-        .map_err(|_| error("Target actor not running", AnyValue::new(false)))
+    Ok(tx.send(SystemMessage::Turn(caused_by, LoanedItem::new(account, token_count, t)))
+       .map_err(|_| error("Target actor not running", AnyValue::new(false)))?)
 }
 
 impl std::fmt::Debug for Mailbox {
@@ -1836,7 +1842,7 @@ impl Actor {
         let root_facet_ref = self.ac_ref.root_facet_ref();
 
         let terminate = |e: Error | {
-            assert!(!root_facet_ref.activate(&Account::new(None, None), None, |_| Err(e)));
+            assert!(!root_facet_ref.activate(&Account::new(None, None), None, |_| Err(e)?));
         };
 
         if !root_facet_ref.activate(&boot_account, boot_cause, boot) {
@@ -1940,7 +1946,7 @@ impl ActorRef {
     pub fn exit_status(&self) -> Option<ActorResult> {
         self.access(|state| match state {
             ActorState::Running(_) => None,
-            ActorState::Terminated { exit_status } => Some((**exit_status).clone()),
+            ActorState::Terminated { exit_status } => Some((**exit_status).clone().map_err(|e| e.into())),
         })
     }
 
@@ -1979,7 +1985,7 @@ impl ActorState {
 
     fn terminate(
         &mut self,
-        exit_status: ActorResult,
+        exit_status: ExitStatus,
         actor: &ActorRef,
         trace_collector: &Option<trace::TraceCollector>,
     ) {
@@ -2076,7 +2082,7 @@ impl RunningActor {
     fn cleanup(
         mut self,
         ac_ref: &ActorRef,
-        exit_status: Arc<ActorResult>,
+        exit_status: Arc<ExitStatus>,
         trace_collector: Option<trace::TraceCollector>,
     ) {
         if exit_status.is_ok() {
@@ -2250,7 +2256,7 @@ impl Cap {
         Self::new(&Arc::new(Ref {
             mailbox: Arc::clone(&underlying.mailbox),
             facet_id: underlying.facet_id,
-            target: Mutex::new(Some(Box::new(Guard { underlying: underlying, literals }))),
+            target: Mutex::new(Some(Box::new(Guard { underlying, literals }))),
         }))
     }
 
@@ -2378,7 +2384,7 @@ where
     fn stop(&mut self, t: &mut Activation) -> ActorResult {
         t.with_entity(&self.underlying, |t, e| e.stop(t))
     }
-    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ActorResult>) {
+    fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ExitStatus>) {
         self.underlying.internal_with_entity(|e| e.exit_hook(t, exit_status))
     }
 }

@@ -73,3 +73,21 @@ impl From<preserves::error::Error> for Error {
         error(&format!("{}", v), AnyValue::new(false))
     }
 }
+
+impl From<Box<dyn std::error::Error>> for Error {
+    fn from(v: Box<dyn std::error::Error>) -> Self {
+        match v.downcast::<Error>() {
+            Ok(e) => *e,
+            Err(v) => error(&format!("{}", v), AnyValue::new(false)),
+        }
+    }
+}
+
+impl From<Box<dyn std::error::Error + Send + Sync + 'static>> for Error {
+    fn from(v: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
+        match v.downcast::<Error>() {
+            Ok(e) => *e,
+            Err(v) => error(&format!("{}", v), AnyValue::new(false)),
+        }
+    }
+}
