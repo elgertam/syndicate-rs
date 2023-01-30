@@ -21,8 +21,9 @@ syndicate-macros = { path = "../syndicate-macros", version = "0.20.0"}
 chrono = "0.4"
 futures = "0.3"
 lazy_static = "1.4"
+noise-protocol = "0.1"
+noise-rust-crypto = "0.5"
 notify = "4.0"
-snow = "0.9"
 structopt = "0.3"
 
 tungstenite = "0.13"
