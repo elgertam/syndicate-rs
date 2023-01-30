@@ -108,7 +108,7 @@ async fn main() -> ActorResult {
             }));
         }
 
-        let gatekeeper = Cap::guard(Arc::clone(Language::arc()), t.create(
+        let gatekeeper = Cap::guard(Language::arc(), t.create(
             syndicate::entity(Arc::clone(&server_config_ds))
                 .on_asserted(gatekeeper::handle_assertion)));
 

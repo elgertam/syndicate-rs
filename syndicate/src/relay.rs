@@ -761,7 +761,7 @@ impl Entity<AnyValue> for RelayEntity {
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
         self.relay_ref.lock().as_mut().expect("initialized")
             .send_event(t, self.oid.clone(), P::Event::Sync(Box::new(P::Sync {
-                peer: Cap::guard(Arc::new(()), peer)
+                peer: Cap::guard(&Arc::new(()), peer)
             })))
     }
 }

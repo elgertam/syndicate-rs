@@ -2246,13 +2246,14 @@ impl Cap {
     /// `Cap` automatically decodes presented `AnyValue`s into
     /// instances of `M`.
     pub fn guard<L: 'static + Sync + Send, M: 'static + Send>(
-        literals: Arc<L>,
+        literals: &Arc<L>,
         underlying: Arc<Ref<M>>,
     ) -> Arc<Self>
     where
         M: for<'a> Unparse<&'a L, AnyValue>,
         M: for<'a> Parse<&'a L, AnyValue>,
     {
+        let literals = Arc::clone(literals);
         Self::new(&Arc::new(Ref {
             mailbox: Arc::clone(&underlying.mailbox),
             facet_id: underlying.facet_id,
