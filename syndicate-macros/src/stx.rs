@@ -126,7 +126,7 @@ fn skip_commas(mut c: Cursor) -> Cursor {
     }
 }
 
-fn parse_group_inner<'c, R, F: Fn(Cursor<'c>) -> Result<(R, Cursor<'c>)>>(
+fn parse_group<'c, R, F: Fn(Cursor<'c>) -> Result<(R, Cursor<'c>)>>(
     mut c: Cursor<'c>,
     f: F,
     after: Cursor<'c>,
@@ -141,15 +141,6 @@ fn parse_group_inner<'c, R, F: Fn(Cursor<'c>) -> Result<(R, Cursor<'c>)>>(
         stxs.push(stx);
         c = next;
     }
-}
-
-fn parse_group<'c, R, F: Fn(Cursor<'c>) -> Result<(R, Cursor<'c>)>>(
-    d: Delimiter,
-    f: F,
-    c: Cursor<'c>,
-) -> Result<(Vec<R>, Cursor<'c>)> {
-    let (inner, _, after) = c.group(d).unwrap();
-    parse_group_inner(inner, f, after)
 }
 
 fn parse_kv(c: Cursor) -> Result<((Stx, Stx), Cursor)> {
@@ -208,8 +199,6 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
             } else {
                 Ok((Stx::Rec(Box::new(q.remove(0)), q), c))
             }),
-            '{' => parse_group(Delimiter::Brace, parse_kv, c).map(|(q,c)| (Stx::Dict(q),c)),
-            '[' => parse_group(Delimiter::Bracket, parse1, c).map(|(q,c)| (Stx::Seq(q),c)),
             '$' => {
                 let (maybe_id, next) = adjacent_ident(p.span().end(), next);
                 let (maybe_type, next) = if let Some((':', next)) = punct_char(next) {
@@ -229,7 +218,7 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
             }
             '#' => {
                 if let Some((inner, _, next)) = next.group(Delimiter::Brace) {
-                    parse_group_inner(inner, parse1, next).map(|(q,c)| (Stx::Set(q),c))
+                    parse_group(inner, parse1, next).map(|(q,c)| (Stx::Set(q),c))
                 } else if let Some((inner, _, next)) = next.group(Delimiter::Parenthesis) {
                     Ok((Stx::Subst(inner.token_stream()), next))
                 } else if let Some((tt, next)) = next.token_tree() {
@@ -267,6 +256,10 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
             Lit::Verbatim(_) => return Err(Error::new(c.span(), "Verbatim literals not supported")),
         };
         Ok((Stx::Atom(v), next))
+    } else if let Some((inner, _, after)) = c.group(Delimiter::Brace) {
+        parse_group(inner, parse_kv, after).map(|(q,c)| (Stx::Dict(q),c))
+    } else if let Some((inner, _, after)) = c.group(Delimiter::Bracket) {
+        parse_group(inner, parse1, after).map(|(q,c)| (Stx::Seq(q),c))
     } else {
         Err(Error::new(c.span(), "Unexpected input"))
     }
