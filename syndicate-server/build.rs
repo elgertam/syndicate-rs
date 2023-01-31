@@ -181,7 +181,7 @@ fn main() -> std::io::Result<()> {
     );
 
     let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
-    let xref = expand_inputs(&vec!["../syndicate/protocols/schema-bundle.bin".to_owned()])?;
-    c.load_schemas_and_bundles(&inputs, &xref)?;
+    c.load_schemas_and_bundles(&inputs, &vec![])?;
+    c.load_xref_bin("syndicate", syndicate::schemas::_bundle())?;
     compile(&c)
 }
