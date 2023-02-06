@@ -1,18 +1,15 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-; Each Attenuation is a stage. The sequence of Attenuations is run RIGHT-TO-LEFT.
-; That is, the newest Attenuations are at the right.
-SturdyRef = <ref @oid any @caveatChain [Attenuation ...] @sig bytes>.
-
-; An individual Attenuation is run RIGHT-TO-LEFT.
+; The sequence of Caveats is run RIGHT-TO-LEFT.
 ; That is, the newest Caveats are at the right.
-Attenuation = [Caveat ...].
+SturdyRef = <ref @oid any @caveatChain [Caveat ...] @sig bytes>.
 
 ; embodies 1st-party caveats over assertion structure, but nothing else
 ; can add 3rd-party caveats and richer predicates later
-Caveat = Rewrite / Alts .
-Rewrite = <rewrite @pattern Pattern @template Template>.
+Caveat = Rewrite / Alts / Reject /@unknown any .
+Rewrite = <rewrite @pattern Pattern @template Template> .
+Reject = <reject @pattern Pattern> .
 Alts = <or @alternatives [Rewrite ...]>.
 
 Oid = int .
@@ -35,7 +32,7 @@ PCompound =
     / @dict <dict @entries { any: Pattern ...:... }> .
 
 Template = TAttenuate / TRef / Lit / TCompound .
-TAttenuate = <attenuate @template Template @attenuation Attenuation>.
+TAttenuate = <attenuate @template Template @attenuation [Caveat ...]>.
 TRef = <ref @binding int>.
 TCompound =
     / @rec <rec @label any @fields [Template ...]>
