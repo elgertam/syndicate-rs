@@ -3,6 +3,12 @@ embeddedType EntityRef.Cap .
 
 ; The sequence of Caveats is run RIGHT-TO-LEFT.
 ; That is, the newest Caveats are at the right.
+;
+; Let f = HMAC-BLAKE2s, e = canonical machine-oriented serialization of some preserves value,
+; and k = the original secret key for the ref.
+;
+; The `sig` is then f(f(f(f(k, e(oid)), ...), Caveat), ...).
+;
 SturdyRef = <ref @oid any @caveatChain [Caveat ...] @sig bytes>.
 
 ; embodies 1st-party caveats over assertion structure, but nothing else
