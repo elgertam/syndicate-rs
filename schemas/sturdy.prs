@@ -8,7 +8,11 @@ SturdyRef = <ref @oid any @caveatChain [Caveat ...] @sig bytes>.
 ; embodies 1st-party caveats over assertion structure, but nothing else
 ; can add 3rd-party caveats and richer predicates later
 Caveat = Rewrite / Alts / @unknown any .
-Rewrite = <rewrite @pattern Pattern @template Template>.
+Rewrite =
+/ <rewrite @pattern Pattern @template Template>
+/ <accept @pattern Pattern>
+/ <reject @pattern Pattern>
+.
 Alts = <or @alternatives [Rewrite ...]>.
 
 Oid = int .
