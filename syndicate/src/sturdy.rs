@@ -1,6 +1,6 @@
+use blake2::Blake2s256;
 use getrandom::getrandom;
-
-use hmac::{Hmac, Mac, NewMac, crypto_mac::MacError};
+use hmac::{SimpleHmac, Mac};
 
 use preserves::hex::HexParser;
 use preserves::hex::HexFormatter;
@@ -9,8 +9,6 @@ use preserves::value::NoEmbeddedDomainCodec;
 use preserves::value::packed::PackedWriter;
 use preserves::value::packed::from_bytes;
 use preserves_schema::Codec;
-
-use sha2::Sha256;
 
 use std::io;
 
@@ -21,14 +19,14 @@ pub use super::schemas::sturdy::*;
 
 #[derive(Debug)]
 pub enum ValidationError {
-    SignatureError(MacError),
+    SignatureError,
     AttenuationError(CaveatError),
 }
 
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match self {
-            ValidationError::SignatureError(_) =>
+            ValidationError::SignatureError =>
                 write!(f, "Invalid SturdyRef signature"),
             ValidationError::AttenuationError(e) =>
                 write!(f, "Invalid SturdyRef attenuation: {:?}", e),
@@ -41,7 +39,7 @@ impl std::error::Error for ValidationError {}
 const KEY_LENGTH: usize = 16; // bytes; 128 bits
 
 fn signature(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut m  = Hmac::<Sha256>::new_from_slice(key).expect("valid key length");
+    let mut m  = SimpleHmac::<Blake2s256>::new_from_slice(key).expect("valid key length");
     m.update(data);
     let mut result = m.finalize().into_bytes().to_vec();
     result.truncate(KEY_LENGTH);
@@ -90,20 +88,20 @@ impl SturdyRef {
         key: &[u8],
         unattenuated_target: &_Ptr,
     ) -> Result<_Ptr, ValidationError> {
-        self.validate(key).map_err(ValidationError::SignatureError)?;
+        self.validate(key).map_err(|_| ValidationError::SignatureError)?;
         let target = unattenuated_target
             .attenuate(&self.caveat_chain)
             .map_err(ValidationError::AttenuationError)?;
         Ok(target)
     }
 
-    pub fn validate(&self, key: &[u8]) -> Result<(), MacError> {
+    pub fn validate(&self, key: &[u8]) -> Result<(), ()> {
         let SturdyRef { oid, caveat_chain, sig } = self;
         let key = chain_signature(&signature(&key, &encode(oid)), caveat_chain);
         if &key == sig {
             Ok(())
         } else {
-            Err(MacError)
+            Err(())
         }
     }
 

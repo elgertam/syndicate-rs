@@ -1,3 +1,3 @@
 let ?root_ds = dataspace
-<require-service <relay-listener <tcp "0.0.0.0" 8001> $gatekeeper>>
+<require-service <relay-listener <tcp "0.0.0.0" 9001> $gatekeeper>>
 <bind "syndicate" #x"" $root_ds>

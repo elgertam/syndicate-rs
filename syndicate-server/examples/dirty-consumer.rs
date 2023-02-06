@@ -26,14 +26,14 @@ mod dirty;
 
 #[derive(Clone, Debug, StructOpt)]
 pub struct Config {
-    #[structopt(short = "d", default_value = "b4b303726566b10973796e646963617465b584b210a6480df5306611ddd0d3882b546e197784")]
+    #[structopt(short = "d", default_value = "b4b303726566b10973796e646963617465b584b21069ca300c1dbfa08fba692102dd82311a84")]
     dataspace: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_args();
 
-    let mut stream = TcpStream::connect("127.0.0.1:8001")?;
+    let mut stream = TcpStream::connect("127.0.0.1:9001")?;
     dirty::dirty_resolve(&mut stream, &config.dataspace)?;
 
     let iolang = Language::<IOValue>::default();
