@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-macros"
-version = "0.21.0"
+version = "0.22.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
@@ -13,7 +13,7 @@ license = "Apache-2.0"
 proc-macro = true
 
 [dependencies]
-syndicate = { path = "../syndicate", version = "0.26.0"}
+syndicate = { path = "../syndicate", version = "0.27.0"}
 
 proc-macro2 = { version = "^1.0", features = ["span-locations"] }
 quote = "^1.0"
