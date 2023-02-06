@@ -2270,11 +2270,11 @@ impl Cap {
     }
 
     /// Yields a fresh `Cap` for `self`'s `underlying`, copying the
-    /// existing attenuation of `self` to the new `Cap` and adding
-    /// `attenuation` to it.
-    pub fn attenuate(&self, attenuation: &sturdy::Attenuation) -> Result<Arc<Self>, CaveatError> {
+    /// existing attenuation of `self` to the new `Cap` and adding the
+    /// `caveats` to it.
+    pub fn attenuate(&self, caveats: &[sturdy::Caveat]) -> Result<Arc<Self>, CaveatError> {
         let mut r = Cap { attenuation: self.attenuation.clone(), .. self.clone() };
-        r.attenuation.extend(attenuation.check()?);
+        r.attenuation.extend(sturdy::Caveat::check_many(caveats)?);
         Ok(Arc::new(r))
     }
 
@@ -2282,7 +2282,7 @@ impl Cap {
     /// `a` is filtered out, or `Some(_)` if it is accepted (and
     /// possibly transformed).
     pub fn rewrite(&self, mut a: AnyValue) -> Option<AnyValue> {
-        for c in &self.attenuation {
+        for c in self.attenuation.iter().rev() {
             match c.rewrite(&a) {
                 Some(v) => a = v,
                 None => return None,

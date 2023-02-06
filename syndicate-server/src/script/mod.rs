@@ -101,12 +101,22 @@ pub enum Expr {
 
 #[derive(Debug, Clone)]
 enum RewriteTemplate {
-    Filter {
+    Accept {
         pattern_template: AnyValue,
     },
     Rewrite {
         pattern_template: AnyValue,
         template_template: AnyValue,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum CaveatTemplate {
+    Alts {
+        alternatives: Vec<RewriteTemplate>,
+    },
+    Reject {
+        pattern_template: AnyValue,
     },
 }
 
@@ -174,55 +184,77 @@ fn tlit(value: AnyValue) -> sturdy::Template {
     sturdy::Template::Lit(Box::new(sturdy::Lit { value }))
 }
 
-fn parse_attenuation(r: &Record<AnyValue>) -> io::Result<Option<(String, Vec<RewriteTemplate>)>> {
+fn parse_rewrite(raw_base_name: &AnyValue, e: &AnyValue) -> io::Result<RewriteTemplate> {
+    if let Some(fields) = e.value().as_simple_record("accept", Some(1)) {
+        return Ok(RewriteTemplate::Accept {
+            pattern_template: fields[0].clone(),
+        });
+    }
+
+    if let Some(fields) = e.value().as_simple_record("rewrite", Some(2)) {
+        return Ok(RewriteTemplate::Rewrite {
+            pattern_template: fields[0].clone(),
+            template_template: fields[1].clone(),
+        });
+    }
+
+    Err(bad_instruction(&format!("Bad rewrite in attenuation of {:?}: {:?}", raw_base_name, e)))
+}
+
+fn parse_caveat(raw_base_name: &AnyValue, e: &AnyValue) -> io::Result<CaveatTemplate> {
+    if let Some(fields) = e.value().as_simple_record("or", Some(1)) {
+        let raw_rewrites = match fields[0].value().as_sequence() {
+            None => Err(bad_instruction(&format!(
+                "Alternatives in <or> in attenuation of {:?} must have sequence of rewrites; got {:?}",
+                raw_base_name,
+                fields[0])))?,
+            Some(vs) => vs,
+        };
+        let alternatives =
+            raw_rewrites.iter().map(|r| parse_rewrite(raw_base_name, r)).collect::<Result<Vec<_>, _>>()?;
+        return Ok(CaveatTemplate::Alts{ alternatives });
+    }
+
+    if let Some(fields) = e.value().as_simple_record("reject", Some(1)) {
+        return Ok(CaveatTemplate::Reject{ pattern_template: fields[0].clone() });
+    }
+
+    if let Ok(r) = parse_rewrite(raw_base_name, e) {
+        return Ok(CaveatTemplate::Alts { alternatives: vec![r] });
+    }
+
+    Err(bad_instruction(&format!("Bad caveat in attenuation of {:?}: {:?}", raw_base_name, e)))
+}
+
+fn parse_attenuation(r: &Record<AnyValue>) -> io::Result<Option<(String, Vec<CaveatTemplate>)>> {
     if r.label() != &AnyValue::symbol("*") {
         return Ok(None);
     }
 
     if r.fields().len() != 2 {
         Err(bad_instruction(&format!(
-            "Attenuation requires a reference and a sequence of rewrites; got {:?}",
+            "Attenuation requires a reference and a sequence of caveats; got {:?}",
             r)))?;
     }
 
-    let base_name = match r.fields()[0].value().as_symbol().map(|s| analyze(&s)) {
+    let raw_base_name = &r.fields()[0];
+    let base_name = match raw_base_name.value().as_symbol().map(|s| analyze(&s)) {
         Some(Symbolic::Reference(s)) => s,
         _ => Err(bad_instruction(&format!(
             "Attenuation must have variable reference as first argument; got {:?}",
-            r.fields()[0])))?,
+            raw_base_name)))?,
     };
 
-    let raw_alternatives = match r.fields()[1].value().as_sequence() {
+    let raw_caveats = match r.fields()[1].value().as_sequence() {
         None => Err(bad_instruction(&format!(
-            "Attenuation of {:?} must have sequence of rewrites; got {:?}",
-            r.fields()[0],
+            "Attenuation of {:?} must have sequence of caveats; got {:?}",
+            raw_base_name,
             r.fields()[1])))?,
         Some(vs) => vs,
     };
 
-    let mut alternatives = Vec::new();
-
-    for e in raw_alternatives.iter() {
-        match e.value().as_simple_record("filter", Some(1)) {
-            Some(fields) =>
-                alternatives.push(RewriteTemplate::Filter {
-                    pattern_template: fields[0].clone()
-                }),
-            None => match e.value().as_simple_record("rewrite", Some(2)) {
-                Some(fields) =>
-                    alternatives.push(RewriteTemplate::Rewrite {
-                        pattern_template: fields[0].clone(),
-                        template_template: fields[1].clone(),
-                    }),
-                None => Err(bad_instruction(&format!(
-                    "Bad rewrite in attenuation of {:?}: {:?}",
-                    r.fields()[0],
-                    e)))?,
-            }
-        }
-    }
-
-    Ok(Some((base_name, alternatives)))
+    let caveats = raw_caveats.iter().map(|c| parse_caveat(raw_base_name, c)).collect::<Result<Vec<_>, _>>()?;
+    Ok(Some((base_name, caveats)))
 }
 
 impl<'env> PatternInstantiator<'env> {
@@ -250,8 +282,8 @@ impl<'env> PatternInstantiator<'env> {
             },
 
             Value::Record(r) => match parse_attenuation(r)? {
-                Some((base_name, alternatives)) =>
-                    dlit(self.env.eval_attenuation(base_name, alternatives)?),
+                Some((base_name, caveats)) =>
+                    dlit(self.env.eval_attenuation(base_name, caveats)?),
                 None => match self.maybe_binder_with_pattern(r)? {
                     Some(pat) => pat,
                     None => {
@@ -359,8 +391,8 @@ impl Env {
             },
 
             Value::Record(r) => match parse_attenuation(r)? {
-                Some((base_name, alternatives)) =>
-                    self.eval_attenuation(base_name, alternatives)?,
+                Some((base_name, caveats)) =>
+                    self.eval_attenuation(base_name, caveats)?,
                 None =>
                     Value::Record(Record(r.fields_vec().iter().map(|a| self.instantiate_value(a))
                                          .collect::<Result<Vec<_>, _>>()?)).wrap(),
@@ -398,7 +430,7 @@ impl Env {
     fn eval_attenuation(
         &self,
         base_name: String,
-        alternatives: Vec<RewriteTemplate>,
+        caveats: Vec<CaveatTemplate>,
     ) -> io::Result<AnyValue> {
         let base_value = self.lookup(&base_name, "attenuation-base variable")?;
         match base_value.value().as_embedded() {
@@ -406,9 +438,7 @@ impl Env {
                 "Value to be attenuated is {:?} but must be capability",
                 base_value))),
             Some(base_cap) => {
-                match base_cap.attenuate(&sturdy::Attenuation(vec![
-                    self.instantiate_caveat(&alternatives)?]))
-                {
+                match base_cap.attenuate(&caveats.iter().map(|c| self.instantiate_caveat(c)).collect::<Result<Vec<_>, _>>()?) {
                     Ok(derived_cap) => Ok(AnyValue::domain(derived_cap)),
                     Err(caveat_error) =>
                         Err(bad_instruction(&format!("Attenuation of {:?} failed: {:?}",
@@ -517,35 +547,50 @@ impl Env {
         }
     }
 
-    fn instantiate_caveat(
+    fn instantiate_rewrite(
         &self,
-        alternatives: &Vec<RewriteTemplate>,
-    ) -> io::Result<sturdy::Caveat> {
-        let mut rewrites = Vec::new();
-        for rw in alternatives {
-            match rw {
-                RewriteTemplate::Filter { pattern_template } => {
-                    let (_binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
-                    rewrites.push(sturdy::Rewrite {
-                        pattern: embed_pattern(&P::Pattern::DBind(Box::new(P::DBind { pattern }))),
-                        template: sturdy::Template::TRef(Box::new(sturdy::TRef { binding: 0.into() })),
-                    })
-                }
-                RewriteTemplate::Rewrite { pattern_template, template_template } => {
-                    let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
-                    rewrites.push(sturdy::Rewrite {
-                        pattern: embed_pattern(&pattern),
-                        template: self.instantiate_template(&binding_names, template_template)?,
-                    })
-                }
+        rw: &RewriteTemplate,
+    ) -> io::Result<sturdy::Rewrite> {
+        match rw {
+            RewriteTemplate::Accept { pattern_template } => {
+                let (_binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
+                Ok(sturdy::Rewrite {
+                    pattern: embed_pattern(&P::Pattern::DBind(Box::new(P::DBind { pattern }))),
+                    template: sturdy::Template::TRef(Box::new(sturdy::TRef { binding: 0.into() })),
+                })
+            }
+            RewriteTemplate::Rewrite { pattern_template, template_template } => {
+                let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
+                Ok(sturdy::Rewrite {
+                    pattern: embed_pattern(&pattern),
+                    template: self.instantiate_template(&binding_names, template_template)?,
+                })
             }
         }
-        if rewrites.len() == 1 {
-            Ok(sturdy::Caveat::Rewrite(Box::new(rewrites.pop().unwrap())))
-        } else {
-            Ok(sturdy::Caveat::Alts(Box::new(sturdy::Alts {
-                alternatives: rewrites,
-            })))
+    }
+
+    fn instantiate_caveat(
+        &self,
+        c: &CaveatTemplate,
+    ) -> io::Result<sturdy::Caveat> {
+        match c {
+            CaveatTemplate::Alts { alternatives } => {
+                let mut rewrites =
+                    alternatives.iter().map(|r| self.instantiate_rewrite(r)).collect::<Result<Vec<_>, _>>()?;
+                if rewrites.len() == 1 {
+                    Ok(sturdy::Caveat::Rewrite(Box::new(rewrites.pop().unwrap())))
+                } else {
+                    Ok(sturdy::Caveat::Alts(Box::new(sturdy::Alts {
+                        alternatives: rewrites,
+                    })))
+                }
+            }
+            CaveatTemplate::Reject { pattern_template } => {
+                Ok(sturdy::Caveat::Reject(Box::new(
+                    sturdy::Reject {
+                        pattern: embed_pattern(&self.instantiate_pattern(pattern_template)?.1),
+                    })))
+            }
         }
     }
 
@@ -584,18 +629,19 @@ impl Env {
             },
 
             Value::Record(r) => match parse_attenuation(r)? {
-                Some((base_name, alternatives)) =>
+                Some((base_name, caveats)) =>
                     match find_bound(&base_name) {
                         Some(i) =>
                             sturdy::Template::TAttenuate(Box::new(sturdy::TAttenuate {
                                 template: sturdy::Template::TRef(Box::new(sturdy::TRef {
                                     binding: i.into(),
                                 })),
-                                attenuation: sturdy::Attenuation(vec![
-                                    self.instantiate_caveat(&alternatives)?]),
+                                attenuation: caveats.iter()
+                                    .map(|c| self.instantiate_caveat(c))
+                                    .collect::<Result<Vec<_>, _>>()?,
                             })),
                         None =>
-                            tlit(self.eval_attenuation(base_name, alternatives)?),
+                            tlit(self.eval_attenuation(base_name, caveats)?),
                     },
                 None => {
                     // TODO: properly consolidate constant templates into literals.

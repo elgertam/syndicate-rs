@@ -16,7 +16,10 @@ pub type CheckedRewrite = (usize, Pattern, Template);
 /// A safety-checked [`Caveat`]: none of the errors enumerated in
 /// `CaveatError` apply.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CheckedCaveat { alts: Vec<CheckedRewrite> }
+pub enum CheckedCaveat {
+    Alts(Vec<CheckedRewrite>),
+    Reject(Pattern),
+}
 
 /// Represents any detected error in a [`Caveat`]; that is, in a
 /// [`Pattern`] or a [`Template`].
@@ -28,43 +31,44 @@ pub enum CaveatError {
     BindingUnderNegation,
 }
 
-impl Attenuation {
-    /// Yields `Ok(())` iff `self` has no [`CaveatError`].
-    pub fn validate(&self) -> Result<(), CaveatError> {
-        for c in &self.0 { c.validate()? }
+impl Caveat {
+    /// Yields `Ok(())` iff `caveats` have no [`CaveatError`].
+    pub fn validate_many(caveats: &[Caveat]) -> Result<(), CaveatError> {
+        for c in caveats { c.validate()? }
         Ok(())
     }
 
-    /// Yields a vector of [`CheckedCaveat`s][CheckedCaveat] iff
-    /// `self` has no [`CaveatError`].
-    pub fn check(&self) -> Result<Vec<CheckedCaveat>, CaveatError> {
-        self.0.iter().map(Caveat::check).collect()
-    }
-}
-
-impl Caveat {
     /// Yields `Ok(())` iff `self` has no [`CaveatError`].
     pub fn validate(&self) -> Result<(), CaveatError> {
         match self {
             Caveat::Rewrite(b) => (&**b).validate(),
             Caveat::Alts(b) => (&**b).alternatives.iter().map(Rewrite::validate).collect::<Result<(), _>>(),
+            Caveat::Reject(_) => Ok(()),
+            Caveat::Unknown(_) => Ok(()), /* it's valid to have unknown caveats, they just won't pass anything */
         }
+    }
+
+    /// Yields a vector of [`CheckedCaveat`s][CheckedCaveat] iff
+    /// `caveats` have no [`CaveatError`].
+    pub fn check_many(caveats: &[Caveat]) -> Result<Vec<CheckedCaveat>, CaveatError> {
+        caveats.iter().map(Caveat::check).collect()
     }
 
     /// Yields a [`CheckedCaveat`] iff `self` has no [`CaveatError`].
     pub fn check(&self) -> Result<CheckedCaveat, CaveatError> {
         match self {
             Caveat::Rewrite(b) =>
-                Ok(CheckedCaveat {
-                    alts: vec![ (*b).check()? ]
-                }),
+                Ok(CheckedCaveat::Alts(vec![ (*b).check()? ])),
             Caveat::Alts(b) => {
                 let Alts { alternatives } = &**b;
-                Ok(CheckedCaveat {
-                    alts: alternatives.into_iter().map(Rewrite::check)
-                        .collect::<Result<Vec<CheckedRewrite>, CaveatError>>()?
-                })
+                Ok(CheckedCaveat::Alts(
+                    alternatives.into_iter().map(Rewrite::check)
+                        .collect::<Result<Vec<CheckedRewrite>, CaveatError>>()?))
             }
+            Caveat::Reject(b) =>
+                Ok(CheckedCaveat::Reject(b.pattern.clone())),
+            Caveat::Unknown(_) =>
+                Ok(CheckedCaveat::Reject(Pattern::PDiscard(Box::new(PDiscard)))),
         }
     }
 }
@@ -187,7 +191,7 @@ impl Template {
         match self {
             Template::TAttenuate(b) => {
                 let TAttenuate { template, attenuation } = &**b;
-                attenuation.validate()?;
+                Caveat::validate_many(attenuation)?;
                 Ok(template.implied_binding_count()?)
             }
             Template::TRef(b) => match usize::try_from(&(&**b).binding) {
@@ -273,12 +277,24 @@ impl Rewrite {
 impl CheckedCaveat {
     /// Rewrites `a` using the patterns/templates contained in `self`.
     pub fn rewrite(&self, a: &_Any) -> Option<_Any> {
-        for (n, p, t) in &self.alts {
-            let mut bindings = Vec::with_capacity(*n);
-            if let true = p.matches(a, &mut bindings) {
-                return t.instantiate(&bindings);
+        match self {
+            CheckedCaveat::Alts(alts) => {
+                for (n, p, t) in alts {
+                    let mut bindings = Vec::with_capacity(*n);
+                    if p.matches(a, &mut bindings) {
+                        return t.instantiate(&bindings);
+                    }
+                }
+                None
+            },
+            CheckedCaveat::Reject(pat) => {
+                let mut bindings = Vec::with_capacity(0);
+                if pat.matches(a, &mut bindings) {
+                    None
+                } else {
+                    Some(a.clone())
+                }
             }
         }
-        None
     }
 }

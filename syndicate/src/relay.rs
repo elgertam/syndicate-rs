@@ -580,7 +580,7 @@ impl Membranes {
                     match self.exported.oid_map.get(&oid) {
                         None => self.exported.insert_inert_entity(t, oid),
                         Some(ws) => {
-                            let attenuated_obj = ws.obj.attenuate(&sturdy::Attenuation(attenuation))
+                            let attenuated_obj = ws.obj.attenuate(&attenuation)
                                 .map_err(|e| {
                                     io::Error::new(
                                         io::ErrorKind::InvalidInput,

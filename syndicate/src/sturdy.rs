@@ -48,6 +48,14 @@ fn signature(key: &[u8], data: &[u8]) -> Vec<u8> {
     result
 }
 
+fn chain_signature(key: &[u8], chain: &[Caveat]) -> Vec<u8> {
+    let mut key = key.to_vec();
+    for c in chain {
+        key = signature(&key, &encode(&language().unparse(c)));
+    }
+    key
+}
+
 pub fn new_key() -> Vec<u8> {
     let mut buf = vec![0; KEY_LENGTH];
     getrandom(&mut buf).expect("successful random number generation");
@@ -83,24 +91,15 @@ impl SturdyRef {
         unattenuated_target: &_Ptr,
     ) -> Result<_Ptr, ValidationError> {
         self.validate(key).map_err(ValidationError::SignatureError)?;
-        let mut attenuation = Vec::new();
-        // TODO:: Make sure of the ordering here!!
-        for a in self.caveat_chain.iter().rev() {
-            attenuation.extend(a.0.iter().rev().cloned());
-        }
         let target = unattenuated_target
-            .attenuate(&Attenuation(attenuation))
+            .attenuate(&self.caveat_chain)
             .map_err(ValidationError::AttenuationError)?;
         Ok(target)
     }
 
     pub fn validate(&self, key: &[u8]) -> Result<(), MacError> {
         let SturdyRef { oid, caveat_chain, sig } = self;
-        let mut key = key.to_vec();
-        key = signature(&key, &encode(oid));
-        for c in caveat_chain {
-            key = signature(&key, &encode(&language().unparse(c)));
-        }
+        let key = chain_signature(&signature(&key, &encode(oid)), caveat_chain);
         if &key == sig {
             Ok(())
         } else {
@@ -108,13 +107,13 @@ impl SturdyRef {
         }
     }
 
-    pub fn attenuate(&self, attenuation: &Attenuation) -> Result<Self, CaveatError> {
-        attenuation.validate()?;
+    pub fn attenuate(&self, attenuation: &[Caveat]) -> Result<Self, CaveatError> {
+        Caveat::validate_many(attenuation)?;
         let SturdyRef { oid, caveat_chain, sig } = self;
         let oid = oid.clone();
         let mut caveat_chain = caveat_chain.clone();
-        caveat_chain.push(attenuation.clone());
-        let sig = signature(&sig, &encode(&language().unparse(attenuation)));
+        caveat_chain.extend(attenuation.iter().cloned());
+        let sig = chain_signature(&sig, attenuation);
         Ok(SturdyRef { oid, caveat_chain, sig })
     }
 }
