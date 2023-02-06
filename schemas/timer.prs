@@ -1,7 +1,7 @@
 version 1 .
 
-SetTimer = <set-timer @label any @msecs double @kind TimerKind>.
-TimerExpired = <timer-expired @label any @msecs double>.
+SetTimer = <set-timer @label any @seconds double @kind TimerKind>.
+TimerExpired = <timer-expired @label any @seconds double>.
 TimerKind = =relative / =absolute / =clear .
 
-LaterThan = <later-than @msecs double>.
+LaterThan = <later-than @seconds double>.
