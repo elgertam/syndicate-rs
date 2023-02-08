@@ -14,7 +14,7 @@ NoiseStepDetail = ServiceSelector .
 NoisePathStepDetail = NoiseSpec .
 
 ; In a gatekeeper.Description, use a NoiseServiceSpec as detail.
-NoiseDescriptionDetail = <noise @spec NoiseServiceSpec> .
+NoiseDescriptionDetail = NoiseServiceSpec .
 
 ;---------------------------------------------------------------------------
 ; Specification of target and bind addresses
