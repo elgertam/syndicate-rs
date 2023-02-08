@@ -5,13 +5,13 @@ version 1 .
 ;---------------------------------------------------------------------------
 ; Binding and connection
 
-; A `step` for use with `gatekeeper.Resolve`.
+; A gatekeeper.Step for use with `gatekeeper.Resolve`.
 NoiseStep = <noise @service ServiceSelector> .
 
-; A `routeStep` for use in a `gatekeeper.Route`.
+; A gatekeeper.PathStep for use in a `gatekeeper.Route`.
 NoiseRouteStep = <noise @spec NoiseSpec> .
 
-; A `description` for use with `gatekeeper.Bind` etc.
+; A gatekeeper.Description for use with `gatekeeper.Bind` etc.
 NoiseService = <noise @spec NoiseServiceSpec> .
 
 ;---------------------------------------------------------------------------
