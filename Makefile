@@ -21,11 +21,12 @@ ws-publish:
 	cargo workspaces publish \
 		--from-git
 
+PROTOCOLS_BRANCH=main
 pull-protocols:
 	git subtree pull -P syndicate/protocols \
 		-m 'Merge latest changes from the syndicate-protocols repository' \
 		git@git.syndicate-lang.org:syndicate-lang/syndicate-protocols \
-		main
+		$(PROTOCOLS_BRANCH)
 
 static: static-x86_64
 
