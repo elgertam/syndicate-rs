@@ -18,7 +18,7 @@ Step = <<rec> @stepType symbol [@detail any]> .
 Bind = <bind @description Description @target #!any @observer BindObserver> .
 Description = <<rec> @stepType symbol [@detail any]> .
 BindObserver = @present #!Bound / @absent #f .
-Bound = <bound @step any> / Rejected .
+Bound = <bound @step Step> / Rejected .
 
 ;---------------------------------------------------------------------------
 ; Protocol at client-side dataspaces, for resolution utilities
