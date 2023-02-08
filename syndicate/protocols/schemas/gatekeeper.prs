@@ -8,7 +8,7 @@ embeddedType EntityRef.Cap .
 ; `observer`.
 Resolve = <resolve @step Step @observer #!Resolved> .
 Resolved = <accepted @responderSession #!any> / Rejected .
-Step = <<rec> @stepType symbol @details [any ...]> .
+Step = <<rec> @stepType symbol [@detail any]> .
 
 ;---------------------------------------------------------------------------
 ; Protocol at dataspaces *associated* with gatekeeper entities
@@ -16,7 +16,7 @@ Step = <<rec> @stepType symbol @details [any ...]> .
 ; Assertion. Gatekeeper will compute an appropriate Step from `description` pointing at
 ; `target`, and will respond with a `Bound` to `observer` (if supplied).
 Bind = <bind @description Description @target #!any @observer BindObserver> .
-Description = <<rec> @stepType symbol @details [any ...]> .
+Description = <<rec> @stepType symbol [@detail any]> .
 BindObserver = @present #!Bound / @absent #f .
 Bound = <bound @step any> / Rejected .
 
@@ -31,7 +31,7 @@ ResolvePath = <resolve-path @route Route @addr any @control #!TransportControl @
 
 TransportConnection = <connect-transport @addr any @control #!TransportControl @resolved Resolved> .
 ResolvedPathStep = <path-step @origin #!Resolve @pathStep PathStep @resolved Resolved> .
-PathStep = <<rec> @stepType symbol @details [any ...]> .
+PathStep = <<rec> @stepType symbol [@detail any]> .
 
 ; A `Route` describes a network path that can be followed to reach some target entity.
 ;
