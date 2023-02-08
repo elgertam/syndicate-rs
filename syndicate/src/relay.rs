@@ -1,6 +1,7 @@
 use bytes::Buf;
 use bytes::BytesMut;
 
+use crate::Language;
 use crate::language;
 use crate::actor::*;
 use crate::during;
@@ -36,6 +37,7 @@ use preserves::value::signed_integer::SignedInteger;
 use preserves_schema::Codec;
 use preserves_schema::Deserialize;
 use preserves_schema::ParseError;
+use preserves_schema::support::Unparse;
 
 use std::io;
 use std::pin::Pin;
@@ -175,17 +177,18 @@ impl Membrane {
     }
 }
 
-pub fn connect_stream<I, O, E, F>(
+pub fn connect_stream<I, O, Step, E, F>(
     t: &mut Activation,
     i: I,
     o: O,
     output_text: bool,
-    sturdyref: sturdy::SturdyRef,
+    step: Step,
     initial_state: E,
     mut f: F,
 ) where
     I: 'static + Send + AsyncRead,
     O: 'static + Send + AsyncWrite,
+    Step: for<'a> Unparse<&'a Language<AnyValue>, AnyValue>,
     E: 'static + Send,
     F: 'static + Send + FnMut(&mut E, &mut Activation, Arc<Cap>) -> during::DuringResult<E>
 {
@@ -196,8 +199,8 @@ pub fn connect_stream<I, O, E, F>(
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
-    gatekeeper.assert(t, language(), &gatekeeper::Resolve {
-        sturdyref,
+    gatekeeper.assert(t, language(), &gatekeeper::Resolve::<AnyValue> {
+        step: language().unparse(&step),
         observer: Cap::new(&main_entity),
     });
 }

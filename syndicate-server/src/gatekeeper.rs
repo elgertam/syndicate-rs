@@ -20,41 +20,117 @@ use syndicate::value::NestedValue;
 use syndicate::schemas::dataspace;
 use syndicate::schemas::gatekeeper;
 use syndicate::schemas::noise;
+use syndicate::schemas::sturdy;
 
 use crate::language::language;
-use crate::schemas::gatekeeper_mux::Api;
-use crate::schemas::gatekeeper_mux::NoiseServiceSpec;
-use crate::schemas::gatekeeper_mux::SecretKeyField;
 
-// pub fn bind(
-//     t: &mut Activation,
-//     ds: &Arc<Cap>,
-//     oid: syndicate::schemas::sturdy::_Any,
-//     key: [u8; 16],
-//     target: Arc<Cap>,
-// ) {
-//     let sr = sturdy::SturdyRef::mint(oid.clone(), &key);
-//     tracing::info!(cap = ?language().unparse(&sr), hex = %sr.to_hex());
-//     ds.assert(t, language(), &gatekeeper::Bind { oid, key: key.to_vec(), target });
-// }
+use syndicate_macros::during;
+use syndicate_macros::pattern;
 
-pub fn handle_assertion(
-    ds: &mut Arc<Cap>,
+pub fn handle_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
+    Ok(during!(t, ds, language(), <bind $description $target $observer>, |t: &mut Activation| {
+        t.spawn_link(None, move |t| { handle_bind(t, description, target, observer) });
+        Ok(())
+    }))
+}
+
+fn handle_bind(
     t: &mut Activation,
-    a: Api<AnyValue>,
-) -> DuringResult<Arc<Cap>> {
-    match a {
-        Api::Resolve(resolve_box) => handle_resolve(ds, t, *resolve_box),
-        Api::Connect(connect_box) => handle_connect(ds, t, *connect_box),
+    description: AnyValue,
+    target: AnyValue,
+    observer: AnyValue,
+) -> ActorResult {
+    let _target = target.value().to_embedded()?;
+    let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
+
+    if let Ok(s) = language().parse::<sturdy::SturdyService>(&description) {
+        let sr = sturdy::SturdyRef::mint(s.oid, &s.key);
+        if let gatekeeper::BindObserver::Present(o) = observer {
+            o.assert(t, language(), &gatekeeper::Bound::Bound {
+                step: language().unparse(&sr),
+            });
+        }
+        return Ok(());
+    }
+
+    if let Ok(s) = language().parse::<noise::NoiseService<AnyValue>>(&description) {
+        match validate_noise_spec(s.spec) {
+            Ok(spec) => if let gatekeeper::BindObserver::Present(o) = observer {
+                o.assert(t, language(), &gatekeeper::Bound::Bound {
+                    step: language().unparse(&noise::NoiseRouteStep {
+                        spec: noise::NoiseSpec {
+                            key: spec.public_key,
+                            service: noise::ServiceSelector(spec.service),
+                            protocol: if spec.protocol == default_noise_protocol() {
+                                noise::NoiseProtocol::Absent
+                            } else {
+                                noise::NoiseProtocol::Present {
+                                    protocol: spec.protocol,
+                                }
+                            },
+                            pre_shared_keys: if spec.psks.is_empty() {
+                                noise::NoisePreSharedKeys::Absent
+                            } else {
+                                noise::NoisePreSharedKeys::Present {
+                                    pre_shared_keys: spec.psks,
+                                }
+                            },
+                        },
+                    }),
+                });
+            },
+            Err(e) => {
+                if let gatekeeper::BindObserver::Present(o) = observer {
+                    o.assert(t, language(), &gatekeeper::Bound::Rejected(
+                        Box::new(gatekeeper::Rejected {
+                            detail: AnyValue::new(format!("{}", &e)),
+                        })));
+                }
+                tracing::error!("Invalid noise bind description: {}", e);
+            }
+        }
+        return Ok(());
+    }
+
+    if let gatekeeper::BindObserver::Present(o) = observer {
+        o.assert(t, language(), &gatekeeper::Bound::Rejected(
+            Box::new(gatekeeper::Rejected {
+                detail: AnyValue::symbol("unsupported"),
+            })));
+    }
+    Ok(())
+}
+
+fn eventually_retract<E>(h: Option<Handle>) -> DuringResult<E> {
+    if let Some(h) = h {
+        Ok(Some(Box::new(move |_state, t: &mut Activation| Ok(t.retract(h)))))
+    } else {
+        Ok(None)
     }
 }
 
-fn handle_resolve(
+pub fn handle_resolves(
     ds: &mut Arc<Cap>,
     t: &mut Activation,
     a: gatekeeper::Resolve,
 ) -> DuringResult<Arc<Cap>> {
-    let gatekeeper::Resolve { sturdyref, observer } = a;
+    if let Ok(s) = language().parse::<sturdy::SturdyStep>(&a.step) {
+        return handle_resolve_sturdyref(ds, t, s.0, a.observer);
+    }
+    if let Ok(s) = language().parse::<noise::NoiseStep<AnyValue>>(&a.step) {
+        return handle_resolve_noise(ds, t, s.service.0, a.observer);
+    }
+    eventually_retract(ds.assert(t, language(), &gatekeeper::Rejected {
+        detail: AnyValue::symbol("unsupported"),
+    }))
+}
+
+fn handle_resolve_sturdyref(
+    ds: &mut Arc<Cap>,
+    t: &mut Activation,
+    sturdyref: sturdy::SturdyRef,
+    observer: Arc<Cap>,
+) -> DuringResult<Arc<Cap>> {
     let queried_oid = sturdyref.oid.clone();
     let handler = syndicate::entity(observer)
         .on_asserted(move |observer, t, a: AnyValue| {
@@ -65,91 +141,111 @@ fn handle_resolve(
                 Err(e) => {
                     tracing::warn!(sturdyref = ?language().unparse(&sturdyref),
                                    "sturdyref failed validation: {}", e);
-                    Ok(None)
+                    eventually_retract(observer.assert(t, language(), &gatekeeper::Resolved::Rejected(
+                        Box::new(gatekeeper::Rejected {
+                            detail: AnyValue::symbol("sturdyref-failed-validation"),
+                        }))))
                 },
                 Ok(target) => {
                     tracing::trace!(sturdyref = ?language().unparse(&sturdyref),
                                     ?target,
                                     "sturdyref resolved");
-                    if let Some(h) = observer.assert(t, &(), &AnyValue::domain(target)) {
-                        Ok(Some(Box::new(move |_observer, t| Ok(t.retract(h)))))
-                    } else {
-                        Ok(None)
-                    }
+                    eventually_retract(observer.assert(t, language(), &gatekeeper::Resolved::Accepted {
+                        responder_session: target,
+                    }))
                 }
             }
         })
         .create_cap(t);
-    if let Some(oh) = ds.assert(t, language(), &dataspace::Observe {
+    eventually_retract(ds.assert(t, language(), &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
-        pattern: syndicate_macros::pattern!{<bind #(&queried_oid) $ $>},
+        pattern: pattern!{<bind <ref #(&queried_oid) $> $ _>},
         observer: handler,
-    }) {
-        Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))
-    } else {
-        Ok(None)
-    }
+    }))
 }
 
-fn handle_connect(
+struct ValidatedNoiseSpec {
+    service: AnyValue,
+    protocol: String,
+    pattern: HandshakePattern,
+    psks: Vec<Vec<u8>>,
+    secret_key: Option<Vec<u8>>,
+    public_key: Vec<u8>,
+}
+
+fn default_noise_protocol() -> String {
+    language().unparse(&noise::DefaultProtocol).value().to_string().unwrap().clone()
+}
+
+fn validate_noise_spec(
+    spec: noise::NoiseServiceSpec<AnyValue>,
+) -> Result<ValidatedNoiseSpec, ActorError> {
+    let protocol = match spec.base.protocol {
+        noise::NoiseProtocol::Present { protocol } => protocol,
+        noise::NoiseProtocol::Invalid { protocol } =>
+            Err(format!("Invalid noise protocol {:?}", protocol))?,
+        noise::NoiseProtocol::Absent => default_noise_protocol(),
+    };
+
+    const PREFIX: &'static str = "Noise_";
+    const SUFFIX: &'static str = "_25519_ChaChaPoly_BLAKE2s";
+    if !protocol.starts_with(PREFIX) || !protocol.ends_with(SUFFIX) {
+        Err(format!("Unsupported protocol {:?}", protocol))?;
+    }
+
+    let pattern_name = &protocol[PREFIX.len()..(protocol.len()-SUFFIX.len())];
+    let pattern = lookup_pattern(pattern_name).ok_or_else::<ActorError, _>(
+        || format!("Unsupported handshake pattern {:?}", pattern_name).into())?;
+
+    let psks = match spec.base.pre_shared_keys {
+        noise::NoisePreSharedKeys::Present { pre_shared_keys } => pre_shared_keys,
+        noise::NoisePreSharedKeys::Invalid { pre_shared_keys } =>
+            Err(format!("Invalid pre-shared-keys {:?}", pre_shared_keys))?,
+        noise::NoisePreSharedKeys::Absent => vec![],
+    };
+
+    let secret_key = match spec.secret_key {
+        noise::SecretKeyField::Present { secret_key } => Some(secret_key),
+        noise::SecretKeyField::Invalid { secret_key } =>
+            Err(format!("Invalid secret key {:?}", secret_key))?,
+        noise::SecretKeyField::Absent => None,
+    };
+
+    Ok(ValidatedNoiseSpec {
+        service: spec.base.service.0,
+        protocol,
+        pattern,
+        psks,
+        secret_key,
+        public_key: spec.base.key,
+    })
+}
+
+fn handle_resolve_noise(
     ds: &mut Arc<Cap>,
     t: &mut Activation,
-    a: noise::Connect<AnyValue>,
+    service_selector: AnyValue,
+    initiator_session: Arc<Cap>,
 ) -> DuringResult<Arc<Cap>> {
-    let noise::Connect { service_selector, initiator_session } = a;
     let handler = syndicate::entity(())
         .on_asserted_facet(move |_state, t, a: AnyValue| {
             let initiator_session = Arc::clone(&initiator_session);
             t.spawn_link(None, move |t| {
                 let bindings = a.value().to_sequence()?;
-                let spec: NoiseServiceSpec<AnyValue> = language().parse(&bindings[0])?;
-                let protocol = match spec.base.protocol {
-                    noise::NoiseProtocol::Present { protocol } =>
-                        protocol,
-                    noise::NoiseProtocol::Invalid { protocol } =>
-                        Err(format!("Invalid noise protocol {:?}", protocol))?,
-                    noise::NoiseProtocol::Absent =>
-                        language().unparse(&noise::DefaultProtocol).value().to_string()?.clone(),
-                };
-                let psks = match spec.base.pre_shared_keys {
-                    noise::NoisePreSharedKeys::Present { pre_shared_keys } =>
-                        pre_shared_keys,
-                    noise::NoisePreSharedKeys::Invalid { pre_shared_keys } =>
-                        Err(format!("Invalid pre-shared-keys {:?}", pre_shared_keys))?,
-                    noise::NoisePreSharedKeys::Absent =>
-                        vec![],
-                };
-                let secret_key = match spec.secret_key {
-                    SecretKeyField::Present { secret_key } =>
-                        Some(secret_key),
-                    SecretKeyField::Invalid { secret_key } =>
-                        Err(format!("Invalid secret key {:?}", secret_key))?,
-                    SecretKeyField::Absent =>
-                        None,
-                };
+                let spec = validate_noise_spec(language().parse(&bindings[0])?)?;
                 let service = bindings[1].value().to_embedded()?;
-                run_noise_responder(t,
-                                    spec.base.service,
-                                    protocol,
-                                    psks,
-                                    secret_key,
-                                    initiator_session,
-                                    Arc::clone(service))
+                run_noise_responder(t, spec, initiator_session, Arc::clone(service))
             });
             Ok(())
         })
         .create_cap(t);
-    if let Some(oh) = ds.assert(t, language(), &dataspace::Observe {
+    eventually_retract(ds.assert(t, language(), &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
-        pattern: syndicate_macros::pattern!{
-            <noise $spec:NoiseServiceSpec{ { service: #(&service_selector) } } $service >
+        pattern: pattern!{
+            <bind <noise $spec:NoiseServiceSpec{ { service: #(&service_selector) } }> $service _>
         },
         observer: handler,
-    }) {
-        Ok(Some(Box::new(move |_ds, t| Ok(t.retract(oh)))))
-    } else {
-        Ok(None)
-    }
+    }))
 }
 
 struct ResponderDetails {
@@ -304,29 +400,17 @@ fn lookup_pattern(name: &str) -> Option<HandshakePattern> {
 
 fn run_noise_responder(
     t: &mut Activation,
-    service_selector: AnyValue,
-    protocol: String,
-    psks: Vec<Vec<u8>>,
-    secret_key: Option<Vec<u8>>,
+    spec: ValidatedNoiseSpec,
     initiator_session: Arc<Cap>,
     service: Arc<Cap>,
 ) -> ActorResult {
-    const PREFIX: &'static str = "Noise_";
-    const SUFFIX: &'static str = "_25519_ChaChaPoly_BLAKE2s";
-    if !protocol.starts_with(PREFIX) || !protocol.ends_with(SUFFIX) {
-        Err(format!("Unsupported protocol {:?}", protocol))?;
-    }
-    let pattern_name = &protocol[PREFIX.len()..(protocol.len()-SUFFIX.len())];
-    let pattern = lookup_pattern(pattern_name).ok_or_else::<ActorError, _>(
-        || format!("Unsupported handshake pattern {:?}", pattern_name).into())?;
-
     let hs = {
         let mut builder = noise_protocol::HandshakeStateBuilder::new();
-        builder.set_pattern(pattern);
+        builder.set_pattern(spec.pattern);
         builder.set_is_initiator(false);
-        let prologue = PackedWriter::encode(&mut NoEmbeddedDomainCodec, &service_selector)?;
+        let prologue = PackedWriter::encode(&mut NoEmbeddedDomainCodec, &spec.service)?;
         builder.set_prologue(&prologue);
-        match secret_key {
+        match spec.secret_key {
             None => (),
             Some(sk) => {
                 let sk: [u8; 32] = sk.try_into().map_err(|_| "Bad secret key length")?;
@@ -334,7 +418,7 @@ fn run_noise_responder(
             },
         }
         let mut hs = builder.build_handshake_state();
-        for psk in psks.into_iter() {
+        for psk in spec.psks.into_iter() {
             hs.push_psk(&psk);
         }
         hs
@@ -347,6 +431,6 @@ fn run_noise_responder(
 
     let responder_session =
         Cap::guard(crate::Language::arc(), t.create(ResponderState::Handshake(details, hs)));
-    initiator_session.assert(t, language(), &noise::Accept { responder_session });
+    initiator_session.assert(t, language(), &gatekeeper::Resolved::Accepted { responder_session });
     Ok(())
 }

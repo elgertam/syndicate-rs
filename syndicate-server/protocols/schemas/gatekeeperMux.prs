@@ -1,7 +1,0 @@
-version 1 .
-
-API = gatekeeper.Resolve / noise.Connect .
-
-NoiseService = <noise @spec noise.NoiseSpec @service #!any> .
-NoiseServiceSpec = @base noise.NoiseSpec & @secretKey SecretKeyField .
-SecretKeyField = @present { secretKey: bytes } / @invalid { secretKey: any } / @absent {} .
