@@ -1,10 +1,23 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-; Serves as both gatekeeper.Step and gatekeeper.PathStep.
-SturdyStep = SturdyRef .
-; A gatekeeper.Description.
-SturdyService = <ref @oid any @key bytes> .
+;---------------------------------------------------------------------------
+; Binding and connection
+
+SturdyStepType = =ref .
+
+; In a gatekeeper.Step or gatekeeper.PathStep, use Parameters as detail.
+SturdyStepDetail = Parameters .
+SturdyPathStepDetail = Parameters .
+
+; In a gatekeeper.Description, use the following detail.
+SturdyDescriptionDetail = {
+  oid: any,
+  key: bytes,
+} .
+
+;---------------------------------------------------------------------------
+; Macaroons
 
 ; The sequence of Caveats is run RIGHT-TO-LEFT.
 ; That is, the newest Caveats are at the right.
@@ -15,7 +28,12 @@ SturdyService = <ref @oid any @key bytes> .
 ;
 ; The `sig` is then f(f(f(f(k, e(oid)), ...), e(Caveat)), ...).
 ;
-SturdyRef = <ref @oid any @caveatChain [Caveat ...] @sig bytes>.
+SturdyRef = <ref @parameters Parameters> .
+Parameters = {
+  oid: any,
+  sig: bytes,
+} & @caveats CaveatsField .
+CaveatsField = @present { caveats: [Caveat ...] } / @invalid { caveats: any } / @absent {} .
 
 ; embodies 1st-party caveats over assertion structure, but nothing else
 ; can add 3rd-party caveats and richer predicates later

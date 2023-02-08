@@ -5,14 +5,16 @@ version 1 .
 ;---------------------------------------------------------------------------
 ; Binding and connection
 
-; A gatekeeper.Step for use with `gatekeeper.Resolve`.
-NoiseStep = <noise @service ServiceSelector> .
+NoiseStepType = =noise .
 
-; A gatekeeper.PathStep for use in a `gatekeeper.Route`.
-NoiseRouteStep = <noise @spec NoiseSpec> .
+; In a gatekeeper.Step, use ServiceSelector as detail.
+NoiseStepDetail = ServiceSelector .
 
-; A gatekeeper.Description for use with `gatekeeper.Bind` etc.
-NoiseService = <noise @spec NoiseServiceSpec> .
+; In a gatekeeper.PathStep, use a NoiseSpec as detail.
+NoisePathStepDetail = NoiseSpec .
+
+; In a gatekeeper.Description, use a NoiseServiceSpec as detail.
+NoiseDescriptionDetail = <noise @spec NoiseServiceSpec> .
 
 ;---------------------------------------------------------------------------
 ; Specification of target and bind addresses
