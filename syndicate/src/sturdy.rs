@@ -21,6 +21,7 @@ pub use super::schemas::sturdy::*;
 pub enum ValidationError {
     SignatureError,
     AttenuationError(CaveatError),
+    BadCaveatsField,
 }
 
 impl std::fmt::Display for ValidationError {
@@ -30,6 +31,8 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "Invalid SturdyRef signature"),
             ValidationError::AttenuationError(e) =>
                 write!(f, "Invalid SturdyRef attenuation: {:?}", e),
+            ValidationError::BadCaveatsField =>
+                write!(f, "Invalid caveats field in SturdyRef parameters"),
         }
     }
 }
@@ -71,7 +74,21 @@ pub fn decode<N: NestedValue>(bs: &[u8]) -> io::Result<N> {
 impl SturdyRef {
     pub fn mint(oid: _Any, key: &[u8]) -> Self {
         let sig = signature(key, &encode(&oid));
-        SturdyRef { oid, caveat_chain: Vec::new(), sig }
+        SturdyRef::from_parts(oid, vec![], sig)
+    }
+
+    pub fn from_parts(oid: _Any, caveats: Vec<Caveat>, sig: Vec<u8>) -> Self {
+        SturdyRef {
+            parameters: Parameters {
+                oid,
+                sig,
+                caveats: if caveats.is_empty() {
+                    CaveatsField::Absent
+                } else {
+                    CaveatsField::Present { caveats }
+                }
+            }
+        }
     }
 
     pub fn from_hex(s: &str) -> Result<Self, Error> {
@@ -83,6 +100,14 @@ impl SturdyRef {
         HexFormatter::Packed.encode(&encode(&language().unparse(self)))
     }
 
+    pub fn caveat_chain(&self) -> Result<&[Caveat], ValidationError> {
+        match &self.parameters.caveats {
+            CaveatsField::Absent => Ok(&[]),
+            CaveatsField::Invalid { .. } => Err(ValidationError::BadCaveatsField),
+            CaveatsField::Present { caveats } => Ok(caveats),
+        }
+    }
+
     pub fn validate_and_attenuate(
         &self,
         key: &[u8],
@@ -90,14 +115,15 @@ impl SturdyRef {
     ) -> Result<_Ptr, ValidationError> {
         self.validate(key).map_err(|_| ValidationError::SignatureError)?;
         let target = unattenuated_target
-            .attenuate(&self.caveat_chain)
+            .attenuate(self.caveat_chain()?)
             .map_err(ValidationError::AttenuationError)?;
         Ok(target)
     }
 
     pub fn validate(&self, key: &[u8]) -> Result<(), ()> {
-        let SturdyRef { oid, caveat_chain, sig } = self;
-        let key = chain_signature(&signature(&key, &encode(oid)), caveat_chain);
+        let SturdyRef { parameters: Parameters { oid, sig, .. } } = self;
+        let key = chain_signature(&signature(&key, &encode(oid)),
+                                  self.caveat_chain().map_err(|_| ())?);
         if &key == sig {
             Ok(())
         } else {
@@ -105,13 +131,13 @@ impl SturdyRef {
         }
     }
 
-    pub fn attenuate(&self, attenuation: &[Caveat]) -> Result<Self, CaveatError> {
-        Caveat::validate_many(attenuation)?;
-        let SturdyRef { oid, caveat_chain, sig } = self;
+    pub fn attenuate(&self, attenuation: &[Caveat]) -> Result<Self, ValidationError> {
+        Caveat::validate_many(attenuation).map_err(ValidationError::AttenuationError)?;
+        let SturdyRef { parameters: Parameters { oid, sig, .. } } = self;
         let oid = oid.clone();
-        let mut caveat_chain = caveat_chain.clone();
+        let mut caveat_chain = self.caveat_chain()?.to_vec();
         caveat_chain.extend(attenuation.iter().cloned());
         let sig = chain_signature(&sig, attenuation);
-        Ok(SturdyRef { oid, caveat_chain, sig })
+        Ok(SturdyRef::from_parts(oid, caveat_chain, sig))
     }
 }

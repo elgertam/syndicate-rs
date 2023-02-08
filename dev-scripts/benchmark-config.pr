@@ -1,3 +1,3 @@
 let ?root_ds = dataspace
 <require-service <relay-listener <tcp "0.0.0.0" 9001> $gatekeeper>>
-<bind <ref "syndicate" #x""> $root_ds #f>
+<bind <ref { oid: "syndicate" key: #x"" }> $root_ds #f>

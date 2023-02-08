@@ -26,7 +26,7 @@ mod dirty;
 
 #[derive(Clone, Debug, StructOpt)]
 pub struct Config {
-    #[structopt(short = "d", default_value = "b4b303726566b10973796e646963617465b584b21069ca300c1dbfa08fba692102dd82311a84")]
+    #[structopt(short = "d", default_value = "b4b303726566b7b3036f6964b10973796e646963617465b303736967b21069ca300c1dbfa08fba692102dd82311a8484")]
     dataspace: String,
 }
 

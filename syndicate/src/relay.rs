@@ -195,14 +195,16 @@ pub fn connect_stream<I, O, Step, E, F>(
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
     let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text).unwrap();
-    let main_entity = t.create(during::entity(initial_state).on_asserted(move |state, t, a: AnyValue| {
-        let denotation = a.value().to_embedded()?;
-        f(state, t, Arc::clone(denotation))
+    let main_entity = t.create(during::entity(initial_state).on_asserted(move |state, t, a: gatekeeper::Resolved| {
+        match a {
+            gatekeeper::Resolved::Accepted { responder_session } => f(state, t, responder_session),
+            gatekeeper::Resolved::Rejected(r) => Err(error("Resolve rejected", r.detail))?,
+        }
     }));
     let step = language().parse::<gatekeeper::Step>(&language().unparse(&step))?;
     gatekeeper.assert(t, language(), &gatekeeper::Resolve::<AnyValue> {
         step,
-        observer: Cap::new(&main_entity),
+        observer: Cap::guard(Language::arc(), main_entity),
     });
     Ok(())
 }

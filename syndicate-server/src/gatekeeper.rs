@@ -27,77 +27,78 @@ use crate::language::language;
 use syndicate_macros::during;
 use syndicate_macros::pattern;
 
-pub fn handle_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
-    Ok(during!(t, ds, language(), <bind $description $target $observer>, |t: &mut Activation| {
-        t.spawn_link(None, move |t| { handle_bind(t, description, target, observer) });
-        Ok(())
-    }))
+fn sturdy_step_type() -> String {
+    language().unparse(&sturdy::SturdyStepType).value().to_symbol().unwrap().clone()
 }
 
-fn handle_bind(
-    t: &mut Activation,
-    description: AnyValue,
-    target: AnyValue,
-    observer: AnyValue,
-) -> ActorResult {
-    let _target = target.value().to_embedded()?;
-    let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
+fn noise_step_type() -> String {
+    language().unparse(&noise::NoiseStepType).value().to_symbol().unwrap().clone()
+}
 
-    if let Ok(s) = language().parse::<sturdy::SturdyService>(&description) {
-        let sr = sturdy::SturdyRef::mint(s.oid, &s.key);
-        if let gatekeeper::BindObserver::Present(o) = observer {
-            o.assert(t, language(), &gatekeeper::Bound::Bound {
-                step: language().unparse(&sr),
-            });
-        }
-        return Ok(());
-    }
-
-    if let Ok(s) = language().parse::<noise::NoiseService<AnyValue>>(&description) {
-        match validate_noise_spec(s.spec) {
-            Ok(spec) => if let gatekeeper::BindObserver::Present(o) = observer {
+pub fn handle_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
+    during!(t, ds, language(), <bind <ref $desc> $target $observer>, |t: &mut Activation| {
+        t.spawn_link(None, move |t| {
+            target.value().to_embedded()?;
+            let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
+            let desc = language().parse::<sturdy::SturdyDescriptionDetail>(&desc)?;
+            let sr = sturdy::SturdyRef::mint(desc.oid, &desc.key);
+            if let gatekeeper::BindObserver::Present(o) = observer {
                 o.assert(t, language(), &gatekeeper::Bound::Bound {
-                    step: language().unparse(&noise::NoiseRouteStep {
-                        spec: noise::NoiseSpec {
-                            key: spec.public_key,
-                            service: noise::ServiceSelector(spec.service),
-                            protocol: if spec.protocol == default_noise_protocol() {
-                                noise::NoiseProtocol::Absent
-                            } else {
-                                noise::NoiseProtocol::Present {
-                                    protocol: spec.protocol,
-                                }
-                            },
-                            pre_shared_keys: if spec.psks.is_empty() {
-                                noise::NoisePreSharedKeys::Absent
-                            } else {
-                                noise::NoisePreSharedKeys::Present {
-                                    pre_shared_keys: spec.psks,
-                                }
-                            },
-                        },
+                    path_step: Box::new(gatekeeper::PathStep {
+                        step_type: sturdy_step_type(),
+                        detail: language().unparse(&sr.parameters),
                     }),
                 });
-            },
-            Err(e) => {
-                if let gatekeeper::BindObserver::Present(o) = observer {
-                    o.assert(t, language(), &gatekeeper::Bound::Rejected(
-                        Box::new(gatekeeper::Rejected {
-                            detail: AnyValue::new(format!("{}", &e)),
-                        })));
-                }
-                tracing::error!("Invalid noise bind description: {}", e);
             }
-        }
-        return Ok(());
-    }
-
-    if let gatekeeper::BindObserver::Present(o) = observer {
-        o.assert(t, language(), &gatekeeper::Bound::Rejected(
-            Box::new(gatekeeper::Rejected {
-                detail: AnyValue::symbol("unsupported"),
-            })));
-    }
+            Ok(())
+        });
+        Ok(())
+    });
+    during!(t, ds, language(), <bind <noise $desc> $target $observer>, |t: &mut Activation| {
+        t.spawn_link(None, move |t| {
+            target.value().to_embedded()?;
+            let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
+            let spec = language().parse::<noise::NoiseDescriptionDetail<AnyValue>>(&desc)?.0;
+            match validate_noise_spec(spec) {
+                Ok(spec) => if let gatekeeper::BindObserver::Present(o) = observer {
+                    o.assert(t, language(), &gatekeeper::Bound::Bound {
+                        path_step: Box::new(gatekeeper::PathStep {
+                            step_type: noise_step_type(),
+                            detail: language().unparse(&noise::NoisePathStepDetail(noise::NoiseSpec {
+                                key: spec.public_key,
+                                service: noise::ServiceSelector(spec.service),
+                                protocol: if spec.protocol == default_noise_protocol() {
+                                    noise::NoiseProtocol::Absent
+                                } else {
+                                    noise::NoiseProtocol::Present {
+                                        protocol: spec.protocol,
+                                    }
+                                },
+                                pre_shared_keys: if spec.psks.is_empty() {
+                                    noise::NoisePreSharedKeys::Absent
+                                } else {
+                                    noise::NoisePreSharedKeys::Present {
+                                        pre_shared_keys: spec.psks,
+                                    }
+                                },
+                            })),
+                        }),
+                    });
+                },
+                Err(e) => {
+                    if let gatekeeper::BindObserver::Present(o) = observer {
+                        o.assert(t, language(), &gatekeeper::Bound::Rejected(
+                            Box::new(gatekeeper::Rejected {
+                                detail: AnyValue::new(format!("{}", &e)),
+                            })));
+                    }
+                    tracing::error!("Invalid noise bind description: {}", e);
+                }
+            }
+            Ok(())
+        });
+        Ok(())
+    });
     Ok(())
 }
 
@@ -114,15 +115,24 @@ pub fn handle_resolves(
     t: &mut Activation,
     a: gatekeeper::Resolve,
 ) -> DuringResult<Arc<Cap>> {
-    let step = language().unparse(&a.step);
-    if let Ok(s) = language().parse::<sturdy::SturdyStep>(&step) {
-        return handle_resolve_sturdyref(ds, t, s.0, a.observer);
+    let mut detail: &'static str = "unsupported";
+
+    if a.step.step_type == sturdy_step_type() {
+        detail = "invalid";
+        if let Ok(s) = language().parse::<sturdy::SturdyStepDetail>(&a.step.detail) {
+            return handle_resolve_sturdyref(ds, t, sturdy::SturdyRef { parameters: s.0 }, a.observer);
+        }
     }
-    if let Ok(s) = language().parse::<noise::NoiseStep<AnyValue>>(&step) {
-        return handle_resolve_noise(ds, t, s.service.0, a.observer);
+
+    if a.step.step_type == noise_step_type() {
+        detail = "invalid";
+        if let Ok(s) = language().parse::<noise::NoiseStepDetail<AnyValue>>(&a.step.detail) {
+            return handle_resolve_noise(ds, t, s.0.0, a.observer);
+        }
     }
+
     eventually_retract(ds.assert(t, language(), &gatekeeper::Rejected {
-        detail: AnyValue::symbol("unsupported"),
+        detail: AnyValue::symbol(detail),
     }))
 }
 
@@ -132,7 +142,7 @@ fn handle_resolve_sturdyref(
     sturdyref: sturdy::SturdyRef,
     observer: Arc<Cap>,
 ) -> DuringResult<Arc<Cap>> {
-    let queried_oid = sturdyref.oid.clone();
+    let queried_oid = sturdyref.parameters.oid.clone();
     let handler = syndicate::entity(observer)
         .on_asserted(move |observer, t, a: AnyValue| {
             let bindings = a.value().to_sequence()?;
@@ -160,7 +170,7 @@ fn handle_resolve_sturdyref(
         .create_cap(t);
     eventually_retract(ds.assert(t, language(), &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
-        pattern: pattern!{<bind <ref #(&queried_oid) $> $ _>},
+        pattern: pattern!{<bind <ref { oid: #(&queried_oid), key: $ }> $ _>},
         observer: handler,
     }))
 }
