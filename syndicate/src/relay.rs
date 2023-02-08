@@ -199,10 +199,7 @@ pub fn connect_stream<I, O, Step, E, F>(
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
-    let step = language().unparse(&step);
-    let step = step.value().to_record(None)?;
-    let step_type = step.label().value().to_symbol()?.clone();
-    let step = gatekeeper::Step { step_type, details: step.fields_vec().clone() };
+    let step = language().parse::<gatekeeper::Step>(&language().unparse(&step))?;
     gatekeeper.assert(t, language(), &gatekeeper::Resolve::<AnyValue> {
         step,
         observer: Cap::new(&main_entity),
