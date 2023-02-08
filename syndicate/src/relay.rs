@@ -185,7 +185,7 @@ pub fn connect_stream<I, O, Step, E, F>(
     step: Step,
     initial_state: E,
     mut f: F,
-) where
+) -> ActorResult where
     I: 'static + Send + AsyncRead,
     O: 'static + Send + AsyncWrite,
     Step: for<'a> Unparse<&'a Language<AnyValue>, AnyValue>,
@@ -199,10 +199,15 @@ pub fn connect_stream<I, O, Step, E, F>(
         let denotation = a.value().to_embedded()?;
         f(state, t, Arc::clone(denotation))
     }));
+    let step = language().unparse(&step);
+    let step = step.value().to_record(None)?;
+    let step_type = step.label().value().to_symbol()?.clone();
+    let step = gatekeeper::Step { step_type, details: step.fields_vec().clone() };
     gatekeeper.assert(t, language(), &gatekeeper::Resolve::<AnyValue> {
-        step: language().unparse(&step),
+        step,
         observer: Cap::new(&main_entity),
     });
+    Ok(())
 }
 
 impl std::fmt::Debug for Membrane {

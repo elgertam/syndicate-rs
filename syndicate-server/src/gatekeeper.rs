@@ -114,10 +114,11 @@ pub fn handle_resolves(
     t: &mut Activation,
     a: gatekeeper::Resolve,
 ) -> DuringResult<Arc<Cap>> {
-    if let Ok(s) = language().parse::<sturdy::SturdyStep>(&a.step) {
+    let step = language().unparse(&a.step);
+    if let Ok(s) = language().parse::<sturdy::SturdyStep>(&step) {
         return handle_resolve_sturdyref(ds, t, s.0, a.observer);
     }
-    if let Ok(s) = language().parse::<noise::NoiseStep<AnyValue>>(&a.step) {
+    if let Ok(s) = language().parse::<noise::NoiseStep<AnyValue>>(&step) {
         return handle_resolve_noise(ds, t, s.service.0, a.observer);
     }
     eventually_retract(ds.assert(t, language(), &gatekeeper::Rejected {

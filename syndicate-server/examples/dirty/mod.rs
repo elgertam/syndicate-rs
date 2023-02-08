@@ -16,8 +16,9 @@ pub fn dirty_resolve(stream: &mut TcpStream, dataspace: &str) -> Result<(), Box<
     let iolang = Language::<IOValue>::default();
 
     let sturdyref = sturdy::SturdyRef::from_hex(dataspace)?;
-    let sturdyref: IOValue = syndicate::language().unparse(&sturdyref)
-        .copy_via(&mut |_| Err("no!"))?;
+    let sturdyref = iolang.parse::<gatekeeper::Step<IOValue>>(
+        &syndicate::language().unparse(&sturdyref)
+            .copy_via(&mut |_| Err("no!"))?)?;
 
     let resolve_turn = P::Turn(vec![
         P::TurnEvent {
