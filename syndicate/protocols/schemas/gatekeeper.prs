@@ -6,15 +6,17 @@ embeddedType EntityRef.Cap .
 
 ; Assertion. Gatekeeper will attempt to resolve `step`, responding with a `Resolved` to
 ; `observer`.
-Resolve = <resolve @step any @observer #!Resolved> .
+Resolve = <resolve @step Step @observer #!Resolved> .
 Resolved = <accepted @responderSession #!any> / Rejected .
+Step = <<rec> @stepType symbol @details [any ...]> .
 
 ;---------------------------------------------------------------------------
 ; Protocol at dataspaces *associated* with gatekeeper entities
 
-; Assertion. Gatekeeper will compute an appropriate `step` from `description` pointing at
-; `target`, and will respond with a `Bound` to `observer`, if supplied.
-Bind = <bind @description any @target #!any @observer BindObserver> .
+; Assertion. Gatekeeper will compute an appropriate Step from `description` pointing at
+; `target`, and will respond with a `Bound` to `observer` (if supplied).
+Bind = <bind @description Description @target #!any @observer BindObserver> .
+Description = <<rec> @stepType symbol @details [any ...]> .
 BindObserver = @present #!Bound / @absent #f .
 Bound = <bound @step any> / Rejected .
 
@@ -26,10 +28,10 @@ Bound = <bound @step any> / Rejected .
 ; `route.transports`, asserting `ResolvePath` with the final `Resolved` as well as the selected
 ; transport `addr` and a `control` for it.
 ResolvePath = <resolve-path @route Route @addr any @control #!TransportControl @resolved Resolved> .
-ResolvePathStep =
-/ @base <connect-transport @addr any @observer #!Resolved>
-/ @step <resolve-path-step @gatekeeper #!Resolve @pathStep any @observer #!Resolved>
-.
+
+TransportConnection = <connect-transport @addr any @control #!TransportControl @resolved Resolved> .
+ResolvedPathStep = <path-step @origin #!Resolve @pathStep PathStep @resolved Resolved> .
+PathStep = <<rec> @stepType symbol @details [any ...]> .
 
 ; A `Route` describes a network path that can be followed to reach some target entity.
 ;
@@ -43,9 +45,11 @@ ResolvePathStep =
 ; this will be a `gatekeeper`, or a `noise` protocol endpoint, or both. Occasionally, it may
 ; even be the desired target entity. Subsequent `pathSteps` describe how to proceed from the
 ; initial entity to the target.
-Route = <route @transports [any ...] @pathSteps any ...> .
+Route = <route @transports [any ...] @pathSteps PathStep ...> .
 
 TransportControl = ForceDisconnect .
 ForceDisconnect = <force-disconnect> .
+
+;---------------------------------------------------------------------------
 
 Rejected = <rejected @detail any> .
