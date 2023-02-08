@@ -26,10 +26,9 @@ Bound = <bound @step any> / Rejected .
 ; `route.transports`, asserting `ResolvePath` with the final `Resolved` as well as the selected
 ; transport `addr` and a `control` for it.
 ResolvePath = <resolve-path @route Route @addr any @control #!TransportControl @resolved Resolved> .
-ResolvePathStep =
-/ @base <connect-transport @addr any @observer #!Resolved>
-/ @step <resolve-path-step @gatekeeper #!Resolve @pathStep any @observer #!Resolved>
-.
+
+TransportConnection = <connect-transport @addr any @control #!TransportControl @resolved Resolved> .
+PathStep = <path-step @origin #!Resolve @pathStep any @resolved Resolved> .
 
 ; A `Route` describes a network path that can be followed to reach some target entity.
 ;
