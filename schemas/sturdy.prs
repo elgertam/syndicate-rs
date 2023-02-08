@@ -1,6 +1,10 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
+; `step` and `description` for use with `gatekeeper.Resolve` and `gatekeeper.Bind` etc.
+SturdyStep = SturdyRef .
+SturdyService = <ref @oid any @key bytes> .
+
 ; The sequence of Caveats is run RIGHT-TO-LEFT.
 ; That is, the newest Caveats are at the right.
 ;
