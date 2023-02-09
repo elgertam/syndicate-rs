@@ -31,7 +31,7 @@ NoiseSpec = {
 & @preSharedKeys NoisePreSharedKeys
 .
 
-NoiseServiceSpec = @base noise.NoiseSpec & @secretKey SecretKeyField .
+NoiseServiceSpec = @base NoiseSpec & @secretKey SecretKeyField .
 SecretKeyField = @present { secretKey: bytes } / @invalid { secretKey: any } / @absent {} .
 
 ; If absent, a default of DefaultProtocol is used. Most services will speak the default.
