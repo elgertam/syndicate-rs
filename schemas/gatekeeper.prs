@@ -35,17 +35,17 @@ PathStep = <<rec> @stepType symbol [@detail any]> .
 
 ; A `Route` describes a network path that can be followed to reach some target entity.
 ;
-; It starts with zero or more possible non-Syndicate `transports`, in preference order. These
-; could be `transportAddress.Tcp` values or similar. They are just suggestions; it's quite
-; possible the endpoint is reachable by some means not listed. The network outside Syndicate
-; is, after all, pretty diverse! In particular, *zero* `transports` may be provided, in which
-; case some out-of-band means has to be used to make that first connection.
+; It starts with a set of zero or more possible non-Syndicate `transports`. These could be
+; `transportAddress.Tcp` values or similar. They are just suggestions; it's quite possible the
+; endpoint is reachable by some means not listed. The network outside Syndicate is, after all,
+; pretty diverse! In particular, *zero* `transports` may be provided, in which case some
+; out-of-band means has to be used to make that first connection.
 ;
 ; The `transports` give instructions for contacting the first entity in the `Route` path. Often
 ; this will be a `gatekeeper`, or a `noise` protocol endpoint, or both. Occasionally, it may
 ; even be the desired target entity. Subsequent `pathSteps` describe how to proceed from the
 ; initial entity to the target.
-Route = <route @transports [any ...] @pathSteps PathStep ...> .
+Route = <route @transports #{any} @pathSteps PathStep ...> .
 
 TransportControl = ForceDisconnect .
 ForceDisconnect = <force-disconnect> .
