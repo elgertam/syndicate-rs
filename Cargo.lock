@@ -1908,7 +1908,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate"
-version = "0.28.1"
+version = "0.28.2"
 dependencies = [
  "blake2",
  "bytes",
