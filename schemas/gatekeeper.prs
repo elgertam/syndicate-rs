@@ -45,7 +45,10 @@ PathStep = <<rec> @stepType symbol [@detail any]> .
 ; this will be a `gatekeeper`, or a `noise` protocol endpoint, or both. Occasionally, it may
 ; even be the desired target entity. Subsequent `pathSteps` describe how to proceed from the
 ; initial entity to the target.
-Route = <route @transports #{any} @pathSteps PathStep ...> .
+;
+; (`transports` should by rights be a set, not a sequence, but that opens up a Can Of Worms
+; regarding dataspace patterns including literal sets that I can't deal with right now.)
+Route = <route @transports [any ...] @pathSteps PathStep ...> .
 
 TransportControl = ForceDisconnect .
 ForceDisconnect = <force-disconnect> .
