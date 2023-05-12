@@ -66,15 +66,14 @@ armv7-binary-release:
 armv7-binary-debug:
 	cross build --target=armv7-unknown-linux-musleabihf --all-targets --features vendored-openssl
 
-# Hack to workaround https://github.com/rust-embedded/cross/issues/598
-HACK_WORKAROUND_ISSUE_598=CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-arg=/usr/local/aarch64-linux-musl/lib/libc.a"
+# As of 2023-05-12 (and probably earlier!) this is no longer required with current Rust nightlies
+# # Hack to workaround https://github.com/rust-embedded/cross/issues/598
+# HACK_WORKAROUND_ISSUE_598=CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-arg=/usr/local/aarch64-linux-musl/lib/libc.a"
 
 aarch64-binary: aarch64-binary-release
 
 aarch64-binary-release:
-	$(HACK_WORKAROUND_ISSUE_598) \
-		cross build --target=aarch64-unknown-linux-musl --release --all-targets --features vendored-openssl
+	cross build --target=aarch64-unknown-linux-musl --release --all-targets --features vendored-openssl
 
 aarch64-binary-debug:
-	$(HACK_WORKAROUND_ISSUE_598) \
-		cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
+	cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
