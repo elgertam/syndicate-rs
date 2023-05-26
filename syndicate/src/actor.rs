@@ -794,7 +794,6 @@ impl<'activation> Activation<'activation> {
             None => false,
             Some(f) => {
                 f.outbound_handles.insert(handle);
-                drop(f);
 
                 let r = Arc::clone(r);
                 let details = OutboundAssertion {
