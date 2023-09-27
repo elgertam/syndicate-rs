@@ -25,3 +25,9 @@ strip = true
 
 [profile.bench]
 debug = true
+
+[patch.crates-io]
+# Unfortunately, until [1] is fixed (perhaps via [2]), we have to use a patched proc-macro2.
+# [1]: https://github.com/dtolnay/proc-macro2/issues/402
+# [2]: https://github.com/dtolnay/proc-macro2/pull/407
+proc-macro2 = { git = "https://github.com/tonyg/proc-macro2", branch = "repair_span_start_end" }
