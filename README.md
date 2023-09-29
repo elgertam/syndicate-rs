@@ -23,6 +23,12 @@ A Rust implementation of:
 
 ## Quickstart
 
+From docker or podman:
+
+    docker run -it --rm leastfixedpoint/syndicate-server /syndicate-server -p 8001
+
+Build and run from source:
+
     git clone https://git.syndicate-lang.org/syndicate-lang/syndicate-rs
     cd syndicate-rs
     cargo build --release
