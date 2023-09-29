@@ -16,5 +16,8 @@ syndicate = { path = "../syndicate", version = "0.28.0"}
 clap = { version = "^4.0", features = ["derive"] }
 clap_complete = "^4.0"
 
+noise-protocol = "0.1"
+noise-rust-crypto = "0.5"
+
 [package.metadata.workspaces]
 independent = true

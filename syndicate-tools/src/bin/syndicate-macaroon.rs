@@ -7,6 +7,10 @@ use clap::Parser;
 use clap::Subcommand;
 use clap::arg;
 use clap_complete::{generate, Shell};
+use noise_protocol::DH;
+use noise_protocol::Hash;
+use noise_rust_crypto::Blake2s;
+use noise_rust_crypto::X25519;
 use preserves::hex::HexParser;
 use preserves::value::BytesBinarySource;
 use preserves::value::NestedValue;
@@ -18,6 +22,7 @@ use preserves::value::TextWriter;
 use syndicate::language;
 use syndicate::preserves_schema::Codec;
 use syndicate::preserves_schema::ParseError;
+use syndicate::schemas::noise;
 use syndicate::sturdy::_Any;
 
 #[derive(Clone, Debug)]
@@ -39,6 +44,30 @@ enum Action {
         #[arg(long, group="key")]
         /// Key bytes, encoded as hex
         hex: Option<String>,
+    },
+
+    #[command(group(ArgGroup::new("key").required(true)))]
+    /// Generate a fresh NoiseServiceSpec from a service selector and a key
+    Noise {
+        #[arg(long, value_name="VALUE")]
+        /// Preserves value to use as the service selector
+        service: Preserves<_Any>,
+
+        #[arg(long, value_name="PROTOCOL")]
+        /// Noise handshake protocol name
+        protocol: Option<String>,
+
+        #[arg(long, group="key")]
+        /// Key phrase
+        phrase: Option<String>,
+
+        #[arg(long, group="key")]
+        /// Key bytes, encoded as hex
+        hex: Option<String>,
+
+        #[arg(long, group="key")]
+        /// Generate a random key
+        random: bool,
     },
 
     /// Emit shell completion code
@@ -71,6 +100,40 @@ fn main() -> io::Result<()> {
             let mut cmd = <Cli as CommandFactory>::command();
             let name = cmd.get_name().to_string();
             generate(shell, &mut cmd, name, &mut io::stdout());
+        }
+
+        Action::Noise { service, protocol, phrase, hex, random } => {
+            let key =
+                if random {
+                    X25519::genkey()
+                } else if let Some(hex) = hex {
+                    let mut hash = Blake2s::default();
+                    hash.input(hex.as_bytes());
+                    hash.result()
+                } else if let Some(phrase) = phrase {
+                    let mut hash = Blake2s::default();
+                    hash.input(phrase.as_bytes());
+                    hash.result()
+                } else {
+                    unreachable!()
+                };
+            let n = noise::NoiseServiceSpec {
+                base: noise::NoiseSpec {
+                    key: X25519::pubkey(&key).to_vec(),
+                    service: noise::ServiceSelector(service.0),
+                    pre_shared_keys: noise::NoisePreSharedKeys::Absent,
+                    protocol: if let Some(p) = protocol {
+                        noise::NoiseProtocol::Present { protocol: p }
+                    } else {
+                        noise::NoiseProtocol::Absent
+                    },
+                },
+                secret_key: noise::SecretKeyField::Present {
+                    secret_key: key.to_vec(),
+                },
+            };
+            println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec,
+                                              &language().unparse(&n))?);
         }
 
         Action::Mint { oid, phrase, hex } => {
