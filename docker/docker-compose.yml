@@ -1,0 +1,9 @@
+version: "3"
+
+services:
+  syndicate:
+    image: leastfixedpoint/syndicate-server
+    ports:
+      - "1:1"
+    volumes:
+      - "/etc/syndicate:/data"
