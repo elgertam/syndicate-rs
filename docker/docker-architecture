@@ -1,0 +1,6 @@
+#!/bin/sh
+case $1 in
+    x86_64) echo amd64;;
+    armv7) echo arm;;
+    aarch64) echo arm64;;
+esac

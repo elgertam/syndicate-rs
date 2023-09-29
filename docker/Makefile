@@ -1,18 +1,37 @@
+U=leastfixedpoint
+I=syndicate-server
+ARCHITECTURES:=amd64 arm arm64
+SERVERS:=$(patsubst %,syndicate-server.%,$(ARCHITECTURES))
+VERSION=$(shell ./syndicate-server.$(shell ./docker-architecture $$(uname -m)) --version | cut -d' ' -f2)
+
 all:
 
-.PHONY: all clean image push syndicate-server
+.PHONY: all clean image push push-only
 
 clean:
-	rm -f syndicate-server
-	docker rmi leastfixedpoint/syndicate-server
+	rm -f syndicate-server.*
+	-podman images -q $(U)/$(I) | sort -u | xargs podman rmi -f
 
-image: syndicate-server
-	docker build -t leastfixedpoint/$$(./syndicate-server --version | tr ' ' ':') -t leastfixedpoint/syndicate-server:latest .
+image: $(SERVERS)
+	for A in $(ARCHITECTURES); do set -x; \
+		podman build --platform=linux/$$A \
+			-t $(U)/$(I):$(VERSION)-$$A \
+			-t $(U)/$(I):latest-$$A \
+		.; \
+	done
+	rm -f tmp.image
 
-push: image
-	docker push leastfixedpoint/$$(./syndicate-server --version | tr ' ' ':')
-	docker push leastfixedpoint/syndicate-server:latest
+push: image push-only
 
-syndicate-server:
-	make -C .. x86_64-binary-release
-	cp -a ../target/x86_64-unknown-linux-musl/release/syndicate-server $@
+push-only:
+	$(patsubst %,podman push $(U)/$(I):$(VERSION)-%;,$(ARCHITECTURES))
+	$(patsubst %,podman push $(U)/$(I):latest-%;,$(ARCHITECTURES))
+	podman rmi -f $(U)/$(I):$(VERSION) $(U)/$(I):latest
+	podman manifest create $(U)/$(I):$(VERSION) $(patsubst %,$(U)/$(I):$(VERSION)-%,$(ARCHITECTURES))
+	podman manifest create $(U)/$(I):latest $(patsubst %,$(U)/$(I):latest-%,$(ARCHITECTURES))
+	podman manifest push $(U)/$(I):$(VERSION)
+	podman manifest push $(U)/$(I):latest
+
+syndicate-server.%:
+	make -C .. $$(./alpine-architecture $*)-binary-release
+	cp -a ../target/$$(./alpine-architecture $*)-unknown-linux-musl*/release/syndicate-server $@
