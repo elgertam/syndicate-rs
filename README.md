@@ -35,7 +35,7 @@ Build and run from source:
     ./target/release/syndicate-server -p 8001
 
 If you have [`mold`](https://github.com/rui314/mold) available (`apt install mold`), you may be
-able to get an additional ~10% throughput by creating `.cargo/config.toml` as follows:
+able to get faster linking by creating `.cargo/config.toml` as follows:
 
     [build]
     rustflags = ["-C", "link-arg=-fuse-ld=mold"]
