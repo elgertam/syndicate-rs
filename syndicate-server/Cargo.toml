@@ -26,6 +26,8 @@ noise-rust-crypto = "0.5"
 notify = "4.0"
 structopt = "0.3"
 
+tikv-jemallocator = "0.5.0"
+
 tungstenite = "0.13"
 tokio-tungstenite = "0.14"
 

@@ -26,6 +26,9 @@ mod protocol;
 mod script;
 mod services;
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod schemas {
     include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
 }
