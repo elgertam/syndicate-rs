@@ -34,6 +34,12 @@ Build and run from source:
     cargo build --release
     ./target/release/syndicate-server -p 8001
 
+If you have [`mold`](https://github.com/rui314/mold) available (`apt install mold`), you may be
+able to get an additional ~10% throughput by creating `.cargo/config.toml` as follows:
+
+    [build]
+    rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
 ## Running the examples
 
 In one window, start the server:
