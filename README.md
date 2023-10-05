@@ -40,6 +40,8 @@ able to get faster linking by creating `.cargo/config.toml` as follows:
     [build]
     rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
+Enabling the `jemalloc` feature can get a *substantial* (~20%-50%) improvement in throughput.
+
 ## Running the examples
 
 In one window, start the server:

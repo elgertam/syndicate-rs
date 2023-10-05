@@ -31,7 +31,7 @@ pull-protocols:
 static: static-x86_64
 
 static-%:
-	cross build --target $*-unknown-linux-musl --features vendored-openssl
+	cross build --target $*-unknown-linux-musl --features vendored-openssl,jemalloc
 
 ###########################################################################
 

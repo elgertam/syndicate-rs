@@ -13,7 +13,7 @@ inotifytest:
 binary: binary-release
 
 binary-release:
-	cargo build --release --all-targets
+	cargo build --release --all-targets --features jemalloc
 
 binary-debug:
 	cargo build --all-targets
