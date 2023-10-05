@@ -9,6 +9,9 @@ homepage = "https://syndicate-lang.org/"
 repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
 license = "Apache-2.0"
 
+[features]
+jemalloc = ["dep:tikv-jemallocator"]
+
 [build-dependencies]
 preserves-schema = "3.2"
 syndicate = { path = "../syndicate", version = "0.28.0"}
@@ -26,7 +29,7 @@ noise-rust-crypto = "0.5"
 notify = "4.0"
 structopt = "0.3"
 
-tikv-jemallocator = "0.5.0"
+tikv-jemallocator = { version = "0.5.0", optional = true }
 
 tungstenite = "0.13"
 tokio-tungstenite = "0.14"

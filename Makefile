@@ -53,7 +53,7 @@ static-%:
 x86_64-binary: x86_64-binary-release
 
 x86_64-binary-release:
-	cross build --target x86_64-unknown-linux-musl --release --all-targets --features vendored-openssl
+	cross build --target x86_64-unknown-linux-musl --release --all-targets --features vendored-openssl,jemalloc
 
 x86_64-binary-debug:
 	cross build --target x86_64-unknown-linux-musl --all-targets --features vendored-openssl
@@ -73,7 +73,7 @@ armv7-binary-debug:
 aarch64-binary: aarch64-binary-release
 
 aarch64-binary-release:
-	cross build --target=aarch64-unknown-linux-musl --release --all-targets --features vendored-openssl
+	cross build --target=aarch64-unknown-linux-musl --release --all-targets --features vendored-openssl,jemalloc
 
 aarch64-binary-debug:
 	cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
