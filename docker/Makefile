@@ -10,6 +10,7 @@ all:
 
 clean:
 	rm -f syndicate-server.*
+	rm -rf $(patsubst %,target.%,$(ARCHITECTURES))
 	-podman images -q $(U)/$(I) | sort -u | xargs podman rmi -f
 
 image: $(SERVERS)
@@ -33,5 +34,5 @@ push-only:
 	podman manifest push $(U)/$(I):latest
 
 syndicate-server.%:
-	make -C .. $$(./alpine-architecture $*)-binary-release
-	cp -a ../target/$$(./alpine-architecture $*)-unknown-linux-musl*/release/syndicate-server $@
+	make -C .. CARGO_TARGET_DIR=docker/target.$* $$(./alpine-architecture $*)-binary-release
+	cp -a target.$*/$$(./alpine-architecture $*)-unknown-linux-musl*/release/syndicate-server $@
