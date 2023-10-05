@@ -15,7 +15,8 @@ ws-bump:
 	cargo workspaces version \
 		--no-global-tag \
 		--individual-tag-prefix '%n-v' \
-		--allow-branch 'main'
+		--allow-branch 'main' \
+		$(BUMP_ARGS)
 
 ws-publish:
 	cargo workspaces publish \
