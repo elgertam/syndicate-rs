@@ -9,3 +9,4 @@ buildtag() {
 git tag "$(buildtag syndicate/Cargo.toml)"
 git tag "$(buildtag syndicate-macros/Cargo.toml)"
 git tag "$(buildtag syndicate-server/Cargo.toml)"
+git tag "$(buildtag syndicate-tools/Cargo.toml)"
