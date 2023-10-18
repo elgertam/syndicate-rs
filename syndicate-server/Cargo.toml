@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-server"
-version = "0.32.2"
+version = "0.33.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
@@ -14,12 +14,12 @@ jemalloc = ["dep:tikv-jemallocator"]
 
 [build-dependencies]
 preserves-schema = "3.2"
-syndicate = { path = "../syndicate", version = "0.28.0"}
+syndicate = { path = "../syndicate", version = "0.29.0"}
 
 [dependencies]
 preserves-schema = "3.2"
-syndicate = { path = "../syndicate", version = "0.28.3"}
-syndicate-macros = { path = "../syndicate-macros", version = "0.23.2"}
+syndicate = { path = "../syndicate", version = "0.29.0"}
+syndicate-macros = { path = "../syndicate-macros", version = "0.24.0"}
 
 chrono = "0.4"
 futures = "0.3"
