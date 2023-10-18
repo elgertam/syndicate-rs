@@ -489,6 +489,7 @@ impl TunnelRelay {
         } else {
             PackedWriter::encode(&mut self.membranes, &item)?
         };
+        tracing::trace!(buffer = ?bs, "outbound bytes");
 
         let _ = self.output.send(LoanedItem::new(account, cost, bs));
         Ok(())
