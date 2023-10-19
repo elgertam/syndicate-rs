@@ -58,7 +58,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut buf = [0; 131072];
     let turn_size = {
-        stream.read(&mut buf)?;
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            return Ok(());
+        }
         let mut src = BytesBinarySource::new(&buf);
         src.packed_iovalues().demand_next(false)?;
         src.index
