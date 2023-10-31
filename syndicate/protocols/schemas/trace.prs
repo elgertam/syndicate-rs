@@ -25,10 +25,10 @@ TurnId = any .
 
 ExitStatus = =ok / protocol.Error .
 
-; Trace information associated with a turn.
+# Trace information associated with a turn.
 TurnDescription = <turn @id TurnId @cause TurnCause @actions [ActionDescription ...]> .
 
-; The cause of a turn.
+# The cause of a turn.
 TurnCause =
 / @turn <caused-by @id TurnId>
 / <cleanup>
@@ -40,27 +40,27 @@ TurnCause =
 
 LinkedTaskReleaseReason = =cancelled / =normal .
 
-; An actual event carried within a turn.
+# An actual event carried within a turn.
 TurnEvent =
 / <assert @assertion AssertionDescription @handle protocol.Handle>
 / <retract @handle protocol.Handle>
 / <message @body AssertionDescription>
 / <sync @peer Target>
-/ ; A souped-up, disguised, special-purpose `retract` event.
+/ # A souped-up, disguised, special-purpose `retract` event.
   @breakLink <break-link @source ActorId @handle protocol.Handle>
 .
 
 TargetedTurnEvent = <event @target Target @detail TurnEvent> .
 
-; An action taken during a turn.
+# An action taken during a turn.
 ActionDescription =
-/ ; The active party is processing a new `event` for `target` from the received Turn.
+/ # The active party is processing a new `event` for `target` from the received Turn.
   <dequeue @event TargetedTurnEvent>
-/ ; The active party has queued a new `event` to be processed later by `target`.
+/ # The active party has queued a new `event` to be processed later by `target`.
   <enqueue @event TargetedTurnEvent>
-/ ; The active party is processing an internally-queued event for one of its own entities.
+/ # The active party is processing an internally-queued event for one of its own entities.
   @dequeueInternal <dequeue-internal @event TargetedTurnEvent>
-/ ; The active party has scheduled an internally-queued event for one of its own entities.
+/ # The active party has scheduled an internally-queued event for one of its own entities.
   @enqueueInternal <enqueue-internal @event TargetedTurnEvent>
 / <spawn @link bool @id ActorId>
 / <link
@@ -73,9 +73,9 @@ ActionDescription =
 / @linkedTaskStart <linked-task-start @taskName Name @id TaskId>
 .
 
-; An assertion or the body of a message: either a Preserves value, or
-; some opaque system-internal value, represented according to the
-; system concerned.
+# An assertion or the body of a message: either a Preserves value, or
+# some opaque system-internal value, represented according to the
+# system concerned.
 AssertionDescription =
 / <value @value any>
 / <opaque @description any>
@@ -90,7 +90,7 @@ FacetStopReason =
 
 Target = <entity @actor ActorId @facet FacetId @oid Oid> .
 
-; For the future: consider including information about `protocol`-level `Turn`s etc sent to
-; peers over e.g. Websockets or TCP/IP, allowing cross-correlation of traces from different
-; processes and implementations with each other to form a large overall picture.
+# For the future: consider including information about `protocol`-level `Turn`s etc sent to
+# peers over e.g. Websockets or TCP/IP, allowing cross-correlation of traces from different
+# processes and implementations with each other to form a large overall picture.
 .

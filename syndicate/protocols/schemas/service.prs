@@ -1,51 +1,51 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-; Asserts that a service should begin (and stay) running after waiting
-; for its dependencies and considering reverse-dependencies, blocks,
-; and so on.
+# Asserts that a service should begin (and stay) running after waiting
+# for its dependencies and considering reverse-dependencies, blocks,
+# and so on.
 RequireService = <require-service @serviceName any>.
 
-; Asserts that a service should begin (and stay) running RIGHT NOW,
-; without considering its dependencies.
+# Asserts that a service should begin (and stay) running RIGHT NOW,
+# without considering its dependencies.
 RunService = <run-service @serviceName any>.
 
-; Asserts one or more current states of service `serviceName`. The
-; overall state of the service is the union of asserted `state`s.
-;
-; Only a few combinations make sense:
-;  - `started`
-;  - `started` + `ready`
-;  - `failed`
-;  - `complete`
-;
+# Asserts one or more current states of service `serviceName`. The
+# overall state of the service is the union of asserted `state`s.
+#
+# Only a few combinations make sense:
+#  - `started`
+#  - `started` + `ready`
+#  - `failed`
+#  - `complete`
+#
 ServiceState = <service-state @serviceName any @state State>.
 
-; A running service publishes zero or more of these. The details of
-; the object vary by service.
-;
+# A running service publishes zero or more of these. The details of
+# the object vary by service.
+#
 ServiceObject = <service-object @serviceName any @object any>.
 
-; Possible service states.
+# Possible service states.
 State =
-/ ; The service has begun its startup routine, and may or may not be
-  ; ready to take requests from other parties.
+/ # The service has begun its startup routine, and may or may not be
+  # ready to take requests from other parties.
   =started
-/ ; The service is ready to take requests from other parties.
-  ; (This state is special in that it is asserted *in addition* to `started`.)
+/ # The service is ready to take requests from other parties.
+  # (This state is special in that it is asserted *in addition* to `started`.)
   =ready
-/ ; The service has failed.
+/ # The service has failed.
   =failed
-/ ; The service has completed execution.
+/ # The service has completed execution.
   =complete
-/ ; Extension or user-defined state
+/ # Extension or user-defined state
   @userDefined any
 .
 
-; Asserts that, when `depender` is `require-service`d, it should not be started until
-; `dependee` has been asserted, and also that `dependee`'s `serviceName` should be
-; `require-service`d.
+# Asserts that, when `depender` is `require-service`d, it should not be started until
+# `dependee` has been asserted, and also that `dependee`'s `serviceName` should be
+# `require-service`d.
 ServiceDependency = <depends-on @depender any @dependee ServiceState>.
 
-; Message. Triggers a service restart.
+# Message. Triggers a service restart.
 RestartService = <restart-service @serviceName any>.
