@@ -1,58 +1,58 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-;---------------------------------------------------------------------------
-; Protocol at *gatekeeper* entities
+# ---------------------------------------------------------------------------
+# Protocol at *gatekeeper* entities
 
-; Assertion. Gatekeeper will attempt to resolve `step`, responding with a `Resolved` to
-; `observer`.
+# Assertion. Gatekeeper will attempt to resolve `step`, responding with a `Resolved` to
+# `observer`.
 Resolve = <resolve @step Step @observer #!Resolved> .
 Resolved = <accepted @responderSession #!any> / Rejected .
 Step = <<rec> @stepType symbol [@detail any]> .
 
-;---------------------------------------------------------------------------
-; Protocol at dataspaces *associated* with gatekeeper entities
+# ---------------------------------------------------------------------------
+# Protocol at dataspaces *associated* with gatekeeper entities
 
-; Assertion. Gatekeeper will compute an appropriate PathStep from `description` pointing at
-; `target`, and will respond with a `Bound` to `observer` (if supplied).
+# Assertion. Gatekeeper will compute an appropriate PathStep from `description` pointing at
+# `target`, and will respond with a `Bound` to `observer` (if supplied).
 Bind = <bind @description Description @target #!any @observer BindObserver> .
 Description = <<rec> @stepType symbol [@detail any]> .
 BindObserver = @present #!Bound / @absent #f .
 Bound = <bound @pathStep PathStep> / Rejected .
 
-;---------------------------------------------------------------------------
-; Protocol at client-side dataspaces, for resolution utilities
+# ---------------------------------------------------------------------------
+# Protocol at client-side dataspaces, for resolution utilities
 
-; Assertion. In response to observation of this with appropriate captures/wildcards in `addr`
-; and `resolved`, respondent will follow `route.pathSteps` starting from one of the
-; `route.transports`, asserting `ResolvePath` with the final `Resolved` as well as the selected
-; transport `addr` and a `control` for it.
+# Assertion. In response to observation of this with appropriate captures/wildcards in `addr`
+# and `resolved`, respondent will follow `route.pathSteps` starting from one of the
+# `route.transports`, asserting `ResolvePath` with the final `Resolved` as well as the selected
+# transport `addr` and a `control` for it.
 ResolvePath = <resolve-path @route Route @addr any @control #!TransportControl @resolved Resolved> .
 
 TransportConnection = <connect-transport @addr any @control #!TransportControl @resolved Resolved> .
 ResolvedPathStep = <path-step @origin #!Resolve @pathStep PathStep @resolved Resolved> .
 PathStep = <<rec> @stepType symbol [@detail any]> .
 
-; A `Route` describes a network path that can be followed to reach some target entity.
-;
-; It starts with a set of zero or more possible non-Syndicate `transports`. These could be
-; `transportAddress.Tcp` values or similar. They are just suggestions; it's quite possible the
-; endpoint is reachable by some means not listed. The network outside Syndicate is, after all,
-; pretty diverse! In particular, *zero* `transports` may be provided, in which case some
-; out-of-band means has to be used to make that first connection.
-;
-; The `transports` give instructions for contacting the first entity in the `Route` path. Often
-; this will be a `gatekeeper`, or a `noise` protocol endpoint, or both. Occasionally, it may
-; even be the desired target entity. Subsequent `pathSteps` describe how to proceed from the
-; initial entity to the target.
-;
-; (`transports` should by rights be a set, not a sequence, but that opens up a Can Of Worms
-; regarding dataspace patterns including literal sets that I can't deal with right now.)
+# A `Route` describes a network path that can be followed to reach some target entity.
+#
+# It starts with a set of zero or more possible non-Syndicate `transports`. These could be
+# `transportAddress.Tcp` values or similar. They are just suggestions; it's quite possible the
+# endpoint is reachable by some means not listed. The network outside Syndicate is, after all,
+# pretty diverse! In particular, *zero* `transports` may be provided, in which case some
+# out-of-band means has to be used to make that first connection.
+#
+# The `transports` give instructions for contacting the first entity in the `Route` path. Often
+# this will be a `gatekeeper`, or a `noise` protocol endpoint, or both. Occasionally, it may
+# even be the desired target entity. Subsequent `pathSteps` describe how to proceed from the
+# initial entity to the target.
+#
+# (`transports` should by rights be a set, not a sequence, but that opens up a Can Of Worms
+# regarding dataspace patterns including literal sets that I can't deal with right now.)
 Route = <route @transports [any ...] @pathSteps PathStep ...> .
 
 TransportControl = ForceDisconnect .
 ForceDisconnect = <force-disconnect> .
 
-;---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 Rejected = <rejected @detail any> .
