@@ -30,26 +30,26 @@ EnvVariable = @string string / @symbol symbol / @invalid any .
 EnvValue = @set string / @remove #f / @invalid any .
 
 RestartPolicy =
-/ ; Whether the process terminates normally or abnormally, restart it
-  ; without affecting any peer processes within the service.
+/ # Whether the process terminates normally or abnormally, restart it
+  # without affecting any peer processes within the service.
   =always
-/ ; If the process terminates normally, leave everything alone; if it
-  ; terminates abnormally, restart it without affecting peers.
+/ # If the process terminates normally, leave everything alone; if it
+  # terminates abnormally, restart it without affecting peers.
   @onError =on-error
-/ ; If the process terminates normally, leave everything alone; if it
-  ; terminates abnormally, restart the whole daemon (all processes
-  ; within the daemon).
+/ # If the process terminates normally, leave everything alone; if it
+  # terminates abnormally, restart the whole daemon (all processes
+  # within the daemon).
   =all
-/ ; Treat both normal and abnormal termination as normal termination; that is, never restart,
-  ; and enter state "complete" even if the process fails.
+/ # Treat both normal and abnormal termination as normal termination; that is, never restart,
+  # and enter state "complete" even if the process fails.
   =never
 .
 
 Protocol =
-/ ; stdin is /dev/null, output and error are logged
+/ # stdin is /dev/null, output and error are logged
   =none
-/ ; stdin and stdout are *binary* Syndicate-protocol channels
+/ # stdin and stdout are *binary* Syndicate-protocol channels
   @binarySyndicate =application/syndicate
-/ ; stdin and stdout are *text* Syndicate-protocol channels
+/ # stdin and stdout are *text* Syndicate-protocol channels
   @textSyndicate =text/syndicate
 .
