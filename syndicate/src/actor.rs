@@ -1566,7 +1566,7 @@ impl EventBuffer {
     fn queue_for_mailbox(&mut self, mailbox: &Arc<Mailbox>) -> &mut PendingEventQueue {
         if self.multiple_queues.is_some() {
             return &mut self.multiple_queues.as_mut().unwrap().entry(mailbox.actor_id)
-                .or_insert((mailbox.tx.clone(), Vec::new())).1;
+                .or_insert((mailbox.tx.clone(), Vec::with_capacity(3))).1;
         }
 
         if let None = self.single_queue {
@@ -1583,7 +1583,7 @@ impl EventBuffer {
         table.insert(aid, (tx, q));
         self.multiple_queues = Some(table);
         return &mut self.multiple_queues.as_mut().unwrap().entry(mailbox.actor_id)
-            .or_insert((mailbox.tx.clone(), Vec::new())).1;
+            .or_insert((mailbox.tx.clone(), Vec::with_capacity(3))).1;
     }
 
     fn commit(&mut self) {
