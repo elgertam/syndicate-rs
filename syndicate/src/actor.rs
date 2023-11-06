@@ -641,7 +641,7 @@ impl FacetRef {
                 let mut activation =
                     Activation::make(self,
                                      Arc::clone(account),
-                                     cause.clone(),
+                                     cause,
                                      account.trace_collector.clone(),
                                      state);
                 let f_result = f(&mut activation);
