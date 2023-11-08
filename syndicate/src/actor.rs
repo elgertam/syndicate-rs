@@ -955,6 +955,13 @@ impl<'activation> Activation<'activation> {
             Box::new(move |t| t.with_entity(&r, |t, e| e.sync(t, peer)))))
     }
 
+    pub fn later<F: 'static + Send + FnOnce(&mut Activation) -> ActorResult>(&mut self, action: F) {
+        // TODO: properly describe this in traces
+        self.pending.queue_for_mailbox(&self.state.mailbox()).push((
+            None,
+            Box::new(action)));
+    }
+
     /// Registers the entity `r` in the list of stop actions for the active facet. If the facet
     /// terminates cleanly, `r`'s [`stop`][Entity::stop] will be called in the context of the
     /// facet's parent.
@@ -1210,6 +1217,30 @@ impl<'activation> Activation<'activation> {
 
     fn on_commit<F: 'static + Send + FnOnce(&mut Activation)>(&mut self, action: F) {
         self.commit_actions.push(Box::new(action));
+    }
+
+    /// Schedule the creation of a new actor wrapping an entity.
+    pub fn spawn_for_entity<M>(
+        &mut self,
+        name: Name,
+        link: bool,
+        target: Box<dyn Entity<M>>,
+    ) -> (Option<Arc<Ref<M>>>, ActorRef) {
+        let ac_ref = self._spawn(name, |t| {
+            let _ = t.prevent_inert_check();
+            Ok(())
+        }, link);
+        let mut g = ac_ref.state.lock();
+        let r = match &mut *g {
+            ActorState::Terminated { .. } => None,
+            ActorState::Running(state) => Some(Arc::new(Ref {
+                mailbox: state.mailbox(),
+                facet_id: state.root,
+                target: Mutex::new(Some(target)),
+            })),
+        };
+        drop(g);
+        (r, ac_ref)
     }
 
     /// Schedule the creation of a new actor when the Activation commits.
