@@ -213,7 +213,7 @@ async fn main() -> ActorResult {
         }));
 
         Ok(())
-    }).await??;
+    }).await?;
 
     wait_for_all_actors_to_stop(std::time::Duration::from_secs(2)).await;
 

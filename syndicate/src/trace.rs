@@ -27,7 +27,7 @@ pub struct TraceCollector {
 impl<M> From<&Ref<M>> for Target {
     fn from(v: &Ref<M>) -> Target {
         Target {
-            actor: ActorId(AnyValue::new(v.mailbox.actor_id)),
+            actor: ActorId(AnyValue::new(v.mailbox.actor.actor_id)),
             facet: FacetId(AnyValue::new(u64::from(v.facet_id))),
             oid: Oid(AnyValue::new(v.oid())),
         }

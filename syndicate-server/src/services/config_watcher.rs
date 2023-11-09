@@ -187,7 +187,7 @@ fn run(
     let facet = t.facet.clone();
     let trace_collector = t.trace_collector();
     let span = tracing::Span::current();
-    thread::spawn(move || {
+    tokio::task::spawn_blocking(move || {
         let _entry = span.enter();
 
         let mut path_state: Map<PathBuf, FacetId> = Map::new();

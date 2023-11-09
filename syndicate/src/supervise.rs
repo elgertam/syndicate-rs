@@ -40,7 +40,7 @@ pub struct Supervisor {
     boot_fn: Boot,
     restarts: VecDeque<Instant>,
     state: Arc<Field<State>>,
-    ac_ref: Option<ActorRef>,
+    ac_ref: Option<Actor>,
 }
 
 impl Default for SupervisorConfiguration {

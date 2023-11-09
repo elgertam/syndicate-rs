@@ -111,6 +111,6 @@ async fn main() -> ActorResult {
             Ok(())
         });
         Ok(())
-    }).await??;
+    }).await?;
     Ok(())
 }
