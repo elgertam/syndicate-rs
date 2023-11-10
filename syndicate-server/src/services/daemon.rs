@@ -24,7 +24,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("daemon_listener")), move |t| {
-        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService>,
+        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService::<AnyValue>>,
                    enclose!((config_ds, root_ds) move |t: &mut Activation| {
                        supervise_daemon(t, config_ds, root_ds, spec)
                    })))

@@ -36,7 +36,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("config_watcher")), move |t| {
-        Ok(during!(t, config_ds, language(), <run-service $spec: internal_services::ConfigWatcher>, |t| {
+        Ok(during!(t, config_ds, language(), <run-service $spec: internal_services::ConfigWatcher::<AnyValue>>, |t| {
             Supervisor::start(
                 t,
                 Some(rec![AnyValue::symbol("config"), AnyValue::new(spec.path.clone())]),

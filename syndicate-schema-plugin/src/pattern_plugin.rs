@@ -4,6 +4,9 @@ use preserves_schema::compiler::context::ModuleContext;
 use preserves_schema::gen::schema::*;
 use preserves_schema::syntax::block::escape_string;
 use preserves_schema::syntax::block::constructors::*;
+use preserves_schema::compiler::names;
+use preserves_schema::compiler::types::definition_type;
+use preserves_schema::compiler::types::Purpose;
 
 use std::iter::FromIterator;
 
@@ -29,12 +32,21 @@ impl Plugin for PatternPlugin {
         if ctxt.mode == context::ModuleContextMode::TargetGeneric {
             let mut s = WalkState::new(ctxt, ctxt.module_path.clone());
             if let Some(p) = definition.wc(&mut s) {
+                let ty = definition_type(&ctxt.module_path,
+                                         Purpose::Codegen,
+                                         definition_name,
+                                         definition);
                 let v = syndicate::language().unparse(&p);
                 let v = preserves_schema::support::preserves::value::TextWriter::encode(
                     &mut preserves_schema::support::preserves::value::NoEmbeddedDomainCodec,
                     &v).unwrap();
                 ctxt.define_type(item(seq![
-                    "impl ", definition_name.to_owned(), " ", codeblock![
+                    "impl",
+                    ty.generic_decl(ctxt),
+                    " ",
+                    names::render_constructor(definition_name),
+                    ty.generic_arg(ctxt),
+                    " ", codeblock![
                         seq!["#[allow(unused)] pub fn wildcard_dataspace_pattern() ",
                              "-> syndicate::schemas::dataspace_patterns::Pattern ",
                              codeblock![

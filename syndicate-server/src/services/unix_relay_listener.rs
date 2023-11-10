@@ -25,7 +25,7 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("unix_relay_listener")), move |t| {
-        Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener>, |t| {
+        Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener::<AnyValue>>, |t| {
             Supervisor::start(
                 t,
                 Some(rec![AnyValue::symbol("relay"), language().unparse(&spec)]),
