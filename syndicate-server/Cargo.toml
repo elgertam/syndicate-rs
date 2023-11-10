@@ -15,6 +15,7 @@ jemalloc = ["dep:tikv-jemallocator"]
 [build-dependencies]
 preserves-schema = "4.991"
 syndicate = { path = "../syndicate", version = "0.30.0"}
+syndicate-schema-plugin = { path = "../syndicate-schema-plugin", version = "0.1.0"}
 
 [dependencies]
 preserves-schema = "4.991"

@@ -1,0 +1,19 @@
+[package]
+name = "syndicate-schema-plugin"
+version = "0.1.0"
+authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
+edition = "2018"
+
+description = "Support for using Preserves Schema with Syndicate macros."
+homepage = "https://syndicate-lang.org/"
+repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
+license = "Apache-2.0"
+
+[lib]
+
+[dependencies]
+preserves-schema = "4.992.0"
+syndicate = { path = "../syndicate", version = "0.30.0"}
+
+[package.metadata.workspaces]
+independent = true
