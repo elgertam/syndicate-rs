@@ -347,7 +347,7 @@ pub struct ActorRef {
 
 /// A combination of an [`ActorRef`] with a [`FacetId`], acting as a capability to enter the
 /// execution context of a facet from a linked task.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FacetRef {
     pub actor: ActorRef,
     pub facet_id: FacetId,
@@ -1986,6 +1986,9 @@ impl Facet {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct KeepAlive(Option<Arc<Mailbox>>);
+
 impl ActorRef {
     /// Uses an internal mutex to access the internal state: takes the
     /// lock, calls `f` with the internal state, releases the lock,
@@ -2003,6 +2006,16 @@ impl ActorRef {
             ActorState::Running(_) => None,
             ActorState::Terminated { exit_status } => Some((**exit_status).clone().map_err(|e| e.into())),
         })
+    }
+
+    /// Creates a [`KeepAlive`] for (usually temporarily) ensuring an [Actor] does not get
+    /// garbage-collected due to no references to its [Mailbox] being held. (It may of course
+    /// be terminated for other reasons.)
+    pub fn keep_alive(&self) -> KeepAlive {
+        KeepAlive(self.access(|s| match s {
+            ActorState::Terminated { .. } => None,
+            ActorState::Running(ra) => Some(ra.mailbox()),
+        }))
     }
 
     fn facet_ref(&self, facet_id: FacetId) -> FacetRef {
