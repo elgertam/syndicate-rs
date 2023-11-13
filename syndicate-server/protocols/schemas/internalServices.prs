@@ -13,3 +13,4 @@ ConfigWatcher = <config-watcher @path string @env ConfigEnv>.
 ConfigEnv = { symbol: any ...:... }.
 
 HttpRouter = <http-router @httpd #!any> .
+HttpStaticFileServer = <http-static-files @dir string @pathPrefixElements int> .

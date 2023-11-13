@@ -10,4 +10,4 @@ gatekeeper„³Resolve„„„´³named³httpd´³embedded´³refµ³http„³HttpContext„„„„
 gatekeeper´³embedded´³refµ³
 gatekeeper„³Resolve„„„„„„³TcpRelayListener´³orµµ±TcpWithoutHttp´³refµ„³TcpWithoutHttp„„µ±TcpWithHttp´³refµ„³TcpWithHttp„„„„³UnixRelayListener´³rec´³lit³relay-listener„´³tupleµ´³named³addr´³refµ³TransportAddress„³Unix„„´³named³
 gatekeeper´³embedded´³refµ³
-gatekeeper„³Resolve„„„„„„„³embeddedType´³refµ³	EntityRef„³Cap„„„„„
+gatekeeper„³Resolve„„„„„„³HttpStaticFileServer´³rec´³lit³http-static-files„´³tupleµ´³named³dir´³atom³String„„´³named³pathPrefixElements´³atom³SignedInteger„„„„„„³embeddedType´³refµ³	EntityRef„³Cap„„„„„

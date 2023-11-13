@@ -1,0 +1,65 @@
+# We use $root_ds as the httpd space.
+let ?root_ds = dataspace
+
+# Supplying $root_ds as the last parameter in this relay-listener enables httpd service.
+<require-service <relay-listener <tcp "0.0.0.0" 9001> $gatekeeper $root_ds>>
+
+# Regular gatekeeper stuff works too.
+<bind <ref { oid: "syndicate" key: #x"" }> $root_ds #f>
+
+# Create an httpd router monitoring $root_ds for requests and bind requests.
+<require-service <http-router $root_ds>>
+
+# Create a static file server. When it gets a request, it ignores the first n (here, 1)
+# elements of the path, and takes the remainder as relative to its configured directory (here,
+# ".").
+#
+<require-service <http-static-files "." 1>>
+#
+# It publishes a service object: requests should be asserted to this.
+# The http-bind record establishes this mapping.
+#
+? <service-object <http-static-files "." 1> ?handler> [
+  $root_ds += <http-bind #f 9001 get ["files" ...] $handler>
+]
+
+# Separately, bind path /d to $index, and respond there.
+#
+let ?index = dataspace
+$root_ds += <http-bind #f 9001 get ["d"] $index>
+$index ? <request _ ?k> [
+  $k ! <status 200 "OK">
+  $k ! <header content-type "text/html">
+  $k ! <chunk "<!DOCTYPE html>">
+  $k ! <done "<html><body>D</body></html>">
+]
+
+# Similarly, bind three paths, /d, /e and /t to $index2
+# Because /d doubles up, the httpd router gives a warning when it is accessed.
+# Accessing /e works fine.
+# Accessing /t results in wasted work because of the hijacking listeners below.
+#
+let ?index2 = dataspace
+$root_ds += <http-bind #f 9001 get ["d"] $index2>
+$root_ds += <http-bind #f 9001 get ["e"] $index2>
+$root_ds += <http-bind #f 9001 get ["t"] $index2>
+$index2 ? <request _ ?k> [
+  $k ! <status 200 "OK">
+  $k ! <header content-type "text/html">
+  $k ! <chunk "<!DOCTYPE html>">
+  $k ! <done "<html><body>D2</body></html>">
+]
+
+# These two hijack /t by listening for raw incoming requests the same way the httpd router
+# does. They respond quicker and so win the race. The httpd router's responses are lost.
+#
+$root_ds ? <request <http-request _ _ _ get ["t"] _ _ _> ?k> [
+  $k ! <status 200 "OK">
+  $k ! <header content-type "text/html">
+  $k ! <done "<html><body>T</body></html>">
+]
+$root_ds ? <request <http-request _ _ _ get ["t"] _ _ _> ?k> [
+  $k ! <status 200 "OK">
+  $k ! <header content-type "text/html">
+  $k ! <done "<html><body>T2</body></html>">
+]
