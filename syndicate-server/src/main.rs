@@ -20,6 +20,7 @@ use syndicate::value::NestedValue;
 mod counter;
 mod dependencies;
 mod gatekeeper;
+mod http;
 mod language;
 mod lifecycle;
 mod protocol;
@@ -126,6 +127,7 @@ async fn main() -> ActorResult {
         services::config_watcher::on_demand(t, Arc::clone(&server_config_ds));
         services::daemon::on_demand(t, Arc::clone(&server_config_ds), Arc::clone(&log_ds));
         services::debt_reporter::on_demand(t, Arc::clone(&server_config_ds));
+        services::http_router::on_demand(t, Arc::clone(&server_config_ds));
         services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds));
         services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds));
 
@@ -139,12 +141,13 @@ async fn main() -> ActorResult {
 
         for port in config.ports.clone() {
             server_config_ds.assert(t, language(), &service::RunService {
-                service_name: language().unparse(&internal_services::TcpRelayListener {
+                service_name: language().unparse(&internal_services::TcpWithHttp {
                     addr: transport_address::Tcp {
                         host: "0.0.0.0".to_owned(),
                         port: (port as i32).into(),
                     },
                     gatekeeper: gatekeeper.clone(),
+                    httpd: server_config_ds.clone(),
                 }),
             });
         }

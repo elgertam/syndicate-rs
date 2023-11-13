@@ -32,15 +32,16 @@ structopt = "0.3"
 
 tikv-jemallocator = { version = "0.5.0", optional = true }
 
-tungstenite = "0.13"
-tokio-tungstenite = "0.14"
-
 tokio = { version = "1.10", features = ["io-std", "time", "process"] }
 tokio-util = "0.6"
+tokio-stream = "0.1"
 
 tracing = "0.1"
 tracing-subscriber = "0.2"
 tracing-futures = "0.2"
+hyper = { version = "0.14.27", features = ["server", "http1", "stream"] }
+hyper-tungstenite = "0.11.1"
+parking_lot = "0.12.1"
 
 [package.metadata.workspaces]
 independent = true
