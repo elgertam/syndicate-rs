@@ -44,9 +44,9 @@ Enabling the `jemalloc` feature can get a *substantial* (~20%-50%) improvement i
 
 ## Running the examples
 
-In one window, start the server:
+In one window, start the server with a basic configuration:
 
-    ./target/release/syndicate-server -p 8001
+    ./target/release/syndicate-server -c dev-scripts/benchmark-config.pr
 
 Then, choose one of the examples below.
 
@@ -84,7 +84,7 @@ about who kicks off the pingpong session.
 You may find better performance by restricting the server to fewer
 cores than you have available. For example, for me, running
 
-    taskset -c 0,1 ./target/release/syndicate-server -p 8001
+    taskset -c 0,1 ./target/release/syndicate-server -c dev-scripts/benchmark-config.pr
 
-roughly *quadruples* throughput for a single producer/consumer pair,
+roughly *doubles* throughput for a single producer/consumer pair,
 on my 48-core AMD CPU.
