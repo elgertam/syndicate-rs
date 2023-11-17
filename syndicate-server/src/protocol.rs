@@ -1,5 +1,6 @@
 use futures::SinkExt;
 use futures::StreamExt;
+use hyper::header::HeaderValue;
 use hyper::service::service_fn;
 
 use std::future::ready;
@@ -64,7 +65,7 @@ pub async fn detect_protocol(
     match stream.peek(&mut buf).await? {
         1 => match buf[0] {
             v if v == b'[' /* Turn */ || v == b'<' /* Error and Extension */ || v >= 128 => {
-                tracing::info!(protocol = %"raw", peer = ?addr);
+                tracing::info!(protocol = %(if v >= 128 { "application/syndicate" } else { "text/syndicate" }), peer = ?addr);
                 let (i, o) = stream.into_split();
                 let i = relay::Input::Bytes(Box::pin(i));
                 let o = relay::Output::Bytes(Box::pin(o /* BufWriter::new(o) */));
@@ -80,7 +81,10 @@ pub async fn detect_protocol(
                 let service = service_fn(|mut req| enclose!(
                     (upgraded, keepalive, trace_collector, facet, gateway, httpd) async move {
                         if hyper_tungstenite::is_upgrade_request(&req) {
-                            tracing::info!(protocol = %"websocket", ?req);
+                            tracing::info!(protocol = %"websocket",
+                                           method=%req.method(),
+                                           uri=?req.uri(),
+                                           host=?req.headers().get("host").unwrap_or(&HeaderValue::from_static("")));
                             let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None)
                                 .map_err(|e| message_error(e))?;
                             upgraded.store(true, Ordering::SeqCst);
@@ -100,7 +104,10 @@ pub async fn detect_protocol(
                                 None => Ok(crate::http::empty_response(
                                     hyper::StatusCode::SERVICE_UNAVAILABLE)),
                                 Some(httpd) => {
-                                    tracing::info!(protocol = %"http", ?req);
+                                    tracing::info!(protocol = %"http",
+                                                   method=%req.method(),
+                                                   uri=?req.uri(),
+                                                   host=?req.headers().get("host").unwrap_or(&HeaderValue::from_static("")));
                                     crate::http::serve(trace_collector, facet, httpd, req, server_port).await
                                 }
                             }
@@ -108,9 +115,9 @@ pub async fn detect_protocol(
                     }));
                 http.serve_connection(stream, service).with_upgrades().await?;
                 if upgraded.load(Ordering::SeqCst) {
-                    tracing::info!("serve_connection completed after upgrade to websocket");
+                    tracing::debug!("serve_connection completed after upgrade to websocket");
                 } else {
-                    tracing::info!("serve_connection completed after regular HTTP session");
+                    tracing::debug!("serve_connection completed after regular HTTP session");
                     facet.activate(&Account::new(None, None), None, |t| Ok(t.stop()));
                 }
                 Ok(())
