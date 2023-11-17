@@ -141,13 +141,12 @@ async fn main() -> ActorResult {
 
         for port in config.ports.clone() {
             server_config_ds.assert(t, language(), &service::RunService {
-                service_name: language().unparse(&internal_services::TcpWithHttp {
+                service_name: language().unparse(&internal_services::TcpWithoutHttp {
                     addr: transport_address::Tcp {
                         host: "0.0.0.0".to_owned(),
                         port: (port as i32).into(),
                     },
                     gatekeeper: gatekeeper.clone(),
-                    httpd: server_config_ds.clone(),
                 }),
             });
         }
