@@ -172,7 +172,7 @@ pub async fn serve(
             query,
             body,
         };
-        tracing::trace!(?sreq);
+        tracing::debug!(?sreq);
         let srep = Cap::guard(&language().syndicate, t.create(ResponseCollector::new(tx)));
         httpd.assert(t, language(), &http::HttpContext { req: sreq, res: srep });
         Ok(())
