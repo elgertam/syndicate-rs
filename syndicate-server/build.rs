@@ -6,7 +6,7 @@ fn main() -> std::io::Result<()> {
     let mut gen_dir = buildroot.clone();
     gen_dir.push("src/schemas");
 
-    let mut c = CompilerConfig::new(gen_dir, "crate::schemas".to_owned());
+    let mut c = CompilerConfig::new("crate::schemas".to_owned());
     c.plugins.push(Box::new(syndicate_schema_plugin::PatternPlugin));
     c.add_external_module(ExternalModule::new(vec!["EntityRef".to_owned()], "syndicate::actor"));
     c.add_external_module(
@@ -28,5 +28,5 @@ fn main() -> std::io::Result<()> {
     let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
     c.load_schemas_and_bundles(&inputs, &vec![])?;
     c.load_xref_bin("syndicate", syndicate::schemas::_bundle())?;
-    compile(&c)
+    compile(&c, &mut CodeCollector::files(gen_dir))
 }

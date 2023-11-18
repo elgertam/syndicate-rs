@@ -26,11 +26,11 @@ fn main() -> std::io::Result<()> {
     let mut gen_dir = buildroot.clone();
     gen_dir.push("src/schemas");
 
-    let mut c = CompilerConfig::new(gen_dir, "crate::schemas".to_owned());
+    let mut c = CompilerConfig::new("crate::schemas".to_owned());
     c.plugins.push(Box::new(syndicate_plugins::PatternPlugin));
     c.add_external_module(ExternalModule::new(vec!["EntityRef".to_owned()], "crate::actor"));
 
     let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
     c.load_schemas_and_bundles(&inputs, &vec![])?;
-    compile(&c)
+    compile(&c, &mut CodeCollector::files(gen_dir))
 }
