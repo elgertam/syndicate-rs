@@ -1,0 +1,97 @@
+# We will create a TCP listener on port 9222, which speaks unencrypted
+# protocol and allows interaction with the default/system gatekeeper, which
+# has a single noise binding for introducing encrypted interaction with a
+# *second* gatekeeper, which finally allows resolution of references to
+# other objects.
+
+# First, build a space where we place bindings for the inner gatekeeper to
+# expose.
+let ?inner-bindings = dataspace
+
+# Next, start the inner gatekeeper.
+<require-service <gatekeeper $inner-bindings>>
+? <service-object <gatekeeper $inner-bindings> ?inner-gatekeeper> [
+  # Expose it via a noise binding at the outer/system gatekeeper.
+  <bind <noise { key: #[z1w/OLy0wi3Veyk8/D+2182YxcrKpgc8y0ZJEBDrmWs],
+                 secretKey: #[qLkyuJw/K4yobr4XVKExbinDwEx9QTt9PfDWyx14/kg],
+                 service: world }>
+   $inner-gatekeeper #f>
+]
+
+# Now, expose the outer gatekeeper to the world, via TCP. The system
+# gatekeeper is a primordial syndicate-server object bound to $gatekeeper.
+<require-service <relay-listener <tcp "0.0.0.0" 9222> $gatekeeper>>
+
+# Finally, let's expose some behaviour accessible via the inner gatekeeper.
+#
+# We will create a service dataspace called $world.
+let ?world = dataspace
+
+# Running `syndicate-macaroon mint --oid a-service --phrase hello` yields:
+#
+#     <ref {oid: a-service, sig: #[JTTGQeYCgohMXW/2S2XH8g]}>
+#
+# That's a root capability for the service. We use the corresponding
+# sturdy.SturdyDescriptionDetail to bind it to $world.
+#
+$inner-bindings += <bind <ref {oid: a-service, key: #"hello"}>
+                    $world #f>
+
+# Now, we can hand out paths to our services involving an initial noise
+# step and a subsequent sturdyref/macaroon step.
+#
+# For example, running `syndicate-macaroon` like this:
+#
+#     syndicate-macaroon mint --oid a-service --phrase hello \
+#       --caveat '<rewrite <bind <_>> <rec labelled [<lit "alice"> <ref 0>]>>'
+#
+# generates
+#
+#     <ref {caveats: [<rewrite <bind <_>> <rec labelled [<lit "alice">, <ref 0>]>>],
+#           oid: a-service,
+#           sig: #[CXn7+rAoO3Xr6Y6Laap3OA]}>
+#
+# which is an attenuation of the root capability we bound that wraps all
+# assertions and messages in a `<labelled "alice" _>` wrapper.
+#
+# All together, the `gatekeeper.Route` that Alice would use would be
+# something like:
+#
+#     <route [<ws "wss://generic-dataspace.demo.leastfixedpoint.com/">]
+#      <noise { key: #[z1w/OLy0wi3Veyk8/D+2182YxcrKpgc8y0ZJEBDrmWs],
+#               service: world }>
+#      <ref { caveats: [<rewrite <bind <_>> <rec labelled [<lit "alice">, <ref 0>]>>],
+#             oid: a-service,
+#             sig: #[CXn7+rAoO3Xr6Y6Laap3OA] }>>
+#
+# Here's one for "bob":
+#
+#     syndicate-macaroon mint --oid a-service --phrase hello \
+#       --caveat '<rewrite <bind <_>> <rec labelled [<lit "bob"> <ref 0>]>>'
+#
+#     <ref {caveats: [<rewrite <bind <_>> <rec labelled [<lit "bob">, <ref 0>]>>],
+#           oid: a-service,
+#           sig: #[/75BbF77LOiqNcvpzNHf0g]}>
+#
+#     <route [<ws "wss://generic-dataspace.demo.leastfixedpoint.com/">]
+#      <noise { key: #[z1w/OLy0wi3Veyk8/D+2182YxcrKpgc8y0ZJEBDrmWs],
+#               service: world }>
+#      <ref { caveats: [<rewrite <bind <_>> <rec labelled [<lit "bob">, <ref 0>]>>],
+#             oid: a-service,
+#             sig: #[/75BbF77LOiqNcvpzNHf0g] }>>
+#
+# We relay labelled to unlabelled information, enacting a chat protocol
+# that enforces usernames.
+$world [
+
+  # Assertions of presence have the username wiped out and replaced with the label.
+  ? <labelled ?who <Present _>> <Present $who>
+
+  # Likewise utterance messages.
+  ?? <labelled ?who <Says _ ?what>> ! <Says $who $what>
+
+  # We allow anyone to subscribe to presence and utterances.
+  ? <labelled _ <Observe <rec Present ?p> ?o>> <Observe <rec Present $p> $o>
+  ? <labelled _ <Observe <rec Says ?p> ?o>> <Observe <rec Says $p> $o>
+
+]

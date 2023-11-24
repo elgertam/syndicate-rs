@@ -1,6 +1,8 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
+Gatekeeper = <gatekeeper @bindspace #!gatekeeper.Bind> .
+
 DebtReporter = <debt-reporter @intervalSeconds double>.
 
 TcpRelayListener = TcpWithoutHttp / TcpWithHttp .
