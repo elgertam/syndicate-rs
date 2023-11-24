@@ -2,6 +2,7 @@ use blake2::Blake2s256;
 use getrandom::getrandom;
 use hmac::{SimpleHmac, Mac};
 
+use preserves::error::io_syntax_error;
 use preserves::hex::HexParser;
 use preserves::hex::HexFormatter;
 use preserves::value::NestedValue;
@@ -34,6 +35,12 @@ impl std::fmt::Display for ValidationError {
             ValidationError::BadCaveatsField =>
                 write!(f, "Invalid caveats field in SturdyRef parameters"),
         }
+    }
+}
+
+impl From<ValidationError> for io::Error {
+    fn from(v: ValidationError) -> Self {
+        io_syntax_error(&v.to_string())
     }
 }
 

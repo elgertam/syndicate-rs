@@ -23,6 +23,8 @@ use syndicate::language;
 use syndicate::preserves_schema::Codec;
 use syndicate::preserves_schema::ParseError;
 use syndicate::schemas::noise;
+use syndicate::sturdy::Caveat;
+use syndicate::sturdy::SturdyRef;
 use syndicate::sturdy::_Any;
 
 #[derive(Clone, Debug)]
@@ -44,6 +46,10 @@ enum Action {
         #[arg(long, group="key")]
         /// Key bytes, encoded as hex
         hex: Option<String>,
+
+        #[arg(long)]
+        /// Caveats to add
+        caveat: Vec<Preserves<_Any>>,
     },
 
     #[command(group(ArgGroup::new("key").required(true)))]
@@ -136,7 +142,7 @@ fn main() -> io::Result<()> {
                                               &language().unparse(&n))?);
         }
 
-        Action::Mint { oid, phrase, hex } => {
+        Action::Mint { oid, phrase, hex, caveat: caveats } => {
             let key =
                 if let Some(hex) = hex {
                     HexParser::Liberal.decode(&hex).expect("hex encoded sturdyref")
@@ -145,7 +151,14 @@ fn main() -> io::Result<()> {
                 } else {
                     unreachable!()
                 };
-            let m = syndicate::sturdy::SturdyRef::mint(oid.0, &key);
+            let attenuation = caveats.into_iter().map(|c| {
+                let r = language().parse(&c.0);
+                if let Ok(Caveat::Unknown(_)) = &r {
+                    eprintln!("Warning: Unknown caveat format: {:?}", &c.0);
+                }
+                r
+            }).collect::<Result<Vec<Caveat>, _>>()?;
+            let m = SturdyRef::mint(oid.0, &key).attenuate(&attenuation)?;
             println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec,
                                               &language().unparse(&m))?);
         }
