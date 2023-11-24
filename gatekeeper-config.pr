@@ -95,3 +95,58 @@ $world [
   ? <labelled _ <Observe <rec Says ?p> ?o>> <Observe <rec Says $p> $o>
 
 ]
+
+# We can also use sturdyref rewrites to directly handle `Says` and
+# `Present` values, rather than wrapping with `<labelled ...>` and
+# unwrapping using the script fragment just above.
+#
+# The multiply-quoted patterns in the `Observe` cases start to get unwieldy
+# at this point!
+#
+# For Alice:
+#
+#     syndicate-macaroon mint --oid a-service --phrase hello --caveat '<or [
+#         <rewrite <rec Present [<_>]> <rec Present [<lit "alice">]>>
+#         <rewrite <rec Says [<_> <bind String>]> <rec Says [<lit "alice"> <ref 0>]>>
+#         <rewrite <bind <rec Observe [<rec rec [<lit Present> <_>]> <_>]>> <ref 0>>
+#         <rewrite <bind <rec Observe [<rec rec [<lit Says> <_>]> <_>]>> <ref 0>>
+#     ]>'
+#
+#     <ref { oid: a-service sig: #[s918Jk6As8AWJ9rtozOTlg] caveats: [<or [
+#       <rewrite <rec Present [<_>]> <rec Present [<lit "alice">]>>
+#       <rewrite <rec Says [<_>, <bind String>]> <rec Says [<lit "alice">, <ref 0>]>>
+#       <rewrite <bind <rec Observe [<rec rec [<lit Present>, <_>]>, <_>]>> <ref 0>>
+#       <rewrite <bind <rec Observe [<rec rec [<lit Says>, <_>]>, <_>]>> <ref 0>> ]>]}>
+#
+#     <route [<ws "wss://generic-dataspace.demo.leastfixedpoint.com/">]
+#      <noise { key: #[z1w/OLy0wi3Veyk8/D+2182YxcrKpgc8y0ZJEBDrmWs],
+#               service: world }>
+#      <ref { oid: a-service sig: #[s918Jk6As8AWJ9rtozOTlg] caveats: [<or [
+#        <rewrite <rec Present [<_>]> <rec Present [<lit "alice">]>>
+#        <rewrite <rec Says [<_>, <bind String>]> <rec Says [<lit "alice">, <ref 0>]>>
+#        <rewrite <bind <rec Observe [<rec rec [<lit Present>, <_>]>, <_>]>> <ref 0>>
+#        <rewrite <bind <rec Observe [<rec rec [<lit Says>, <_>]>, <_>]>> <ref 0>> ]>]}>>
+#
+# For Bob:
+#
+#     syndicate-macaroon mint --oid a-service --phrase hello --caveat '<or [
+#         <rewrite <rec Present [<_>]> <rec Present [<lit "bob">]>>
+#         <rewrite <rec Says [<_> <bind String>]> <rec Says [<lit "bob"> <ref 0>]>>
+#         <rewrite <bind <rec Observe [<rec rec [<lit Present> <_>]> <_>]>> <ref 0>>
+#         <rewrite <bind <rec Observe [<rec rec [<lit Says> <_>]> <_>]>> <ref 0>>
+#     ]>'
+#
+#     <ref { oid: a-service sig: #[QBbV4LrS0i3BG6OyCPJl+A] caveats: [<or [
+#       <rewrite <rec Present [<_>]> <rec Present [<lit "bob">]>>
+#       <rewrite <rec Says [<_>, <bind String>]> <rec Says [<lit "bob">, <ref 0>]>>
+#       <rewrite <bind <rec Observe [<rec rec [<lit Present>, <_>]>, <_>]>> <ref 0>>
+#       <rewrite <bind <rec Observe [<rec rec [<lit Says>, <_>]>, <_>]>> <ref 0>> ]>]}>
+#
+#     <route [<ws "wss://generic-dataspace.demo.leastfixedpoint.com/">]
+#      <noise { key: #[z1w/OLy0wi3Veyk8/D+2182YxcrKpgc8y0ZJEBDrmWs],
+#               service: world }>
+#      <ref { oid: a-service sig: #[QBbV4LrS0i3BG6OyCPJl+A] caveats: [<or [
+#        <rewrite <rec Present [<_>]> <rec Present [<lit "bob">]>>
+#        <rewrite <rec Says [<_>, <bind String>]> <rec Says [<lit "bob">, <ref 0>]>>
+#        <rewrite <bind <rec Observe [<rec rec [<lit Present>, <_>]>, <_>]>> <ref 0>>
+#        <rewrite <bind <rec Observe [<rec rec [<lit Says>, <_>]>, <_>]>> <ref 0>> ]>]}>>
