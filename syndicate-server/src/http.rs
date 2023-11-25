@@ -160,8 +160,9 @@ pub async fn serve(
     let account = Account::new(Some(AnyValue::symbol("http")), trace_collector);
 
     let (tx, rx) = oneshot::channel();
+    let mut req_handle: Option<Handle> = None;
 
-    facet.activate(&account, Some(trace::TurnCause::external("http")), move |t| {
+    facet.activate(&account, Some(trace::TurnCause::external("http")), |t| {
         let sreq = http::HttpRequest {
             sequence_number: NEXT_SEQ.fetch_add(1, Ordering::Relaxed).into(),
             host,
@@ -174,11 +175,20 @@ pub async fn serve(
         };
         tracing::debug!(?sreq);
         let srep = Cap::guard(&language().syndicate, t.create(ResponseCollector::new(tx)));
-        httpd.assert(t, language(), &http::HttpContext { req: sreq, res: srep });
+        req_handle = httpd.assert(t, language(), &http::HttpContext { req: sreq, res: srep });
         Ok(())
     });
 
-    match rx.await {
+    let response_result = rx.await;
+
+    facet.activate(&account, Some(trace::TurnCause::external("http")), |t| {
+        if let Some(h) = req_handle {
+            t.retract(h);
+        }
+        Ok(())
+    });
+
+    match response_result {
         Ok(response) => Ok(response),
         Err(_ /* sender dropped */) => Ok(empty_response(StatusCode::INTERNAL_SERVER_ERROR)),
     }
