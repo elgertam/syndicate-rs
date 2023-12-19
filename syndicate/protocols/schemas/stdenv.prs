@@ -1,0 +1,31 @@
+version 1 .
+
+# A "standard" route is
+#
+# - a collection of websocket urls, for transport.
+# - a noise tunnel, for server authentication, confidentiality and integrity.
+# - a macaroon, for authorization.
+#
+# Making these choices allows a compact representation. Encoding a binary-syntax representation
+# of a standard route using base64 produces a somewhat-convenient blob of text representing
+# access to a network object that users can cut and paste.
+#
+# A `stdenv.StandardRoute.standard` can be rewritten to a `gatekeeper.Route` like this (with
+# `$caveats`, if any, added as appropriate):
+#
+#     <route $transports <noise { service: $service key: $key }> <ref { sig: $sig oid: $oid }>>
+#
+StandardRoute =
+/ @standard [@transports [StandardTransport ...]
+             @key bytes
+             @service any
+             @sig bytes
+             @oid any
+             @caveats sturdy.Caveat ...]
+/ @general gatekeeper.Route
+.
+
+StandardTransport =
+/ @wsUrl string
+/ @other any
+.
