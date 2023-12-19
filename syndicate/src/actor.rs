@@ -1547,13 +1547,17 @@ impl<'activation> Activation<'activation> {
             pass_number += 1;
             tracing::trace!(?pass_number, "repair_dataflow");
             let damaged_field_ids = self.state.dataflow.take_damaged_nodes();
+            let mut executed_blocks = Set::new();
             for field_id in damaged_field_ids.into_iter() {
                 let block_ids = self.state.dataflow.take_observers_of(&field_id);
                 for block_id in block_ids.into_iter() {
-                    if let Some((facet_id, mut block)) = self.state.blocks.remove(&block_id) {
-                        let result = self.with_facet(facet_id, |t| t.with_block(block_id, &mut block));
-                        self.state.blocks.insert(block_id, (facet_id, block));
-                        result?;
+                    if !executed_blocks.contains(&block_id) {
+                        executed_blocks.insert(block_id);
+                        if let Some((facet_id, mut block)) = self.state.blocks.remove(&block_id) {
+                            let result = self.with_facet(facet_id, |t| t.with_block(block_id, &mut block));
+                            self.state.blocks.insert(block_id, (facet_id, block));
+                            result?;
+                        }
                     }
                 }
             }
