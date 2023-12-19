@@ -13,7 +13,7 @@ Oid       = int .
 Turn      = [TurnEvent ...].
 TurnEvent = [@oid Oid @event Event].
 
-Assert = <assert @assertion Assertion @handle Handle>.
-Retract = <retract @handle Handle>.
-Message = <message @body Assertion>.
-Sync = <sync @peer #!#t>.
+Assert  = <A @assertion Assertion @handle Handle>.
+Retract = <R @handle Handle>.
+Message = <M @body Assertion>.
+Sync    = <S @peer #!#t>.
