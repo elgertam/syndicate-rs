@@ -13,7 +13,6 @@ DCompound = <rec @label any @fields [Pattern ...]>
 
 AnyAtom =
     / @bool bool
-    / @float float
     / @double double
     / @int int
     / @string string
