@@ -10,7 +10,7 @@ repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
 license = "Apache-2.0"
 
 [dependencies]
-preserves = "4.992"
+preserves = "4.993"
 syndicate = { path = "../syndicate", version = "0.32.0"}
 
 clap = { version = "^4.0", features = ["derive"] }

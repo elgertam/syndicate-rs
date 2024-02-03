@@ -13,12 +13,12 @@ license = "Apache-2.0"
 jemalloc = ["dep:tikv-jemallocator"]
 
 [build-dependencies]
-preserves-schema = "5.992"
+preserves-schema = "5.993"
 syndicate = { path = "../syndicate", version = "0.32.0"}
 syndicate-schema-plugin = { path = "../syndicate-schema-plugin", version = "0.2.0"}
 
 [dependencies]
-preserves-schema = "5.992"
+preserves-schema = "5.993"
 syndicate = { path = "../syndicate", version = "0.32.0"}
 syndicate-macros = { path = "../syndicate-macros", version = "0.25.0"}
 
