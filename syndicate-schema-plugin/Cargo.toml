@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-schema-plugin"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
@@ -13,7 +13,7 @@ license = "Apache-2.0"
 
 [dependencies]
 preserves-schema = "5.993"
-syndicate = { path = "../syndicate", version = "0.32.0"}
+syndicate = { path = "../syndicate", version = "0.33.0"}
 
 [package.metadata.workspaces]
 independent = true
