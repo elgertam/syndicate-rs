@@ -51,7 +51,7 @@ Lit = <lit @value any>.
 
 Pattern = PDiscard / PAtom / PEmbedded / PBind / PAnd / PNot / Lit / PCompound .
 PDiscard = <_>.
-PAtom = =Boolean / =Float / =Double / =SignedInteger / =String / =ByteString / =Symbol .
+PAtom = =Boolean / =Double / =SignedInteger / =String / =ByteString / =Symbol .
 PEmbedded = =Embedded .
 PBind = <bind @pattern Pattern>.
 PAnd = <and @patterns [Pattern ...]>.
