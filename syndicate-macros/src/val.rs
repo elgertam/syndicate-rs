@@ -50,10 +50,6 @@ pub fn value_to_value_expr(v: &IOValue) -> TokenStream2 {
     match v.value() {
         Value::Boolean(b) =>
             quote!(#V_::Value::from(#b).wrap()),
-        Value::Float(f) => {
-            let f = f.0;
-            quote!(#V_::Value::from(#f).wrap())
-        }
         Value::Double(d) => {
             let d = d.0;
             quote!(#V_::Value::from(#d).wrap())

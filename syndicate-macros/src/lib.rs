@@ -27,6 +27,7 @@ use pat::lit;
 
 enum SymbolVariant<'a> {
     Normal(&'a str),
+    #[allow(dead_code)] // otherwise we get 'warning: field `0` is never read'
     Binder(&'a str),
     Substitution(&'a str),
     Discard,
@@ -79,10 +80,6 @@ impl ValueCompiler {
         match v.value() {
             Value::Boolean(b) =>
                 quote!(#V_::Value::from(#b).wrap()),
-            Value::Float(f) => {
-                let f = f.0;
-                quote!(#V_::Value::from(#f).wrap())
-            }
             Value::Double(d) => {
                 let d = d.0;
                 quote!(#V_::Value::from(#d).wrap())

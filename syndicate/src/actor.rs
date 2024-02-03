@@ -1991,6 +1991,7 @@ impl Facet {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // otherwise we get 'warning: field `0` is never read'
 pub struct KeepAlive(Option<Arc<Mailbox>>);
 
 impl ActorRef {

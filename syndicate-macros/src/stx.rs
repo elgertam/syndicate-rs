@@ -15,7 +15,6 @@ use syn::parse::Parser;
 use syn::parse::ParseStream;
 use syn::parse_str;
 
-use syndicate::value::Float;
 use syndicate::value::Double;
 use syndicate::value::IOValue;
 use syndicate::value::NestedValue;
@@ -266,7 +265,7 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
                 IOValue::new(i.base10_parse::<i128>()?)
             }
             Lit::Float(f) => if f.suffix() == "f32" {
-                IOValue::new(&Float(f.base10_parse::<f32>()?))
+                IOValue::new(&Double(f.base10_parse::<f32>()? as f64))
             } else {
                 IOValue::new(&Double(f.base10_parse::<f64>()?))
             }

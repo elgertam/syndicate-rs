@@ -121,7 +121,6 @@ impl Pattern {
             Pattern::PDiscard(_) => true,
             Pattern::PAtom(b) => match &**b {
                 PAtom::Boolean => a.value().is_boolean(),
-                PAtom::Float => a.value().is_float(),
                 PAtom::Double => a.value().is_double(),
                 PAtom::SignedInteger => a.value().is_signedinteger(),
                 PAtom::String => a.value().is_string(),

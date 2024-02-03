@@ -261,7 +261,6 @@ impl<'env> PatternInstantiator<'env> {
     fn instantiate_pattern(&mut self, template: &AnyValue) -> io::Result<P::Pattern> {
         Ok(match template.value() {
             Value::Boolean(_) |
-            Value::Float(_) |
             Value::Double(_) |
             Value::SignedInteger(_) |
             Value::String(_) |
@@ -372,7 +371,6 @@ impl Env {
     fn instantiate_value(&self, template: &AnyValue) -> io::Result<AnyValue> {
         Ok(match template.value() {
             Value::Boolean(_) |
-            Value::Float(_) |
             Value::Double(_) |
             Value::SignedInteger(_) |
             Value::String(_) |
@@ -605,7 +603,6 @@ impl Env {
 
         Ok(match template.value() {
             Value::Boolean(_) |
-            Value::Float(_) |
             Value::Double(_) |
             Value::SignedInteger(_) |
             Value::String(_) |
