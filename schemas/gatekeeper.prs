@@ -6,8 +6,8 @@ embeddedType EntityRef.Cap .
 
 # Assertion. Gatekeeper will attempt to resolve `step`, responding with a `Resolved` to
 # `observer`.
-Resolve = <resolve @step Step @observer #!Resolved> .
-Resolved = <accepted @responderSession #!any> / Rejected .
+Resolve = <resolve @step Step @observer #:Resolved> .
+Resolved = <accepted @responderSession #:any> / Rejected .
 Step = <<rec> @stepType symbol [@detail any]> .
 
 # ---------------------------------------------------------------------------
@@ -15,9 +15,9 @@ Step = <<rec> @stepType symbol [@detail any]> .
 
 # Assertion. Gatekeeper will compute an appropriate PathStep from `description` pointing at
 # `target`, and will respond with a `Bound` to `observer` (if supplied).
-Bind = <bind @description Description @target #!any @observer BindObserver> .
+Bind = <bind @description Description @target #:any @observer BindObserver> .
 Description = <<rec> @stepType symbol [@detail any]> .
-BindObserver = @present #!Bound / @absent #f .
+BindObserver = @present #:Bound / @absent #f .
 Bound = <bound @pathStep PathStep> / Rejected .
 
 # ---------------------------------------------------------------------------
@@ -27,10 +27,10 @@ Bound = <bound @pathStep PathStep> / Rejected .
 # and `resolved`, respondent will follow `route.pathSteps` starting from one of the
 # `route.transports`, asserting `ResolvePath` with the final `Resolved` as well as the selected
 # transport `addr` and a `control` for it.
-ResolvePath = <resolve-path @route Route @addr any @control #!TransportControl @resolved Resolved> .
+ResolvePath = <resolve-path @route Route @addr any @control #:TransportControl @resolved Resolved> .
 
-TransportConnection = <connect-transport @addr any @control #!TransportControl @resolved Resolved> .
-ResolvedPathStep = <path-step @origin #!Resolve @pathStep PathStep @resolved Resolved> .
+TransportConnection = <connect-transport @addr any @control #:TransportControl @resolved Resolved> .
+ResolvedPathStep = <path-step @origin #:Resolve @pathStep PathStep @resolved Resolved> .
 PathStep = <<rec> @stepType symbol [@detail any]> .
 
 # A `Route` describes a network path that can be followed to reach some target entity.

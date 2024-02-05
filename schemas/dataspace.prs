@@ -1,4 +1,4 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-Observe = <Observe @pattern dataspacePatterns.Pattern @observer #!any>.
+Observe = <Observe @pattern dataspacePatterns.Pattern @observer #:any>.

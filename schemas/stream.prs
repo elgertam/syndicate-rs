@@ -2,7 +2,7 @@ version 1 .
 embeddedType EntityRef.Cap .
 
 # Assertion:
-StreamConnection = <stream-connection @source #!Source @sink #!Sink @spec any>.
+StreamConnection = <stream-connection @source #:Source @sink #:Sink @spec any>.
 
 # Assertions:
 StreamListenerReady = <stream-listener-ready @spec any>.
@@ -13,7 +13,7 @@ StreamError = <error @message string>.
 
 Source =
   # Assertions:
-  / <sink @controller #!Sink>
+  / <sink @controller #:Sink>
   / StreamError
 
   # Messages:
@@ -22,7 +22,7 @@ Source =
 
 Sink =
   # Assertions:
-  / <source @controller #!Source>
+  / <source @controller #:Source>
   / StreamError
 
   # Messages:
