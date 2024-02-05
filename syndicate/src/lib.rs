@@ -74,7 +74,7 @@ mod protocol_test {
     use preserves_schema::Deserialize;
 
     #[test] fn decode_sync() {
-        let input_str = "[[2 <sync #![0 11]>]]";
+        let input_str = "[[2 <S #:[0 11]>]]";
         let mut src = BytesBinarySource::new(input_str.as_bytes());
         let mut r = src.text::<IOValue, _>(ViaCodec::new(IOValueDomainCodec));
         let packet: schemas::protocol::Packet<IOValue> = schemas::protocol::Packet::deserialize(&mut r).unwrap();

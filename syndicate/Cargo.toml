@@ -13,11 +13,11 @@ license = "Apache-2.0"
 vendored-openssl = ["openssl/vendored"]
 
 [build-dependencies]
-preserves-schema = "5.993"
+preserves-schema = "5.994"
 
 [dependencies]
-preserves = "4.993"
-preserves-schema = "5.993"
+preserves = "4.994"
+preserves-schema = "5.994"
 
 tokio = { version = "1.10", features = ["io-util", "macros", "rt", "rt-multi-thread", "time"] }
 tokio-util = "0.6"

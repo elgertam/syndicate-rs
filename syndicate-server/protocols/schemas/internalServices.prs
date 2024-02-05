@@ -1,18 +1,18 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-Gatekeeper = <gatekeeper @bindspace #!gatekeeper.Bind> .
+Gatekeeper = <gatekeeper @bindspace #:gatekeeper.Bind> .
 
 DebtReporter = <debt-reporter @intervalSeconds double>.
 
 TcpRelayListener = TcpWithoutHttp / TcpWithHttp .
-TcpWithoutHttp = <relay-listener @addr TransportAddress.Tcp @gatekeeper #!gatekeeper.Resolve> .
-TcpWithHttp = <relay-listener @addr TransportAddress.Tcp @gatekeeper #!gatekeeper.Resolve @httpd #!http.HttpContext> .
+TcpWithoutHttp = <relay-listener @addr TransportAddress.Tcp @gatekeeper #:gatekeeper.Resolve> .
+TcpWithHttp = <relay-listener @addr TransportAddress.Tcp @gatekeeper #:gatekeeper.Resolve @httpd #:http.HttpContext> .
 
-UnixRelayListener = <relay-listener @addr TransportAddress.Unix @gatekeeper #!gatekeeper.Resolve> .
+UnixRelayListener = <relay-listener @addr TransportAddress.Unix @gatekeeper #:gatekeeper.Resolve> .
 ConfigWatcher = <config-watcher @path string @env ConfigEnv>.
 
 ConfigEnv = { symbol: any ...:... }.
 
-HttpRouter = <http-router @httpd #!any> .
+HttpRouter = <http-router @httpd #:any> .
 HttpStaticFileServer = <http-static-files @dir string @pathPrefixElements int> .
