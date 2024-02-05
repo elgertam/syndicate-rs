@@ -2,7 +2,7 @@ version 1 .
 
 # Assertion in driver DS
 # Causes creation of server and route
-HttpBinding = <http-bind @host HostPattern @port int @method MethodPattern @path PathPattern @handler #!HttpRequest> .
+HttpBinding = <http-bind @host HostPattern @port int @method MethodPattern @path PathPattern @handler #:HttpRequest> .
 
 # Assertion in driver DS
 # Describes active server and route
@@ -34,7 +34,7 @@ QueryValue = @string string / <file @filename string @headers Headers @body byte
 RequestBody = @present bytes / @absent #f .
 
 # Assertion to handler entity
-HttpContext = <request @req HttpRequest @res #!HttpResponse> .
+HttpContext = <request @req HttpRequest @res #:HttpResponse> .
 
 @<TODO "trailers?">
 # Messages
