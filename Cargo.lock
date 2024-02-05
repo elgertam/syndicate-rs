@@ -1859,7 +1859,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "blake2",
  "bytes",
@@ -1881,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-macros"
-version = "0.26.0"
+version = "0.27.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1893,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-schema-plugin"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "preserves-schema",
  "syndicate",
@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-server"
-version = "0.38.0"
+version = "0.39.0"
 dependencies = [
  "chrono",
  "futures",
@@ -1928,7 +1928,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-tools"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "clap 4.4.18",
  "clap_complete",
