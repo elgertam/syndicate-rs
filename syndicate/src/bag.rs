@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::{Iter, Keys, Entry};
-use std::iter::{FromIterator, IntoIterator};
+use std::iter::FromIterator;
 
 /// Element counts in [`BTreeBag`]s are 32-bit signed integers.
 pub type Count = i32;

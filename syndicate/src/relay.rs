@@ -685,12 +685,12 @@ async fn input_loop(
                 buf.reserve(BUFSIZE);
                 let n = match r.read_buf(&mut buf).await {
                     Ok(n) => n,
-                    Err(e) =>
+                    Err(e) => {
                         if e.kind() == io::ErrorKind::ConnectionReset {
                             break;
-                        } else {
-                            return Err(e)?;
-                        },
+                        }
+                        return Err(e)?;
+                    }
                 };
                 match n {
                     0 => break,

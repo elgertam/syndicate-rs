@@ -12,7 +12,6 @@ use super::language;
 use super::skeleton;
 use super::actor::*;
 use super::schemas::dataspace::*;
-use super::schemas::dataspace::_Any;
 
 use preserves::value::Map;
 use preserves_schema::Codec;
