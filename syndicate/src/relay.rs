@@ -735,7 +735,7 @@ async fn output_loop(
 
 impl Entity<()> for TunnelRefEntity {
     fn exit_hook(&mut self, t: &mut Activation, exit_status: &Arc<ExitStatus>) {
-        if let Err(e) = &**exit_status {
+        if let ExitStatus::Error(e) = &**exit_status {
             let e = e.clone();
             let mut g = self.relay_ref.lock();
             let tr = g.as_mut().expect("initialized");

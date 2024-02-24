@@ -88,7 +88,28 @@ pub type ActorError = Box<dyn std::error::Error + Sync + Send + 'static>;
 pub type ActorResult = Result<(), ActorError>;
 
 /// Final exit status of an actor.
-pub type ExitStatus = Result<(), Error>;
+#[derive(Clone, PartialEq, Eq)]
+pub enum ExitStatus {
+    Normal,
+    Dropped,
+    Error(Error),
+}
+
+impl From<ExitStatus> for Result<(), Error> {
+    fn from(status: ExitStatus) -> Self {
+        match status {
+            ExitStatus::Normal => Ok(()),
+            ExitStatus::Dropped => Ok(()),
+            ExitStatus::Error(e) => Err(e),
+        }
+    }
+}
+
+impl From<ExitStatus> for ActorResult {
+    fn from(status: ExitStatus) -> Self {
+        Result::<(), Error>::from(status).map_err(|e| e.into())
+    }
+}
 
 /// The [`Actor::boot`] method returns an `ActorHandle`, representing
 /// the actor's mainloop task.
@@ -672,8 +693,12 @@ impl FacetRef {
 
                 match maybe_exit_status {
                     None => true,
-                    Some(exit_status) => {
-                        g.terminate(exit_status.map_err(|e| e.into()), &self.actor, &account.trace_collector);
+                    Some(result) => {
+                        let exit_status = match result {
+                            Ok(()) => ExitStatus::Normal,
+                            Err(e) => ExitStatus::Error(e.into()),
+                        };
+                        g.terminate(exit_status, &self.actor, &account.trace_collector);
                         false
                     }
                 }
@@ -2006,7 +2031,7 @@ impl ActorRef {
     pub fn exit_status(&self) -> Option<ActorResult> {
         self.access(|state| match state {
             ActorState::Running(_) => None,
-            ActorState::Terminated { exit_status } => Some((**exit_status).clone().map_err(|e| e.into())),
+            ActorState::Terminated { exit_status } => Some((**exit_status).clone().into()),
         })
     }
 
@@ -2074,15 +2099,16 @@ impl ActorState {
         }
 
         match &*exit_status {
-            Ok(()) => tracing::trace!(actor_id=?actor.actor_id, "normal stop"),
-            Err(e) => tracing::error!(actor_id=?actor.actor_id, %e, "error stop"),
+            ExitStatus::Normal => tracing::trace!(actor_id=?actor.actor_id, "normal stop"),
+            ExitStatus::Dropped => tracing::debug!(actor_id=?actor.actor_id, "force-terminated by Actor::drop"),
+            ExitStatus::Error(e) => tracing::error!(actor_id=?actor.actor_id, %e, "error stop"),
         }
 
         if let Some(c) = trace_collector {
             c.record(actor.actor_id, trace::ActorActivation::Stop {
                 status: Box::new(match &*exit_status {
-                    Ok(()) => trace::ExitStatus::Ok,
-                    Err(e) => trace::ExitStatus::Error(Box::new(e.clone())),
+                    ExitStatus::Normal | ExitStatus::Dropped => trace::ExitStatus::Ok,
+                    ExitStatus::Error(e) => trace::ExitStatus::Error(Box::new(e.clone())),
                 }),
             });
         }
@@ -2155,8 +2181,9 @@ impl RunningActor {
         exit_status: Arc<ExitStatus>,
         trace_collector: Option<trace::TraceCollector>,
     ) {
-        if exit_status.is_ok() {
-            assert!(self.get_facet(self.root).is_none());
+        match &*exit_status {
+            ExitStatus::Normal => assert!(self.get_facet(self.root).is_none()),
+            ExitStatus::Dropped | ExitStatus::Error(_) => (),
         }
 
         let cause = Some(trace::TurnCause::Cleanup);
@@ -2218,9 +2245,7 @@ impl Drop for Actor {
         // let _scope = tracing::info_span!(parent: None, "actor", actor_id = ?self.ac_ref.actor_id).entered();
         let mut g = self.ac_ref.state.lock();
         if g.is_running() {
-            g.terminate(Err(error("Force-terminated by Actor::drop", AnyValue::new(false))),
-                        &self.ac_ref,
-                        &self.trace_collector);
+            g.terminate(ExitStatus::Dropped, &self.ac_ref, &self.trace_collector);
         }
         tracing::debug!("Actor::drop");
     }
