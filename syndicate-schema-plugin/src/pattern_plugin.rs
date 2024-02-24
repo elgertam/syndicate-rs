@@ -1,12 +1,11 @@
 use preserves_schema::*;
 use preserves_schema::compiler::*;
 use preserves_schema::compiler::context::ModuleContext;
+use preserves_schema::compiler::types::definition_type;
+use preserves_schema::compiler::types::Purpose;
 use preserves_schema::gen::schema::*;
 use preserves_schema::syntax::block::escape_string;
 use preserves_schema::syntax::block::constructors::*;
-use preserves_schema::compiler::names;
-use preserves_schema::compiler::types::definition_type;
-use preserves_schema::compiler::types::Purpose;
 
 use std::iter::FromIterator;
 
