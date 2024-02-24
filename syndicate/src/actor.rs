@@ -88,7 +88,7 @@ pub type ActorError = Box<dyn std::error::Error + Sync + Send + 'static>;
 pub type ActorResult = Result<(), ActorError>;
 
 /// Final exit status of an actor.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExitStatus {
     Normal,
     Dropped,
