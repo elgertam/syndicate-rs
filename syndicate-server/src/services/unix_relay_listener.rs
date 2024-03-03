@@ -39,7 +39,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult {
     lifecycle::terminate_on_service_restart(t, &ds, &spec);
     let path_str = spec.addr.path.clone();
-    let facet = t.facet.clone();
+    let facet = t.facet_ref();
     let trace_collector = t.trace_collector();
     t.linked_task(Some(AnyValue::symbol("listener")), async move {
         let listener = bind_unix_listener(&PathBuf::from(path_str)).await?;
@@ -71,7 +71,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
                 &account, cause, enclose!((trace_collector) move |t| {
                     t.spawn(name, |t| {
                         Ok(t.linked_task(None, {
-                            let facet = t.facet.clone();
+                            let facet = t.facet_ref();
                             async move {
                                 tracing::info!(protocol = %"unix");
                                 let (i, o) = stream.into_split();

@@ -28,7 +28,7 @@ async fn main() -> ActorResult {
     let (i, o) = TcpStream::connect("127.0.0.1:9001").await?.into_split();
     Actor::top(None, |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
-            let facet = t.facet.clone();
+            let facet = t.facet_ref();
             let padding = AnyValue::new(&vec![0u8; config.bytes_padding][..]);
             let action_count = config.action_count;
             let account = Account::new(None, None);

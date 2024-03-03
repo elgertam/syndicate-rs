@@ -55,7 +55,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult 
     };
     let host = addr.host.clone();
     let port = u16::try_from(&addr.port).map_err(|_| "Invalid TCP port number")?;
-    let facet = t.facet.clone();
+    let facet = t.facet_ref();
     let trace_collector = t.trace_collector();
     t.linked_task(Some(AnyValue::symbol("listener")), async move {
         let listen_addr = format!("{}:{}", host, port);
@@ -85,7 +85,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult 
                 &account, cause, enclose!((trace_collector, httpd) move |t| {
                     t.spawn(name, move |t| {
                         Ok(t.linked_task(None, {
-                            let facet = t.facet.clone();
+                            let facet = t.facet_ref();
                             async move {
                                 detect_protocol(trace_collector,
                                                 facet,

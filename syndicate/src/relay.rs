@@ -112,8 +112,8 @@ struct TunnelRefEntity {
     relay_ref: TunnelRelayRef,
 }
 
-struct ActivatedMembranes<'a, 'activation, 'm> {
-    turn: &'a mut Activation<'activation>,
+struct ActivatedMembranes<'a, 'm> {
+    turn: &'a mut Activation,
     tr_ref: &'m TunnelRelayRef,
     membranes: &'m mut Membranes,
 }
@@ -234,7 +234,7 @@ impl TunnelRelay {
         t.linked_task(Some(AnyValue::symbol("writer")),
                       output_loop(o, output_rx));
         t.linked_task(Some(AnyValue::symbol("reader")),
-                      input_loop(t.trace_collector(), t.facet.clone(), i, tr_ref));
+                      input_loop(t.trace_collector(), t.facet_ref(), i, tr_ref));
         result
     }
 
@@ -269,7 +269,7 @@ impl TunnelRelay {
             |io| Arc::clone(&tr.membranes.import_oid(t, &tr_ref, io).inc_ref().obj));
         dump_membranes!(tr.membranes);
         *tr_ref.lock() = Some(tr);
-        t.state.add_exit_hook(&self_entity);
+        t.add_exit_hook(&self_entity);
         (result, tr_ref, output_rx)
     }
 
@@ -604,7 +604,7 @@ impl Membranes {
     }
 }
 
-impl<'a, 'activation, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'activation, 'm> {
+impl<'a, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'm> {
     fn decode_embedded<'de, 'src, S: BinarySource<'de>>(
         &mut self,
         src: &'src mut S,

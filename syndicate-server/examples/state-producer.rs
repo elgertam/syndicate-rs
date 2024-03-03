@@ -22,7 +22,7 @@ async fn main() -> ActorResult {
     let (i, o) = TcpStream::connect("127.0.0.1:9001").await?.into_split();
     Actor::top(None, |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
-            let facet = t.facet.clone();
+            let facet = t.facet_ref();
             let account = Account::new(None, None);
             t.linked_task(Some(AnyValue::symbol("sender")), async move {
                 let presence = rec![AnyValue::symbol("Present"), AnyValue::new(std::process::id())];

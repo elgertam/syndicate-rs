@@ -177,7 +177,7 @@ async fn main() -> ActorResult {
             })?;
 
             if let PingPongMode::Ping(c) = &config.mode {
-                let facet = t.facet.clone();
+                let facet = t.facet_ref();
                 let turn_count = c.turn_count;
                 let action_count = c.action_count;
                 let account = Arc::clone(t.account());

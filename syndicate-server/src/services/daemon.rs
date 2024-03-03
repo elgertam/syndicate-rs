@@ -41,7 +41,7 @@ fn supervise_daemon(
         lifecycle::on_service_restart(t, &config_ds, &spec, enclose!(
             (config_ds, root_ds, spec) move |t| {
                 tracing::info!(id = ?spec.id, "Terminating to restart");
-                t.stop_facet_and_continue(t.facet.facet_id, Some(
+                t.stop_facet_and_continue(t.facet_id(), Some(
                     enclose!((config_ds, root_ds, spec) move |t: &mut Activation| {
                         supervise_daemon(t, config_ds, root_ds, spec)
                     })))
@@ -176,7 +176,7 @@ impl DaemonInstance {
     fn handle_exit(self, t: &mut Activation, error_message: Option<String>) -> ActorResult {
         let delay =
             std::time::Duration::from_millis(if let None = error_message { 200 } else { 1000 });
-        t.stop_facet_and_continue(t.facet.facet_id, Some(move |t: &mut Activation| {
+        t.stop_facet_and_continue(t.facet_id(), Some(move |t: &mut Activation| {
             #[derive(Debug)]
             enum NextStep {
                 SleepAndRestart,
@@ -230,7 +230,7 @@ impl DaemonInstance {
         kind: &str
     ) -> ActorResult {
         t.facet(|t| {
-            let facet = t.facet.clone();
+            let facet = t.facet_ref();
             let log_ds = self.log_ds.clone();
             let service = self.service.clone();
             let kind = AnyValue::symbol(kind);
@@ -290,7 +290,7 @@ impl DaemonInstance {
             let pid = child.id();
             tracing::debug!(?pid, cmd = ?self.cmd, "started");
 
-            let facet = t.facet.clone();
+            let facet = t.facet_ref();
 
             if let Some(r) = child.stderr.take() {
                 self.log(t, pid, r, "stderr")?;
@@ -401,7 +401,7 @@ fn run(
                                   Ok(config) => {
                                       tracing::info!(?config);
                                       let config = config.elaborate();
-                                      let facet = t.facet.clone();
+                                      let facet = t.facet_ref();
                                       t.linked_task(Some(AnyValue::symbol("subprocess")), async move {
                                           let mut cmd = config.process.build_command().ok_or("Cannot start daemon process")?;
 

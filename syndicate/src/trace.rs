@@ -13,6 +13,7 @@ use preserves_schema::Codec;
 use super::actor::{self, AnyValue, Ref, Cap};
 use super::language;
 
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -27,8 +28,8 @@ pub struct TraceCollector {
 impl<M> From<&Ref<M>> for Target {
     fn from(v: &Ref<M>) -> Target {
         Target {
-            actor: ActorId(AnyValue::new(v.mailbox.actor_id)),
-            facet: FacetId(AnyValue::new(u64::from(v.facet_id))),
+            actor: v.mailbox.actor_id.into(),
+            facet: v.facet_id.into(),
             oid: Oid(AnyValue::new(v.oid())),
         }
     }
@@ -51,7 +52,7 @@ impl TraceCollector {
         let _ = self.tx.send(TraceEntry {
             timestamp: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
                 .expect("Time after Unix epoch").as_secs_f64().into(),
-            actor: ActorId(AnyValue::new(id)),
+            actor: id.into(),
             item: a,
         });
     }
@@ -157,5 +158,17 @@ impl From<actor::Name> for Name {
             None => Name::Anonymous,
             Some(n) => Name::Named { name: n.clone() },
         }
+    }
+}
+
+impl From<NonZeroU64> for ActorId {
+    fn from(v: NonZeroU64) -> Self {
+        ActorId(AnyValue::new(u64::from(v)))
+    }
+}
+
+impl From<NonZeroU64> for FacetId {
+    fn from(v: NonZeroU64) -> Self {
+        FacetId(AnyValue::new(u64::from(v)))
     }
 }

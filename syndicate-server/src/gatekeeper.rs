@@ -297,7 +297,7 @@ impl Entity<noise::Packet> for ResponderState {
                         let transport = ResponderTransport { relay_input, c_recv };
                         let initiator_session = Arc::clone(&details.initiator_session);
                         let relay_output_name = Some(AnyValue::symbol("relay_output"));
-                        let transport_facet = t.facet.clone();
+                        let transport_facet = t.facet_ref();
                         t.linked_task(relay_output_name.clone(), async move {
                             let account = Account::new(relay_output_name, trace_collector);
                             let cause = TurnCause::external("relay_output");

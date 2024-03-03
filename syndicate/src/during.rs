@@ -175,7 +175,7 @@ where
             t.on_stop_notify(&r);
         }
         if should_register_exit_hook {
-            t.state.add_exit_hook(&r);
+            t.add_exit_hook(&r);
         }
         r
     }

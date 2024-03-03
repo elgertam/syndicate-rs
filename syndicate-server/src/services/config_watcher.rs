@@ -184,7 +184,7 @@ fn run(
     let mut watcher = watcher(tx, Duration::from_millis(100)).map_err(convert_notify_error)?;
     watcher.watch(&env.path, RecursiveMode::Recursive).map_err(convert_notify_error)?;
 
-    let facet = t.facet.clone();
+    let facet = t.facet_ref();
     let trace_collector = t.trace_collector();
     let span = tracing::Span::current();
     thread::spawn(move || {
