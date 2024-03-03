@@ -1826,8 +1826,9 @@ impl Actor {
         boot: F,
     ) -> ActorHandle {
         let ac = Actor::new(None, trace_collector.clone());
+        let topcause = trace_collector.as_ref().map(|_| trace::TurnCause::external("top-level actor"));
         let account = Account::new(None, trace_collector);
-        ac.boot(None, account, Some(trace::TurnCause::external("top-level actor")), boot)
+        ac.boot(None, account, topcause, boot)
     }
 
     /// Create a new actor. It still needs to be [`boot`ed][Self::boot].
