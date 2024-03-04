@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
-type Ref<T> = UnboundedSender<T>;
+type Ref<T> = UnboundedSender<Box<T>>;
 
 #[derive(Debug)]
 enum Instruction {
@@ -35,14 +35,14 @@ trait Actor<T> {
 }
 
 fn send<T: std::marker::Send + 'static>(ch: &Arc<Ref<T>>, message: T) -> () {
-    match ch.send(message) {
+    match ch.send(Box::new(message)) {
         Ok(()) => (),
         Err(v) => panic!("Aiee! Could not send {:?}", v),
     }
 }
 
 fn spawn<T: std::marker::Send + 'static, R: Actor<T> + std::marker::Send + 'static>(rt: Option<Arc<AtomicU64>>, mut ac: R) -> Arc<Ref<T>> {
-    let (tx, mut rx) = unbounded_channel();
+    let (tx, mut rx) = unbounded_channel::<Box<T>>();
     if let Some(ref c) = rt {
         c.fetch_add(1, Ordering::SeqCst);
     }
@@ -51,7 +51,7 @@ fn spawn<T: std::marker::Send + 'static, R: Actor<T> + std::marker::Send + 'stat
             match rx.recv().await {
                 None => break,
                 Some(message) => {
-                    match ac.message(message) {
+                    match ac.message(*message) {
                         Action::Continue => continue,
                         Action::Stop => break,
                     }
