@@ -1,5 +1,6 @@
 use preserves_schema::Codec;
 
+use std::convert::TryInto;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,6 +62,10 @@ struct ServerConfig {
 
     #[structopt(short = "t", long)]
     trace_file: Option<PathBuf>,
+
+    /// Enable `$control` entity.
+    #[structopt(long)]
+    control: bool,
 }
 
 #[tokio::main]
@@ -122,6 +127,20 @@ async fn main() -> ActorResult {
         env.insert("config".to_owned(), AnyValue::domain(Arc::clone(&server_config_ds)));
         env.insert("log".to_owned(), AnyValue::domain(Arc::clone(&log_ds)));
         env.insert("gatekeeper".to_owned(), AnyValue::domain(Arc::clone(&gatekeeper)));
+
+        if config.control {
+            env.insert("control".to_owned(), AnyValue::domain(Cap::guard(Language::arc(), t.create(
+                syndicate::entity(())
+                    .on_message(|_, _t, m: crate::schemas::control::ExitServer| {
+                        tracing::info!("$control received exit request with code {}", m.code);
+                        std::process::exit((&m.code).try_into().unwrap_or_else(|_| {
+                            tracing::warn!(
+                                "exit code {} out-of-range of 32-bit signed integer, using 1 instead",
+                                m.code);
+                            1
+                        }))
+                    })))));
+        }
 
         dependencies::boot(t, Arc::clone(&server_config_ds));
         services::config_watcher::on_demand(t, Arc::clone(&server_config_ds));

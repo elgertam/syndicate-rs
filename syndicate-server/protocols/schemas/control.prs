@@ -1,0 +1,12 @@
+version 1 .
+
+# Messages and assertions relating to the `$control` entity enabled in syndicate-server when
+# the `--control` flag is supplied.
+#
+# For example, placing the following into `control-config.pr` and starting the server with
+# `syndicate-server --control -c control-config.pr` will result in the server exiting with
+# exit code 2:
+#
+#     $control ! <exit 2>
+
+ExitServer = <exit @code int> .
