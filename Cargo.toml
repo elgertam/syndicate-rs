@@ -20,8 +20,8 @@ members = [
 # preserves-schema = { path = "localdev/preserves/implementations/rust/preserves-schema" }
 
 [profile.release]
-# strip = true
-debug = true
+strip = true
+# debug = true
 # lto = true
 
 [profile.bench]
