@@ -32,7 +32,7 @@ pull-protocols:
 static: static-x86_64
 
 static-%:
-	cross build --target $*-unknown-linux-musl --features vendored-openssl,jemalloc
+	CARGO_TARGET_DIR=target/target.$* cross build --target $*-unknown-linux-musl --features vendored-openssl,jemalloc
 
 ###########################################################################
 
@@ -54,18 +54,18 @@ static-%:
 x86_64-binary: x86_64-binary-release
 
 x86_64-binary-release:
-	cross build --target x86_64-unknown-linux-musl --release --all-targets --features vendored-openssl,jemalloc
+	CARGO_TARGET_DIR=target/target.x86_64 cross build --target x86_64-unknown-linux-musl --release --all-targets --features vendored-openssl,jemalloc
 
 x86_64-binary-debug:
-	cross build --target x86_64-unknown-linux-musl --all-targets --features vendored-openssl
+	CARGO_TARGET_DIR=target/target.x86_64 cross build --target x86_64-unknown-linux-musl --all-targets --features vendored-openssl
 
 armv7-binary: armv7-binary-release
 
 armv7-binary-release:
-	cross build --target=armv7-unknown-linux-musleabihf --release --all-targets --features vendored-openssl
+	CARGO_TARGET_DIR=target/target.armv7 cross build --target=armv7-unknown-linux-musleabihf --release --all-targets --features vendored-openssl
 
 armv7-binary-debug:
-	cross build --target=armv7-unknown-linux-musleabihf --all-targets --features vendored-openssl
+	CARGO_TARGET_DIR=target/target.armv7 cross build --target=armv7-unknown-linux-musleabihf --all-targets --features vendored-openssl
 
 # As of 2023-05-12 (and probably earlier!) this is no longer required with current Rust nightlies
 # # Hack to workaround https://github.com/rust-embedded/cross/issues/598
@@ -74,7 +74,7 @@ armv7-binary-debug:
 aarch64-binary: aarch64-binary-release
 
 aarch64-binary-release:
-	cross build --target=aarch64-unknown-linux-musl --release --all-targets --features vendored-openssl,jemalloc
+	CARGO_TARGET_DIR=target/target.aarch64 cross build --target=aarch64-unknown-linux-musl --release --all-targets --features vendored-openssl,jemalloc
 
 aarch64-binary-debug:
-	cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
+	CARGO_TARGET_DIR=target/target.aarch64 cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
