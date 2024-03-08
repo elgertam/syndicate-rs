@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-tools"
-version = "0.14.0"
+version = "0.15.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
@@ -11,7 +11,7 @@ license = "Apache-2.0"
 
 [dependencies]
 preserves = "4.995"
-syndicate = { path = "../syndicate", version = "0.35.0"}
+syndicate = { path = "../syndicate", version = "0.36.0"}
 
 clap = { version = "^4.0", features = ["derive"] }
 clap_complete = "^4.0"
