@@ -29,6 +29,7 @@ use preserves::value::Map;
 use preserves::value::NestedValue;
 use preserves::value::NoEmbeddedDomainCodec;
 use preserves::value::PackedWriter;
+use preserves::value::Set;
 use preserves::value::TextWriter;
 use preserves::value::ViaCodec;
 use preserves::value::Writer;
@@ -76,6 +77,7 @@ struct Membranes {
     exported: Membrane,
     imported: Membrane,
     next_export_oid: usize,
+    reimported_attenuations: Map<sturdy::Oid, Set<Arc<Cap>>>,
 }
 
 pub enum Input {
@@ -172,6 +174,11 @@ impl Membrane {
         ws
     }
 
+    fn remove(&mut self, ws: &Arc<WireSymbol>) {
+        self.oid_map.remove(&ws.oid);
+        self.ref_map.remove(&ws.obj);
+    }
+
     fn insert_inert_entity(&mut self, t: &mut Activation, oid: sturdy::Oid) -> Arc<WireSymbol> {
         self.insert(oid, Cap::new(&t.inert_entity()))
     }
@@ -259,6 +266,7 @@ impl TunnelRelay {
                 exported: Membrane::new(WireSymbolSide::Exported),
                 imported: Membrane::new(WireSymbolSide::Imported),
                 next_export_oid: 0,
+                reimported_attenuations: Map::new(),
             },
             pending_outbound: Vec::new(),
         };
@@ -550,9 +558,10 @@ impl Membranes {
     #[inline]
     fn release_one(&mut self, ws: Arc<WireSymbol>) -> bool {
         if ws.dec_ref() {
-            let membrane = self.membrane(ws.side);
-            membrane.oid_map.remove(&ws.oid);
-            membrane.ref_map.remove(&ws.obj);
+            if let WireSymbolSide::Exported = ws.side {
+                self.reimported_attenuations.remove(&ws.oid);
+            }
+            self.membrane(ws.side).remove(&ws);
             true
         } else {
             false
@@ -573,34 +582,43 @@ impl Membranes {
         src: &'src mut S,
         _read_annotations: bool,
     ) -> io::Result<Arc<Cap>> {
-        let ws = match sturdy::WireRef::deserialize(&mut src.packed(NoEmbeddedDomainCodec))? {
+        match sturdy::WireRef::deserialize(&mut src.packed(NoEmbeddedDomainCodec))? {
             sturdy::WireRef::Mine{ oid: b } => {
                 let oid = *b;
-                self.imported.oid_map.get(&oid).map(Arc::clone)
-                    .unwrap_or_else(|| self.import_oid(t, relay_ref, oid))
+                let ws = self.imported.oid_map.get(&oid).map(Arc::clone)
+                    .unwrap_or_else(|| self.import_oid(t, relay_ref, oid));
+                Ok(Arc::clone(&ws.inc_ref().obj))
             }
             sturdy::WireRef::Yours { oid: b, attenuation } => {
                 let oid = *b;
+                let ws = self.exported.oid_map.get(&oid).map(Arc::clone)
+                    .unwrap_or_else(|| self.exported.insert_inert_entity(t, oid.clone()));
+
                 if attenuation.is_empty() {
-                    self.exported.oid_map.get(&oid).map(Arc::clone).unwrap_or_else(
-                        || self.exported.insert_inert_entity(t, oid))
+                    Ok(Arc::clone(&ws.inc_ref().obj))
                 } else {
-                    match self.exported.oid_map.get(&oid) {
-                        None => self.exported.insert_inert_entity(t, oid),
-                        Some(ws) => {
-                            let attenuated_obj = ws.obj.attenuate(&attenuation)
-                                .map_err(|e| {
-                                    io::Error::new(
-                                        io::ErrorKind::InvalidInput,
-                                        format!("Invalid capability attenuation: {:?}", e))
-                                })?;
-                            self.exported.insert(oid, attenuated_obj)
+                    let attenuated_obj = ws.obj.attenuate(&attenuation)
+                        .map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Invalid capability attenuation: {:?}", e))
+                        })?;
+
+                    ws.inc_ref();
+
+                    let variations = self.reimported_attenuations.entry(oid).or_default();
+                    match variations.get(&attenuated_obj) {
+                        None => {
+                            variations.insert(Arc::clone(&attenuated_obj));
+                            self.exported.ref_map.insert(Arc::clone(&attenuated_obj), Arc::clone(&ws));
+                            Ok(attenuated_obj)
                         }
+                        Some(existing) =>
+                            Ok(Arc::clone(existing))
                     }
                 }
             }
-        };
-        Ok(Arc::clone(&ws.inc_ref().obj))
+        }
     }
 }
 
