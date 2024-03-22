@@ -13,8 +13,37 @@ Step = <<rec> @stepType symbol [@detail any]> .
 # ---------------------------------------------------------------------------
 # Protocol at dataspaces *associated* with gatekeeper entities
 
-# Assertion. Gatekeeper will compute an appropriate PathStep from `description` pointing at
-# `target`, and will respond with a `Bound` to `observer` (if supplied).
+# ## Handling `Resolve` requests
+#
+# When the gatekeeper entity receives a `Resolve` assertion (call it R1), it
+#
+#  1. asserts a `Resolve` (call it R2) into its associated dataspace that
+#     is the same as R1 except it has a different `observer`; and
+#
+#  2. observes a `Bind` with `description` matching the `step` of R1/R2
+#     according to `stepType` (e.g. treatment of SturdyStepType is not the
+#     same as treatment of NoiseStepType).
+#
+# Normally, an appropriate `Bind` is expected to exist. If the gatekeeper
+# sees the `Bind` first, it takes the `target` from it and does whatever
+# `stepType` mandates before replying to R1's observer.
+#
+# However, if a `Resolved` is asserted to R2's observer before a `Bind`
+# appears, that resolution is relayed on to R1's observer directly, be it
+# positive or negative, and the gatekeeper stops waiting for a `Bind`.
+#
+# This way, entities can keep an eye out for `Resolve` requests that will
+# never complete, and answer `Rejected` to them even when no matching
+# `Bind` exists. Entities could also use `Resolve` requests to synthesize a
+# `Bind` in a "just-in-time" fashion.
+#
+# ## General treatment of `Bind` assertions
+#
+# When the gatekeeper sees a `Bind`, independently of any potential
+# `Resolve` requests, it computes an appropriate PathStep from
+# `description` pointing at `target`, and responds with a `Bound` to
+# `observer` (if supplied).
+#
 Bind = <bind @description Description @target #:any @observer BindObserver> .
 Description = <<rec> @stepType symbol [@detail any]> .
 BindObserver = @present #:Bound / @absent #f .
