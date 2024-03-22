@@ -27,7 +27,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: Gatekeeper<AnyValue>) -> ActorResult {
     let resolver = t.create(syndicate::entity(Arc::clone(&spec.bindspace))
-                            .on_asserted(gatekeeper::handle_resolves));
+                            .on_asserted_facet(gatekeeper::facet_handle_resolve));
     ds.assert(t, language(), &syndicate::schemas::service::ServiceObject {
         service_name: language().unparse(&spec),
         object: AnyValue::domain(Cap::guard(Language::arc(), resolver)),

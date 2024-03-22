@@ -1510,8 +1510,7 @@ impl Activation {
                               trace::FacetStopReason::ExplicitAction)
     }
 
-    /// Arranges for the [`Facet`] named by `facet_id` to be stopped cleanly when `self`
-    /// commits.
+    /// Cleanly stops the [`Facet`] named by `facet_id`.
     ///
     /// Equivalent to `self.stop_facet_and_continue(facet_id, None)`, except that the lack of a
     /// continuation means that there's no need for this method to return `ActorResult`.
@@ -1520,15 +1519,15 @@ impl Activation {
             .expect("Non-failing stop_facet_and_continue")
     }
 
-    /// Arranges for the active facet to be stopped cleanly when `self` commits.
+    /// Cleanly stops the active facet.
     ///
-    /// Equivalent to `self.stop_facet(self.facet.facet_id)`.
+    /// Equivalent to `self.stop_facet(self.facet_id())`.
     pub fn stop(&mut self) {
         self.stop_facet(self.facet_id())
     }
 
-    /// Arranges for the active actor's root facet to be stopped cleanly when `self` commits;
-    /// this is one way to arrange a clean shutdown of the entire actor.
+    /// Cleanly stops the active actor's root facet.
+    /// This is one way to arrange a clean shutdown of the entire actor.
     ///
     /// Equivalent to `self.stop_facet(self.state.root)`.
     pub fn stop_root(&mut self) {

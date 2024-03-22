@@ -120,7 +120,7 @@ async fn main() -> ActorResult {
 
         let gatekeeper = Cap::guard(Language::arc(), t.create(
             syndicate::entity(Arc::clone(&server_config_ds))
-                .on_asserted(gatekeeper::handle_resolves)));
+                .on_asserted_facet(gatekeeper::facet_handle_resolve)));
         gatekeeper::handle_binds(t, &server_config_ds)?;
 
         let mut env = Map::new();
