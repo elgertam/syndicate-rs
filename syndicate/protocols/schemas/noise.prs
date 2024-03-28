@@ -42,13 +42,30 @@ DefaultProtocol = "Noise_NK_25519_ChaChaPoly_BLAKE2s" .
 # sequence is exhausted or not supplied, an all-zeros key is used each time a PSK is needed.
 NoisePreSharedKeys = @present { preSharedKeys: [bytes ...] } / @invalid { preSharedKeys: any } / @absent {} .
 
-# Sessions proceed by sending Packets to the initiatorSession and responderSession according to
-# the Noise protocol definition. Each Packet represents a complete logical unit of
+# ---------------------------------------------------------------------------
+# Handshaking and running a session
+
+# 1. initiator asserts <resolve <noise ServiceSelector> #:A> at Gatekeeper
+# 2. gatekeeper asserts <accepted #:B> at #:A
+# 3. initiator asserts <initiator #:C> at #:B and then sends `Packet`s to #:B
+# 4. responder sends `Packet`s to #:C
+#
+# Sessions begin with introduction of initiator (#:C) and responder (#:B) to each other, and
+# then proceed by sending `Packet`s (from #:C) to #:B and (from #:B) to #:C according to
+# the Noise protocol definition. Each `Packet` represents a complete logical unit of
 # communication; for example, a complete Turn when layering the Syndicate protocol over Noise.
 # Note well the restriction on Noise messages: no individual complete packet or packet fragment
-# may exceed 65535 bytes (N.B. not 65536!). When `fragmented`, each portion of a Packet is a
+# may exceed 65535 bytes (N.B. not 65536!). When `fragmented`, each portion of a `Packet` is a
 # complete Noise "transport message"; when `complete`, the whole thing is likewise a complete
 # "transport message".
+#
+# Retraction of the `Introduction` ends the session from the initiator-side; retraction of the
+# `<accepted ...>` assertion ends the session from the responder-side.
+
+SessionItem = Initiator / Packet .
+# Assertion
+Initiator = <initiator @initiatorSession #:Packet> .
+# Message
 Packet = @complete bytes / @fragmented [bytes ...] .
 
 # When layering Syndicate protocol over noise,
