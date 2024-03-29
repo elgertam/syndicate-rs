@@ -1837,7 +1837,16 @@ impl Activation {
     ) {
         match &*exit_status {
             ExitStatus::Normal => assert!(self.get_facet(self.root).is_none()),
-            ExitStatus::Dropped | ExitStatus::Error(_) => (),
+            ExitStatus::Dropped => {
+                // If we panicked, facet_id will be Some(_), but leaving it this way as we
+                // enter take_turn causes a nested panic, so we clear it here.
+                if self.facet_id.is_some() {
+                    tracing::debug!(actor_id=?self.actor_id, facet_id=?self.facet_id,
+                                    "clearing facet_id (we must have panicked mid-Turn)");
+                    self.facet_id = None;
+                }
+            }
+            ExitStatus::Error(_) => (),
         }
 
         let cause = Some(trace::TurnCause::Cleanup);
