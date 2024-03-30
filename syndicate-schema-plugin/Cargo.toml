@@ -13,7 +13,7 @@ license = "Apache-2.0"
 
 [dependencies]
 preserves-schema = "5.995"
-syndicate = { path = "../syndicate", version = "0.37.0"}
+syndicate = { path = "../syndicate", version = "0.38.0"}
 
 [package.metadata.workspaces]
 independent = true
