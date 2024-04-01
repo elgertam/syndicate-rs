@@ -1214,6 +1214,8 @@ impl Activation {
             // just drop 'em so they don't run next time
             std::mem::take(&mut self.commit_actions);
         }
+        self.single_queue = None;
+        self.multiple_queues = None;
         tracing::trace!("Activation::rollback complete");
     }
 
