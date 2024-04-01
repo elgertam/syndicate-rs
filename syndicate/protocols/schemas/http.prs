@@ -39,10 +39,13 @@ HttpContext = <request @req HttpRequest @res #:HttpResponse> .
 @<TODO "trailers?">
 # Messages
 HttpResponse =
+# Assertion - frames the response. When retracted, response is considered complete.
+# If retracted before `status` is delivered, response is considered a 500.
+/ <processing>
+# Remainder are messages: +processing . (status | header)* . body* . -processing
 / <status @code int @message string>
 / <header @name symbol @value string>
-/ <chunk @chunk Chunk>
-/ <done @chunk Chunk>
+/ <body @chunk Chunk>
 .
 
 Chunk = @string string / @bytes bytes .
