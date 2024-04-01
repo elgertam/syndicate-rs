@@ -187,7 +187,10 @@ fn path_pattern_matches(path_pat: &http::PathPattern, path: &Vec<String>) -> boo
             http::PathPatternElement::Rest => return true,
         }
     }
-    true
+    match path_iter.next() {
+        Some(_more) => false,
+        None => true,
+    }
 }
 
 fn try_hostname<'table>(
