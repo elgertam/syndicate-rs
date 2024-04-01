@@ -141,12 +141,12 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
                         http::MethodPattern::Specific(m) => m.to_uppercase(),
                         http::MethodPattern::Any => unreachable!(),
                     }).collect::<Vec<String>>().join(", ");
+                    let h = res.assert(t, language(), &http::HttpResponse::Processing);
                     res.message(t, language(), &http::HttpResponse::Status {
                         code: 405.into(), message: "Method Not Allowed".into() });
                     res.message(t, language(), &http::HttpResponse::Header {
                         name: "allow".into(), value: allowed });
-                    res.message(t, language(), &http::HttpResponse::Done {
-                        chunk: Box::new(http::Chunk::Bytes(vec![])) });
+                    if let Some(h) = h { t.retract(h); }
                     return Ok(())
                 }
             }
@@ -166,10 +166,10 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
 }
 
 fn send_empty(t: &mut Activation, res: &Arc<Cap>, code: u16, message: &str) -> ActorResult {
+    let h = res.assert(t, language(), &http::HttpResponse::Processing);
     res.message(t, language(), &http::HttpResponse::Status {
         code: code.into(), message: message.into() });
-    res.message(t, language(), &http::HttpResponse::Done {
-        chunk: Box::new(http::Chunk::Bytes(vec![])) });
+    if let Some(h) = h { t.retract(h); }
     return Ok(())
 }
 
@@ -268,12 +268,12 @@ impl HttpStaticFileServer {
             Ok(mut fh) => {
                 if fh.metadata().is_ok_and(|m| m.is_dir()) {
                     drop(fh);
+                    let h = res.assert(t, language(), &http::HttpResponse::Processing);
                     res.message(t, language(), &http::HttpResponse::Status {
                         code: 301.into(), message: "Moved permanently".into() });
                     res.message(t, language(), &http::HttpResponse::Header {
                         name: "location".into(), value: format!("/{}/", req.path.join("/")) });
-                    res.message(t, language(), &http::HttpResponse::Done {
-                        chunk: Box::new(http::Chunk::Bytes(vec![])) });
+                    if let Some(h) = h { t.retract(h); }
                     return Ok(())
                 } else {
                     let mut buf = Vec::new();
@@ -287,14 +287,17 @@ impl HttpStaticFileServer {
             }
         };
 
+        let h = res.assert(t, language(), &http::HttpResponse::Processing);
         res.message(t, language(), &http::HttpResponse::Status {
             code: 200.into(), message: "OK".into() });
         if let Some(mime_type) = mime_type {
             res.message(t, language(), &http::HttpResponse::Header {
                 name: "content-type".into(), value: mime_type.to_owned() });
         }
-        res.message(t, language(), &http::HttpResponse::Done {
+        res.message(t, language(), &http::HttpResponse::Body {
             chunk: Box::new(http::Chunk::Bytes(body)) });
+        if let Some(h) = h { t.retract(h); }
+
         Ok(())
     }
 }
