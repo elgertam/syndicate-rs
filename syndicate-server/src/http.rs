@@ -32,13 +32,9 @@ pub fn empty_response(code: StatusCode) -> Response<Body> {
 
 type ChunkItem = Result<body::Bytes, Box<dyn std::error::Error + Send + Sync>>;
 
-enum ResponseCollector {
-    Pending {
-        tx: oneshot::Sender<Response<Body>>,
-        body_tx: UnboundedSender<ChunkItem>,
-        res: Response<Body>,
-    },
-    Done
+struct ResponseCollector {
+    tx_res: Option<(oneshot::Sender<Response<Body>>, Response<Body>)>,
+    body_tx: Option<UnboundedSender<ChunkItem>>,
 }
 
 impl ResponseCollector {
@@ -46,37 +42,41 @@ impl ResponseCollector {
         let (body_tx, body_rx) = unbounded_channel();
         let body_stream: Box<dyn futures::Stream<Item = ChunkItem> + Send> =
             Box::new(UnboundedReceiverStream::new(body_rx));
-        ResponseCollector::Pending {
-            tx,
-            body_tx,
-            res: Response::new(body_stream.into()),
+        ResponseCollector {
+            tx_res: Some((tx, Response::new(body_stream.into()))),
+            body_tx: Some(body_tx),
         }
     }
 
     fn with_res<F: FnOnce(&mut Response<Body>) -> ActorResult>(&mut self, f: F) -> ActorResult {
-        if let ResponseCollector::Pending { res, .. } = self {
+        if let ResponseCollector { tx_res: Some((_, res)), .. } = self {
             f(res)?;
         }
         Ok(())
     }
 
+    fn deliver_res(&mut self) {
+        if let Some((tx, res)) = std::mem::replace(&mut self.tx_res, None) {
+            let _ = tx.send(res);
+        }
+    }
+
     fn add_chunk(&mut self, value: http::Chunk) -> ActorResult {
-        if let ResponseCollector::Pending { body_tx, .. } = self {
+        self.deliver_res();
+
+        if let Some(body_tx) = self.body_tx.as_mut() {
             body_tx.send(Ok(match value {
                 http::Chunk::Bytes(bs) => bs.into(),
                 http::Chunk::String(s) => s.as_bytes().to_vec().into(),
             }))?;
         }
+
         Ok(())
     }
 
     fn finish(&mut self) -> ActorResult {
-        match std::mem::replace(self, ResponseCollector::Done) {
-            ResponseCollector::Pending { tx, res, .. } => {
-                let _ = tx.send(res);
-            }
-            ResponseCollector::Done => (),
-        }
+        self.deliver_res();
+        self.body_tx = None;
         Ok(())
     }
 }
