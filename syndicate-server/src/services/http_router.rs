@@ -72,6 +72,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
         enclose!((httpd, routes) during!(t, httpd, language(), <http-listener #(&port1)>, enclose!((routes, port) |t: &mut Activation| {
             let port2 = port.clone();
             during!(t, httpd, language(), <http-bind $host #(&port2) $method $path $handler>, |t: &mut Activation| {
+                tracing::debug!("+HTTP binding {:?} {:?} {:?} {:?} {:?}", host, port, method, path, handler);
                 let port = port.value().to_signedinteger()?;
                 let host = language().parse::<http::HostPattern>(&host)?;
                 let path = language().parse::<http::PathPattern>(&path)?;
@@ -84,6 +85,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
                     .entry(method.clone()).or_default()
                     .insert(handler.clone());
                 t.on_stop(enclose!((routes, handler, method, path, host, port) move |t| {
+                    tracing::debug!("-HTTP binding {:?} {:?} {:?} {:?} {:?}", host, port, method, path, handler);
                     let port_map = t.get_mut(&routes);
                     let host_map = port_map.entry(port.clone()).or_default();
                     let path_map = host_map.entry(host.clone()).or_default();
@@ -114,6 +116,8 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
     during!(t, httpd, language(), <request $req $res>, |t: &mut Activation| {
         let req = match language().parse::<http::HttpRequest>(&req) { Ok(v) => v, Err(_) => return Ok(()) };
         let res = match res.value().to_embedded() { Ok(v) => v, Err(_) => return Ok(()) };
+
+        tracing::trace!("Looking up handler for {:#?} in {:#?}", &req, &t.get(&routes));
 
         let host_map = match t.get(&routes).get(&req.port) {
             Some(host_map) => host_map,
@@ -152,6 +156,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
             tracing::warn!(?req, "Too many handlers available");
         }
         let handler = handlers.first().expect("Nonempty handler set").clone();
+        tracing::trace!("Handler for {:?} is {:?}", &req, &handler);
         handler.assert(t, language(), &http::HttpContext { req, res: res.clone() });
 
         Ok(())
@@ -202,6 +207,7 @@ fn try_hostname<'table>(
         None => Ok(None),
         Some(path_table) => {
             for (path_pat, method_table) in path_table.iter() {
+                tracing::trace!("Checking path {:?} against pattern {:?}", &path, &path_pat);
                 if path_pattern_matches(path_pat, path) {
                     return Ok(Some(method_table));
                 }
