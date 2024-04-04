@@ -1,14 +1,18 @@
 version 1 .
 embeddedType EntityRef.Cap .
 
-# Dataspace patterns: a sublanguage of attenuation patterns.
+# Dataspace patterns: *almost* a sublanguage of attenuation patterns.
+#
+# One key difference is that Dataspace patterns are extensible, in that
+# they ignore fields not mentioned in DCompound patterns.
+
 Pattern = DDiscard / DBind / DLit / DCompound .
 
 DDiscard = <_>.
 DBind = <bind @pattern Pattern>.
 DLit = <lit @value AnyAtom>.
-DCompound = <rec @label any @fields [Pattern ...]>
-          / <arr @items [Pattern ...]>
+DCompound = <rec @label any @fields { int: Pattern ...:... }>
+          / <arr @items { int: Pattern ...:... }>
           / <dict @entries { any: Pattern ...:... }> .
 
 AnyAtom =
