@@ -60,7 +60,7 @@ NoisePreSharedKeys = @present { preSharedKeys: [bytes ...] } / @invalid { preSha
 # complete Noise "transport message"; when `complete`, the whole thing is likewise a complete
 # "transport message".
 #
-# Retraction of the `Introduction` ends the session from the initiator-side; retraction of the
+# Retraction of the `Initiator` ends the session from the initiator-side; retraction of the
 # `<accepted ...>` assertion ends the session from the responder-side.
 
 SessionItem = Initiator / Packet .
