@@ -21,7 +21,7 @@ MethodPattern = @any #f / @specific @"Lowercase" symbol .
 # Assertion in driver DS
 HttpRequest = <http-request
                @sequenceNumber int
-               @host string
+               @host RequestHost
                @port int
                @method @"Lowercase" symbol
                @path [string ...]
@@ -32,20 +32,28 @@ HttpRequest = <http-request
 Headers = {@"Lowercase" symbol: string ...:...} .
 QueryValue = @string string / <file @filename string @headers Headers @body bytes> .
 RequestBody = @present bytes / @absent #f .
+RequestHost = @present string / @absent #f .
 
 # Assertion to handler entity
 HttpContext = <request @req HttpRequest @res #:HttpResponse> .
 
+# HttpResponse protocol. Delivered to the `res` ref in `HttpContext`.
+#
+#     (status | header)* . chunk* . done
+#
+# Done triggers completion of the response and retraction of the frame by the peer. If the
+# HttpBinding responsible for the request is withdrawn mid-way through a response (i.e. when
+# chunked transfer is used and at least one chunk has been sent) the request is abruptly
+# closed; if it is withdrawn at any other moment in the lifetime of the request, a 500 Internal
+# Server Error is send to the client.
+#
 @<TODO "trailers?">
-# Messages
 HttpResponse =
-# Assertion - frames the response. When retracted, response is considered complete.
-# If retracted before `status` is delivered, response is considered a 500.
-/ <processing>
-# Remainder are messages: +processing . (status | header)* . body* . -processing
+# Messages.
 / <status @code int @message string>
 / <header @name symbol @value string>
-/ <body @chunk Chunk>
+/ <chunk @chunk Chunk>
+/ <done @chunk Chunk>
 .
 
 Chunk = @string string / @bytes bytes .
