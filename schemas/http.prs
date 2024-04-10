@@ -21,7 +21,7 @@ MethodPattern = @any #f / @specific @"Lowercase" symbol .
 # Assertion in driver DS
 HttpRequest = <http-request
                @sequenceNumber int
-               @host string
+               @host RequestHost
                @port int
                @method @"Lowercase" symbol
                @path [string ...]
@@ -32,6 +32,7 @@ HttpRequest = <http-request
 Headers = {@"Lowercase" symbol: string ...:...} .
 QueryValue = @string string / <file @filename string @headers Headers @body bytes> .
 RequestBody = @present bytes / @absent #f .
+RequestHost = @present string / @absent #f .
 
 # Assertion to handler entity
 HttpContext = <request @req HttpRequest @res #:HttpResponse> .
