@@ -36,17 +36,29 @@ RequestBody = @present bytes / @absent #f .
 # Assertion to handler entity
 HttpContext = <request @req HttpRequest @res #:HttpResponse> .
 
+# HttpResponse protocol. Delivered to the `res` ref in `HttpContext`.
+#
+# Use of `processing` is optional, so the flow is either:
+#
+#     +processing . (status | header)* . chunk* . done? . -processing
+#
+# or
+#
+#     (status | header)* . chunk* . done
+#
+# Done triggers completion of the response and retraction of the frame by the peer, whether
+# `processing` is used or not. In addition, if `processing` is used, its retraction triggers
+# completion and termination. If `processing` is retracted before `status` is delivered, the
+# response is considered a 500.
+#
 @<TODO "trailers?">
-# Messages
 HttpResponse =
-# Assertion - frames the response. When retracted, response is considered complete.
-# If retracted before `status` is delivered, response is considered a 500.
+# Assertion - frames the response.
 / <processing>
-# Remainder are messages: +processing . (status | header)* . body* . done? . -processing
-# Done triggers completion of the response and retraction of the frame by the peer.
+# Remainder are messages.
 / <status @code int @message string>
 / <header @name symbol @value string>
-/ <body @chunk Chunk>
+/ <chunk @chunk Chunk>
 / <done @chunk Chunk>
 .
 
