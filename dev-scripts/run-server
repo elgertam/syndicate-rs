@@ -1,2 +1,7 @@
 #!/bin/sh
-make -C ../syndicate-server binary && exec taskset -c 0,1 ../target/release/syndicate-server -c benchmark-config.pr "$@"
+TASKSET='taskset -c 0,1'
+if [ $(uname -s) = 'Darwin' ]
+then
+    TASKSET=
+fi
+make -C ../syndicate-server binary && exec $TASKSET ../target/release/syndicate-server -c benchmark-config.pr "$@"
