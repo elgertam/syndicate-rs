@@ -42,10 +42,12 @@ HttpResponse =
 # Assertion - frames the response. When retracted, response is considered complete.
 # If retracted before `status` is delivered, response is considered a 500.
 / <processing>
-# Remainder are messages: +processing . (status | header)* . body* . -processing
+# Remainder are messages: +processing . (status | header)* . body* . done? . -processing
+# Done triggers completion of the response and retraction of the frame by the peer.
 / <status @code int @message string>
 / <header @name symbol @value string>
 / <body @chunk Chunk>
+/ <done @chunk Chunk>
 .
 
 Chunk = @string string / @bytes bytes .
