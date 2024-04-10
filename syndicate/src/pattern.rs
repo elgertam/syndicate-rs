@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::schemas::dataspace_patterns::*;
 
 use super::language;
@@ -8,23 +10,25 @@ use preserves::value::Record;
 use preserves::value::Value;
 use preserves_schema::Codec;
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
-pub enum PathStep {
-    Index(usize),
-    Key(_Any),
-}
-
+pub type PathStep = _Any;
 pub type Path = Vec<PathStep>;
 pub type Paths = Vec<Path>;
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConstantPositions {
+    pub with_values: Paths,
+    pub required_to_exist: Paths,
+}
 
 struct Analyzer {
     pub const_paths: Paths,
     pub const_values: Vec<_Any>,
+    pub checked_paths: Paths,
     pub capture_paths: Paths,
 }
 
 pub struct PatternAnalysis {
-    pub const_paths: Paths,
+    pub const_positions: Arc<ConstantPositions>,
     pub const_values: _Any,
     pub capture_paths: Paths,
 }
@@ -38,11 +42,15 @@ impl PatternAnalysis {
         let mut analyzer = Analyzer {
             const_paths: Vec::new(),
             const_values: Vec::new(),
+            checked_paths: Vec::new(),
             capture_paths: Vec::new(),
         };
         analyzer.walk(&mut Vec::new(), p);
         PatternAnalysis {
-            const_paths: analyzer.const_paths,
+            const_positions: Arc::new(ConstantPositions {
+                with_values: analyzer.const_paths,
+                required_to_exist: analyzer.checked_paths,
+            }),
             const_values: _Any::new(analyzer.const_values),
             capture_paths: analyzer.capture_paths,
         }
@@ -58,34 +66,21 @@ impl Analyzer {
 
     fn walk(&mut self, path: &mut Path, p: &Pattern) {
         match p {
-            Pattern::DCompound(b) => match &**b {
-                DCompound::Rec { fields, .. } => {
-                    for (i, p) in fields.iter().enumerate() {
-                        self.walk_step(path, PathStep::Index(i), p);
-                    }
-                }
-                DCompound::Arr { items, .. } => {
-                    for (i, p) in items.iter().enumerate() {
-                        self.walk_step(path, PathStep::Index(i), p);
-                    }
-                }
-                DCompound::Dict { entries, .. } => {
-                    for (k, p) in entries {
-                        self.walk_step(path, PathStep::Key(k.clone()), p);
-                    }
+            Pattern::Group { entries, .. } => {
+                for (k, p) in entries {
+                    self.walk_step(path, k.clone(), p)
                 }
             }
-            Pattern::DBind(b) => {
-                let DBind { pattern, .. } = &**b;
+            Pattern::Bind { pattern } => {
                 self.capture_paths.push(path.clone());
-                self.walk(path, pattern)
+                self.walk(path, &**pattern);
             }
-            Pattern::DDiscard(_) =>
-                (),
-            Pattern::DLit(b) => {
-                let DLit { value } = &**b;
+            Pattern::Discard => {
+                self.checked_paths.push(path.clone());
+            }
+            Pattern::Lit { value } => {
                 self.const_paths.push(path.clone());
-                self.const_values.push(language().unparse(value));
+                self.const_values.push(language().unparse(&**value));
             }
         }
     }
@@ -109,52 +104,47 @@ impl PatternMatcher {
         }
     }
 
+    fn run_seq<'a, F: 'a + Fn(usize) -> &'a _Any>(&mut self, entries: &Map<_Any, Pattern<_Any>>, values: F) -> bool {
+        for (k, p) in entries {
+            match k.value().as_usize() {
+                None => return false,
+                Some(i) => if !self.run(p, values(i)) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     fn run(&mut self, pattern: &Pattern<_Any>, value: &_Any) -> bool {
         match pattern {
-            Pattern::DDiscard(_) => true,
-            Pattern::DBind(b) => {
+            Pattern::Discard => true,
+            Pattern::Bind { pattern } => {
                 self.captures.push(value.clone());
-                self.run(&b.pattern, value)
+                self.run(&**pattern, value)
             }
-            Pattern::DLit(b) => value == &language().unparse(&b.value),
-            Pattern::DCompound(b) => match &**b {
-                DCompound::Rec { label, fields } => {
-                    match value.value().as_record(Some(fields.len())) {
+            Pattern::Lit { value: expected } => value == &language().unparse(&**expected),
+            Pattern::Group { type_, entries } => match &**type_ {
+                GroupType::Rec { label } => {
+                    match value.value().as_record(None) {
                         None => false,
-                        Some(r) => {
-                            if r.label() != label {
-                                return false;
-                            }
-                            for (i, p) in fields.iter().enumerate() {
-                                if !self.run(p, &r.fields()[i]) {
-                                    return false;
-                                }
-                            }
-                            true
-                        }
+                        Some(r) =>
+                            r.label() == label &&
+                            self.run_seq(entries, |i| &r.fields()[i])
                     }
                 }
-                DCompound::Arr { items } => {
+                GroupType::Arr => {
                     match value.value().as_sequence() {
                         None => false,
-                        Some(vs) => {
-                            if vs.len() != items.len() {
-                                return false;
-                            }
-                            for (i, p) in items.iter().enumerate() {
-                                if !self.run(p, &vs[i]) {
-                                    return false;
-                                }
-                            }
-                            true
-                        }
+                        Some(vs) =>
+                            self.run_seq(entries, |i| &vs[i])
                     }
                 }
-                DCompound::Dict { entries: expected_entries } => {
+                GroupType::Dict => {
                     match value.value().as_dictionary() {
                         None => false,
                         Some(actual_entries) => {
-                            for (k, p) in expected_entries.iter() {
+                            for (k, p) in entries {
                                 if !actual_entries.get(k).map(|v| self.run(p, v)).unwrap_or(false) {
                                     return false;
                                 }
@@ -170,42 +160,68 @@ impl PatternMatcher {
 
 pub fn lift_literal(v: &_Any) -> Pattern {
     match v.value() {
-        Value::Record(r) => Pattern::DCompound(Box::new(DCompound::Rec {
-            label: r.label().clone(),
-            fields: r.fields().iter().map(lift_literal).collect(),
-        })),
-        Value::Sequence(items) => Pattern::DCompound(Box::new(DCompound::Arr {
-            items: items.iter().map(lift_literal).collect(),
-        })),
+        Value::Record(r) => Pattern::Group {
+            type_: Box::new(GroupType::Rec { label: r.label().clone() }),
+            entries: r.fields().iter().enumerate()
+                .map(|(i, v)| (_Any::new(i), lift_literal(v)))
+                .collect(),
+        },
+        Value::Sequence(items) => Pattern::Group {
+            type_: Box::new(GroupType::Arr),
+            entries: items.iter().enumerate()
+                .map(|(i, v)| (_Any::new(i), lift_literal(v)))
+                .collect(),
+        },
         Value::Set(_members) => panic!("Cannot express literal set in pattern"),
-        Value::Dictionary(entries) => Pattern::DCompound(Box::new(DCompound::Dict {
-            entries: entries.iter().map(|(k, v)| (k.clone(), lift_literal(v))).collect(),
-        })),
-        _other => Pattern::DLit(Box::new(DLit {
-            value: language().parse(v).expect("Non-compound datum can be converted to AnyAtom"),
-        })),
+        Value::Dictionary(entries) => Pattern::Group {
+            type_: Box::new(GroupType::Dict),
+            entries: entries.iter()
+                .map(|(k, v)| (k.clone(), lift_literal(v)))
+                .collect(),
+        },
+        _other => Pattern::Lit {
+            value: Box::new(language().parse(v).expect("Non-compound datum can be converted to AnyAtom")),
+        },
     }
+}
+
+const DISCARD: Pattern = Pattern::Discard;
+
+pub fn pattern_seq_from_dictionary(entries: &Map<_Any, Pattern>) -> Option<Vec<&Pattern>> {
+    let mut max_k: Option<usize> = None;
+    for k in entries.keys() {
+        max_k = max_k.max(Some(k.value().as_usize()?));
+    }
+    let mut seq = vec![];
+    if let Some(max_k) = max_k {
+        seq.reserve(max_k + 1);
+        for i in 0..=max_k {
+            seq.push(entries.get(&_Any::new(i)).unwrap_or(&DISCARD));
+        }
+    }
+    return Some(seq);
+}
+
+fn drop_literal_entries_seq(mut seq: Vec<_Any>, entries: &Map<_Any, Pattern>) -> Option<Vec<_Any>> {
+    for p in pattern_seq_from_dictionary(entries)?.into_iter() {
+        seq.push(drop_literal(p)?);
+    }
+    Some(seq)
 }
 
 pub fn drop_literal(p: &Pattern) -> Option<_Any> {
     match p {
-        Pattern::DCompound(b) => match &**b {
-            DCompound::Rec { label, fields } => {
-                let mut r = vec![label.clone()];
-                for f in fields.iter() {
-                    r.push(drop_literal(f)?);
-                }
-                Some(Value::Record(Record(r)).wrap())
-            }
-            DCompound::Arr { items } =>
-                Some(Value::Sequence(items.iter().map(drop_literal)
-                                     .collect::<Option<Vec<_Any>>>()?).wrap()),
-            DCompound::Dict { entries } =>
-                Some(Value::Dictionary(entries.iter()
-                                       .map(|(k, p)| Some((k.clone(), drop_literal(p)?)))
-                                       .collect::<Option<Map<_Any, _Any>>>()?).wrap()),
+        Pattern::Group { type_, entries } => match &**type_ {
+            GroupType::Rec { label } =>
+                Some(Value::Record(Record(drop_literal_entries_seq(vec![label.clone()], entries)?)).wrap()),
+            GroupType::Arr =>
+                Some(Value::Sequence(drop_literal_entries_seq(vec![], entries)?).wrap()),
+            GroupType::Dict =>
+            Some(Value::Dictionary(entries.iter()
+                .map(|(k, p)| Some((k.clone(), drop_literal(p)?)))
+                .collect::<Option<Map<_Any, _Any>>>()?).wrap()),
         },
-        Pattern::DLit(b) => Some(language().unparse(&b.value)),
+        Pattern::Lit { value } => Some(language().unparse(&**value)),
         _ => None,
     }
 }

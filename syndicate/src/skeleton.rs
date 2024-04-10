@@ -16,18 +16,11 @@ use crate::actor::Activation;
 use crate::actor::Handle;
 use crate::actor::Cap;
 use crate::schemas::dataspace_patterns as ds;
-use crate::pattern::{self, PathStep, Path, Paths};
+use crate::pattern::{self, ConstantPositions, PathStep, Path, Paths};
 
 type Bag<A> = bag::BTreeBag<A>;
 
 type Captures = AnyValue;
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-enum Guard {
-    Rec(AnyValue, usize),
-    Seq(usize),
-    Map,
-}
 
 /// Index of assertions and [`Observe`rs][crate::schemas::dataspace::Observe].
 ///
@@ -44,13 +37,13 @@ pub struct Index {
 #[derive(Debug)]
 struct Node {
     continuation: Continuation,
-    edges: Map<Selector, Map<Guard, Node>>,
+    edges: Map<Selector, Map<ds::GroupType, Node>>,
 }
 
 #[derive(Debug)]
 struct Continuation {
     cached_assertions: Set<AnyValue>,
-    leaf_map: Map<Paths, Map<Captures, Leaf>>,
+    leaf_map: Map<Arc<ConstantPositions>, Map<Captures, Leaf>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -205,7 +198,7 @@ impl Node {
     }
 
     fn extend(&mut self, pat: &ds::Pattern) -> &mut Continuation {
-        let (_pop_count, final_node) = self.extend_walk(&mut Vec::new(), 0, PathStep::Index(0), pat);
+        let (_pop_count, final_node) = self.extend_walk(&mut Vec::new(), 0, PathStep::new(0), pat);
         &mut final_node.continuation
     }
 
@@ -216,23 +209,13 @@ impl Node {
         step: PathStep,
         pat: &ds::Pattern,
     ) -> (usize, &mut Node) {
-        let (guard, members): (Guard, Vec<(PathStep, &ds::Pattern)>) = match pat {
-            ds::Pattern::DCompound(b) => match &**b {
-                ds::DCompound::Arr { items } =>
-                    (Guard::Seq(items.len()),
-                     items.iter().enumerate().map(|(i, p)| (PathStep::Index(i), p)).collect()),
-                ds::DCompound::Rec { label, fields } =>
-                    (Guard::Rec(label.clone(), fields.len()),
-                     fields.iter().enumerate().map(|(i, p)| (PathStep::Index(i), p)).collect()),
-                ds::DCompound::Dict { entries, .. } =>
-                    (Guard::Map,
-                     entries.iter().map(|(k, p)| (PathStep::Key(k.clone()), p)).collect()),
-            }
-            ds::Pattern::DBind(b) => {
-                let ds::DBind { pattern, .. } = &**b;
-                return self.extend_walk(path, pop_count, step, pattern);
-            }
-            ds::Pattern::DDiscard(_) | ds::Pattern::DLit(_) =>
+        let (guard, members): (ds::GroupType, Vec<(PathStep, &ds::Pattern)>) = match pat {
+            ds::Pattern::Group { type_, entries } =>
+                ((&**type_).clone(),
+                 entries.iter().map(|(k, p)| (k.clone(), p)).collect()),
+            ds::Pattern::Bind { pattern } =>
+                return self.extend_walk(path, pop_count, step, &**pattern),
+            ds::Pattern::Discard | ds::Pattern::Lit { .. } =>
                 return (pop_count, self),
         };
 
@@ -336,41 +319,46 @@ where FCont: FnMut(&mut Continuation, &AnyValue) -> (),
 
     fn continuation(&mut self, c: &mut Continuation) {
         (self.m_cont)(c, self.outer_value);
-        let mut empty_const_paths = Vec::new();
-        for (const_paths, const_val_map) in &mut c.leaf_map {
-            if let Some(const_vals) = project_paths(self.outer_value, const_paths) {
-                let leaf_opt = if self.create_leaf_if_absent {
-                    Some(const_val_map.entry(const_vals.clone()).or_insert_with(Leaf::new))
-                } else {
-                    const_val_map.get_mut(&const_vals)
-                };
-                if let Some(leaf) = leaf_opt {
-                    (self.m_leaf)(leaf, self.outer_value);
-                    for (capture_paths, endpoints) in &mut leaf.endpoints_map {
-                        if let Some(cs) = project_paths(self.outer_value, &capture_paths) {
-                            (self.m_endpoints)(endpoints, cs);
-                        }
+        let mut empty_const_positions = Vec::new();
+        for (const_positions, const_val_map) in &mut c.leaf_map {
+            if project_paths(self.outer_value, &const_positions.required_to_exist).is_none() {
+                continue;
+            }
+            let const_vals = match project_paths(self.outer_value, &const_positions.with_values) {
+                Some(vs) => vs,
+                None => continue,
+            };
+            let leaf_opt = if self.create_leaf_if_absent {
+                Some(const_val_map.entry(const_vals.clone()).or_insert_with(Leaf::new))
+            } else {
+                const_val_map.get_mut(&const_vals)
+            };
+            if let Some(leaf) = leaf_opt {
+                (self.m_leaf)(leaf, self.outer_value);
+                for (capture_paths, endpoints) in &mut leaf.endpoints_map {
+                    if let Some(cs) = project_paths(self.outer_value, &capture_paths) {
+                        (self.m_endpoints)(endpoints, cs);
                     }
-                    if leaf.is_empty() {
-                        const_val_map.remove(&const_vals);
-                        if const_val_map.is_empty() {
-                            empty_const_paths.push(const_paths.clone());
-                        }
+                }
+                if leaf.is_empty() {
+                    const_val_map.remove(&const_vals);
+                    if const_val_map.is_empty() {
+                        empty_const_positions.push(const_positions.clone());
                     }
                 }
             }
         }
-        for const_paths in empty_const_paths {
-            c.leaf_map.remove(&const_paths);
+        for const_positions in empty_const_positions {
+            c.leaf_map.remove(&const_positions);
         }
     }
 }
 
-fn class_of(v: &AnyValue) -> Option<Guard> {
+fn class_of(v: &AnyValue) -> Option<ds::GroupType> {
     match v.value() {
-        Value::Sequence(vs) => Some(Guard::Seq(vs.len())),
-        Value::Record(r) => Some(Guard::Rec(r.label().clone(), r.arity())),
-        Value::Dictionary(_) => Some(Guard::Map),
+        Value::Sequence(_) => Some(ds::GroupType::Arr),
+        Value::Record(r) => Some(ds::GroupType::Rec { label: r.label().clone() }),
+        Value::Dictionary(_) => Some(ds::GroupType::Dict),
         _ => None,
     }
 }
@@ -398,15 +386,17 @@ fn project_paths<'a>(v: &'a AnyValue, ps: &Paths) -> Option<Captures> {
 }
 
 fn step<'a>(v: &'a AnyValue, s: &PathStep) -> Option<&'a AnyValue> {
-    match (v.value(), s) {
-        (Value::Sequence(vs), PathStep::Index(i)) =>
-            if *i < vs.len() { Some(&vs[*i]) } else { None },
-        (Value::Record(r), PathStep::Index(i)) =>
-            if *i < r.arity() { Some(&r.fields()[*i]) } else { None },
-        (Value::Dictionary(m), PathStep::Key(k)) =>
-            m.get(k),
-        _ =>
-            None,
+    match v.value() {
+        Value::Sequence(vs) => {
+            let i = s.value().as_usize()?;
+            if i < vs.len() { Some(&vs[i]) } else { None }
+        }
+        Value::Record(r) => {
+            let i = s.value().as_usize()?;
+            if i < r.arity() { Some(&r.fields()[i]) } else { None }
+        }
+        Value::Dictionary(m) => m.get(s),
+        _ => None,
     }
 }
 
@@ -423,11 +413,14 @@ impl Continuation {
     ) {
         let cached_assertions = &self.cached_assertions;
         let const_val_map =
-            self.leaf_map.entry(analysis.const_paths.clone()).or_insert_with({
+            self.leaf_map.entry(analysis.const_positions.clone()).or_insert_with({
                 || {
                     let mut cvm = Map::new();
                     for a in cached_assertions {
-                        if let Some(key) = project_paths(a, &analysis.const_paths) {
+                        if project_paths(a, &analysis.const_positions.required_to_exist).is_none() {
+                            continue;
+                        }
+                        if let Some(key) = project_paths(a, &analysis.const_positions.with_values) {
                             cvm.entry(key).or_insert_with(Leaf::new)
                                 .cached_assertions.insert(a.clone());
                         }
@@ -462,7 +455,7 @@ impl Continuation {
         observer: &Arc<Cap>,
     ) {
         if let Entry::Occupied(mut const_val_map_entry)
-            = self.leaf_map.entry(analysis.const_paths)
+            = self.leaf_map.entry(analysis.const_positions)
         {
             let const_val_map = const_val_map_entry.get_mut();
             if let Entry::Occupied(mut leaf_entry)

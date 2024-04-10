@@ -10,7 +10,6 @@ use syndicate::error::Error;
 use syndicate::preserves::rec;
 use syndicate::preserves::value::Map;
 use syndicate::preserves::value::NestedValue;
-use syndicate::preserves::value::Set;
 use syndicate::schemas::http;
 use syndicate::value::signed_integer::SignedInteger;
 
@@ -56,9 +55,21 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     });
 }
 
-type MethodTable = Map<http::MethodPattern, Set<Arc<Cap>>>;
+#[derive(Debug, Clone)]
+struct ActiveHandler {
+    cap: Arc<Cap>,
+    terminated: Arc<Field<bool>>,
+}
+type MethodTable = Map<http::MethodPattern, Vec<ActiveHandler>>;
 type HostTable = Map<http::HostPattern, Map<http::PathPattern, MethodTable>>;
 type RoutingTable = Map<SignedInteger, HostTable>;
+
+fn request_host(value: &http::RequestHost) -> Option<String> {
+    match value {
+        http::RequestHost::Present(h) => Some(h.to_owned()),
+        http::RequestHost::Absent => None,
+    }
+}
 
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
     ds.assert(t, language(), &lifecycle::started(&spec));
@@ -77,22 +88,30 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
                 let host = language().parse::<http::HostPattern>(&host)?;
                 let path = language().parse::<http::PathPattern>(&path)?;
                 let method = language().parse::<http::MethodPattern>(&method)?;
-                let handler = handler.value().to_embedded()?;
+                let handler_cap = handler.value().to_embedded()?.clone();
+                let handler_terminated = t.named_field("handler-terminated", false);
                 t.get_mut(&routes)
                     .entry(port.clone()).or_default()
                     .entry(host.clone()).or_default()
                     .entry(path.clone()).or_default()
                     .entry(method.clone()).or_default()
-                    .insert(handler.clone());
-                t.on_stop(enclose!((routes, handler, method, path, host, port) move |t| {
+                    .push(ActiveHandler {
+                        cap: handler_cap.clone(),
+                        terminated: handler_terminated,
+                    });
+                t.on_stop(enclose!((routes, method, path, host, port) move |t| {
                     tracing::debug!("-HTTP binding {:?} {:?} {:?} {:?} {:?}", host, port, method, path, handler);
                     let port_map = t.get_mut(&routes);
                     let host_map = port_map.entry(port.clone()).or_default();
                     let path_map = host_map.entry(host.clone()).or_default();
                     let method_map = path_map.entry(path.clone()).or_default();
-                    let handler_set = method_map.entry(method.clone()).or_default();
-                    handler_set.remove(&handler);
-                    if handler_set.is_empty() {
+                    let handler_vec = method_map.entry(method.clone()).or_default();
+                    let handler = {
+                        let i = handler_vec.iter().position(|a| a.cap == handler_cap)
+                            .expect("Expected an index of an active handler to remove");
+                        handler_vec.swap_remove(i)
+                    };
+                    if handler_vec.is_empty() {
                         method_map.remove(&method);
                     }
                     if method_map.is_empty() {
@@ -104,6 +123,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
                     if host_map.is_empty() {
                         port_map.remove(&port);
                     }
+                    *t.get_mut(&handler.terminated) = true;
                     Ok(())
                 }));
                 Ok(())
@@ -124,7 +144,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
             None => return send_empty(t, res, 404, "Not found"),
         };
 
-        let methods = match try_hostname(host_map, http::HostPattern::Host(req.host.clone()), &req.path)? {
+        let methods = match request_host(&req.host).and_then(|h| try_hostname(host_map, http::HostPattern::Host(h), &req.path).transpose()).transpose()? {
             Some(methods) => methods,
             None => match try_hostname(host_map, http::HostPattern::Any, &req.path)? {
                 Some(methods) => methods,
@@ -141,13 +161,11 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
                         http::MethodPattern::Specific(m) => m.to_uppercase(),
                         http::MethodPattern::Any => unreachable!(),
                     }).collect::<Vec<String>>().join(", ");
-                    let h = res.assert(t, language(), &http::HttpResponse::Processing);
                     res.message(t, language(), &http::HttpResponse::Status {
                         code: 405.into(), message: "Method Not Allowed".into() });
                     res.message(t, language(), &http::HttpResponse::Header {
                         name: "allow".into(), value: allowed });
-                    if let Some(h) = h { t.retract(h); }
-                    return Ok(())
+                    return send_done(t, res);
                 }
             }
         };
@@ -155,22 +173,33 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
         if handlers.len() > 1 {
             tracing::warn!(?req, "Too many handlers available");
         }
-        let handler = handlers.first().expect("Nonempty handler set").clone();
-        tracing::trace!("Handler for {:?} is {:?}", &req, &handler);
-        handler.assert(t, language(), &http::HttpContext { req, res: res.clone() });
+        let ActiveHandler { cap, terminated } = handlers.first().expect("Nonempty handler set").clone();
+        tracing::trace!("Handler for {:?} is {:?}", &req, &cap);
 
+        t.dataflow(enclose!((terminated, req, res) move |t| {
+            if *t.get(&terminated) {
+                tracing::trace!("Handler for {:?} terminated", &req);
+                send_empty(t, &res, 500, "Internal Server Error")?;
+            }
+            Ok(())
+        }))?;
+
+        cap.assert(t, language(), &http::HttpContext { req, res: res.clone() });
         Ok(())
     });
 
     Ok(())
 }
 
+fn send_done(t: &mut Activation, res: &Arc<Cap>) -> ActorResult {
+    res.message(t, language(), &http::HttpResponse::Done {
+        chunk: Box::new(http::Chunk::Bytes(vec![])) });
+    Ok(())
+}
 fn send_empty(t: &mut Activation, res: &Arc<Cap>, code: u16, message: &str) -> ActorResult {
-    let h = res.assert(t, language(), &http::HttpResponse::Processing);
     res.message(t, language(), &http::HttpResponse::Status {
         code: code.into(), message: message.into() });
-    if let Some(h) = h { t.retract(h); }
-    return Ok(())
+    send_done(t, res)
 }
 
 fn path_pattern_matches(path_pat: &http::PathPattern, path: &Vec<String>) -> bool {
@@ -268,13 +297,11 @@ impl HttpStaticFileServer {
             Ok(mut fh) => {
                 if fh.metadata().is_ok_and(|m| m.is_dir()) {
                     drop(fh);
-                    let h = res.assert(t, language(), &http::HttpResponse::Processing);
                     res.message(t, language(), &http::HttpResponse::Status {
                         code: 301.into(), message: "Moved permanently".into() });
                     res.message(t, language(), &http::HttpResponse::Header {
                         name: "location".into(), value: format!("/{}/", req.path.join("/")) });
-                    if let Some(h) = h { t.retract(h); }
-                    return Ok(())
+                    return send_done(t, res);
                 } else {
                     let mut buf = Vec::new();
                     fh.read_to_end(&mut buf)?;
@@ -287,16 +314,14 @@ impl HttpStaticFileServer {
             }
         };
 
-        let h = res.assert(t, language(), &http::HttpResponse::Processing);
         res.message(t, language(), &http::HttpResponse::Status {
             code: 200.into(), message: "OK".into() });
         if let Some(mime_type) = mime_type {
             res.message(t, language(), &http::HttpResponse::Header {
                 name: "content-type".into(), value: mime_type.to_owned() });
         }
-        res.message(t, language(), &http::HttpResponse::Body {
+        res.message(t, language(), &http::HttpResponse::Done {
             chunk: Box::new(http::Chunk::Bytes(body)) });
-        if let Some(h) = h { t.retract(h); }
 
         Ok(())
     }

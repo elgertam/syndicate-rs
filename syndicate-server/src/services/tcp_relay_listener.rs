@@ -15,24 +15,20 @@ use tokio::net::TcpListener;
 use crate::language::language;
 use crate::lifecycle;
 use crate::protocol::detect_protocol;
-use crate::schemas::internal_services::{TcpWithHttp, TcpWithoutHttp, TcpRelayListener};
+use crate::schemas::internal_services::TcpWithoutHttp;
 
 use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("tcp_relay_listener")), move |t| {
-        enclose!((ds) during!(t, ds, language(), <run-service $spec: TcpWithHttp::<AnyValue>>, |t: &mut Activation| {
-            spec.httpd.assert(t, language(), &syndicate::schemas::http::HttpListener { port: spec.addr.port.clone() });
-            run_supervisor(t, ds.clone(), TcpRelayListener::TcpWithHttp(Box::new(spec)))
-        }));
         enclose!((ds) during!(t, ds, language(), <run-service $spec: TcpWithoutHttp::<AnyValue>>, |t| {
-            run_supervisor(t, ds.clone(), TcpRelayListener::TcpWithoutHttp(Box::new(spec)))
+            run_supervisor(t, ds.clone(), spec)
         }));
         Ok(())
     });
 }
 
-fn run_supervisor(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult {
+fn run_supervisor(t: &mut Activation, ds: Arc<Cap>, spec: TcpWithoutHttp) -> ActorResult {
     Supervisor::start(
         t,
         Some(rec![AnyValue::symbol("relay"), language().unparse(&spec)]),
@@ -41,18 +37,32 @@ fn run_supervisor(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> A
         enclose!((ds) move |t| enclose!((ds, spec) run(t, ds, spec))))
 }
 
-fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult {
+fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpWithoutHttp) -> ActorResult {
     lifecycle::terminate_on_service_restart(t, &ds, &spec);
-    let (addr, gatekeeper, httpd) = match spec.clone() {
-        TcpRelayListener::TcpWithHttp(b) => {
-            let TcpWithHttp { addr, gatekeeper, httpd } = *b;
-            (addr, gatekeeper, Some(httpd))
-        }
-        TcpRelayListener::TcpWithoutHttp(b) => {
-            let TcpWithoutHttp { addr, gatekeeper } = *b;
-            (addr, gatekeeper, None)
-        }
-    };
+
+    let httpd = t.named_field("httpd", None::<Arc<Cap>>);
+
+    {
+        let ad = spec.addr.clone();
+        let ad2 = ad.clone();
+        let gk = spec.gatekeeper.clone();
+        enclose!((ds, httpd) during!(t, ds, language(),
+            <run-service <relay-listener #(&language().unparse(&ad)) #(&AnyValue::domain(gk)) $h>>, |t: &mut Activation| {
+                if let Some(h) = h.value().as_embedded().cloned() {
+                    h.assert(t, language(), &syndicate::schemas::http::HttpListener { port: ad2.port.clone() });
+                    *t.get_mut(&httpd) = Some(h.clone());
+                    t.on_stop(enclose!((httpd) move |t| {
+                        let f = t.get_mut(&httpd);
+                        if *f == Some(h.clone()) { *f = None; }
+                        Ok(())
+                    }));
+                }
+                Ok(())
+            }));
+    }
+
+    let TcpWithoutHttp { addr, gatekeeper } = spec.clone();
+
     let host = addr.host.clone();
     let port = u16::try_from(&addr.port).map_err(|_| "Invalid TCP port number")?;
     let facet = t.facet_ref();
@@ -83,6 +93,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult 
             let account = Account::new(name.clone(), trace_collector.clone());
             if !facet.activate(
                 &account, cause, enclose!((trace_collector, httpd) move |t| {
+                    let httpd = t.get(&httpd).clone();
                     t.spawn(name, move |t| {
                         Ok(t.linked_task(None, {
                             let facet = t.facet_ref();
@@ -91,7 +102,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpRelayListener) -> ActorResult 
                                                 facet,
                                                 stream,
                                                 gatekeeper,
-                                                httpd.map(|r| r.clone()),
+                                                httpd,
                                                 addr,
                                                 port).await?;
                                 Ok(LinkedTaskTermination::KeepFacet)

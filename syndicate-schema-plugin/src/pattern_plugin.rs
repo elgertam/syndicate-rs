@@ -61,7 +61,7 @@ impl Plugin for PatternPlugin {
 }
 
 fn discard() -> P::Pattern {
-    P::Pattern::DDiscard(Box::new(P::DDiscard))
+    P::Pattern::Discard
 }
 
 trait WildcardPattern {
@@ -94,33 +94,34 @@ fn from_io(v: &IOValue) -> Option<P::_Any> {
 impl WildcardPattern for CompoundPattern {
     fn wc(&self, s: &mut WalkState) -> Option<P::Pattern> {
         match self {
-            CompoundPattern::Tuple { patterns } =>
-                Some(P::Pattern::DCompound(Box::new(P::DCompound::Arr {
-                    items: patterns.iter()
-                        .map(|p| unname(p).wc(s))
-                        .collect::<Option<Vec<P::Pattern>>>()?,
-                }))),
-            CompoundPattern::TuplePrefix { .. } =>
-                Some(discard()),
+            CompoundPattern::Tuple { patterns } |
+            CompoundPattern::TuplePrefix { fixed: patterns, .. }=>
+                Some(P::Pattern::Group {
+                    type_: Box::new(P::GroupType::Arr),
+                    entries: patterns.iter().enumerate()
+                        .map(|(i, p)| Some((P::_Any::new(i), unname(p).wc(s)?)))
+                        .collect::<Option<Map<P::_Any, P::Pattern>>>()?,
+                }),
             CompoundPattern::Dict { entries } =>
-                Some(P::Pattern::DCompound(Box::new(P::DCompound::Dict {
+                Some(P::Pattern::Group {
+                    type_: Box::new(P::GroupType::Dict),
                     entries: Map::from_iter(
                         entries.0.iter()
                             .map(|(k, p)| Some((from_io(k)?, unname_simple(p).wc(s)?)))
                             .filter(|e| discard() != e.as_ref().unwrap().1)
                             .collect::<Option<Vec<(P::_Any, P::Pattern)>>>()?
                             .into_iter()),
-                }))),
+                }),
             CompoundPattern::Rec { label, fields } => match (unname(label), unname(fields)) {
                 (Pattern::SimplePattern(label), Pattern::CompoundPattern(fields)) =>
                     match (*label, *fields) {
                         (SimplePattern::Lit { value }, CompoundPattern::Tuple { patterns }) =>
-                            Some(P::Pattern::DCompound(Box::new(P::DCompound::Rec {
-                                label: from_io(&value)?,
-                                fields: patterns.iter()
-                                    .map(|p| unname(p).wc(s))
-                                    .collect::<Option<Vec<P::Pattern>>>()?,
-                            }))),
+                            Some(P::Pattern::Group{
+                                type_: Box::new(P::GroupType::Rec { label: from_io(&value)? }),
+                                entries: patterns.iter().enumerate()
+                                    .map(|(i, p)| Some((P::_Any::new(i), unname(p).wc(s)?)))
+                                    .collect::<Option<Map<P::_Any, P::Pattern>>>()?,
+                            }),
                         _ => None,
                     },
                 _ => None,

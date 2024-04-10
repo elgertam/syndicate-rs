@@ -15,10 +15,9 @@ pub fn lit<T: ToTokens>(e: T) -> TokenStream2 {
 }
 
 fn compile_sequence_members(stxs: &Vec<Stx>) -> Result<Vec<TokenStream2>, &'static str> {
-    stxs.iter().map(|stx| {
-        // let p = to_pattern_expr(stx)?;
-        // Ok(quote!(#p))
-        to_pattern_expr(stx)
+    stxs.iter().enumerate().map(|(i, stx)| {
+        let p = to_pattern_expr(stx)?;
+        Ok(quote!((syndicate::value::Value::from(#i).wrap(), #p)))
     }).collect()
 }
 
@@ -28,7 +27,7 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
     #[allow(non_snake_case)]
     let V_: TokenStream2 = quote!(syndicate::value);
     #[allow(non_snake_case)]
-    let MapFromIterator_: TokenStream2 = quote!(<#V_::Map<_, _> as std::iter::FromIterator<_>>::from_iter);
+    let MapFrom_: TokenStream2 = quote!(<#V_::Map<_, _>>::from);
 
     match stx {
         Stx::Atom(v) =>
@@ -41,26 +40,27 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
                     None => to_pattern_expr(&Stx::Discard)?,
                 }
             };
-            Ok(quote!(#P_::Pattern::DBind(Box::new(#P_::DBind { pattern: #inner_pat_expr }))))
+            Ok(quote!(#P_::Pattern::Bind { pattern: Box::new(#inner_pat_expr) }))
         }
         Stx::Subst(e) =>
             Ok(lit(e)),
         Stx::Discard =>
-            Ok(quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard)))),
+            Ok(quote!(#P_::Pattern::Discard)),
 
         Stx::Rec(l, fs) => {
             let label = to_value_expr(&*l)?;
             let members = compile_sequence_members(fs)?;
-            Ok(quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Rec {
-                label: #label,
-                fields: vec![#(#members),*],
-            }))))
+            Ok(quote!(#P_::Pattern::Group {
+                type_: Box::new(#P_::GroupType::Rec { label: #label }),
+                entries: #MapFrom_([#(#members),*]),
+            }))
         },
         Stx::Seq(stxs) => {
             let members = compile_sequence_members(stxs)?;
-            Ok(quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Arr {
-                items: vec![#(#members),*],
-            }))))
+            Ok(quote!(#P_::Pattern::Group {
+                type_: Box::new(#P_::GroupType::Arr),
+                entries: #MapFrom_([#(#members),*]),
+            }))
         }
         Stx::Set(_stxs) =>
             Err("Set literals not supported in patterns"),
@@ -70,9 +70,10 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
                 let v = to_pattern_expr(v)?;
                 Ok(quote!((#k, #v)))
             }).collect::<Result<Vec<_>, &'static str>>()?;
-            Ok(quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Dict {
-                entries: #MapFromIterator_(vec![#(#members),*])
-            }))))
+            Ok(quote!(#P_::Pattern::Group {
+                type_: Box::new(#P_::GroupType::Dict),
+                entries: #MapFrom_([#(#members),*])
+            }))
         }
     }
 }

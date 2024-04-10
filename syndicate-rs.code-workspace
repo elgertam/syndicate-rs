@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../syndicate-protocols"
+		}
+	],
+	"settings": {
+		"files.exclude": {
+			"target": true
+		}
+	}
+}

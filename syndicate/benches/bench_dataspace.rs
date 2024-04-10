@@ -11,6 +11,7 @@ use syndicate::during::entity;
 use syndicate::dataspace::Dataspace;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::dataspace_patterns as p;
+use syndicate::value::Map;
 use syndicate::value::NestedValue;
 use syndicate::value::Value;
 
@@ -88,11 +89,11 @@ pub fn bench_pub(c: &mut Criterion) {
                             .create_cap(t);
 
                         ds.assert(t, language(), &Observe {
-                            pattern: p::Pattern::DBind(Box::new(p::DBind {
-                                pattern: p::Pattern::DLit(Box::new(p::DLit {
-                                    value: p::AnyAtom::Symbol("consumer".to_owned()),
-                                })),
-                            })),
+                            pattern: p::Pattern::Bind {
+                                pattern: Box::new(p::Pattern::Lit {
+                                    value: Box::new(p::AnyAtom::Symbol("consumer".to_owned())),
+                                }),
+                            },
                             observer: shutdown,
                         });
 
@@ -110,24 +111,27 @@ pub fn bench_pub(c: &mut Criterion) {
 
                             ds.assert(t, &(), &AnyValue::symbol("consumer"));
                             ds.assert(t, language(), &Observe {
-                                pattern: p::Pattern::DCompound(Box::new(p::DCompound::Rec {
-                                    label: AnyValue::symbol("Says"),
-                                    fields: vec![
-                                        p::Pattern::DLit(Box::new(p::DLit {
-                                            value: p::AnyAtom::String("bench_pub".to_owned()),
-                                        })),
-                                        p::Pattern::DBind(Box::new(p::DBind {
-                                            pattern: p::Pattern::DDiscard(Box::new(p::DDiscard)),
-                                        })),
-                                    ]})),
+                                pattern: p::Pattern::Group {
+                                    type_: Box::new(p::GroupType::Rec {
+                                        label: AnyValue::symbol("Says"),
+                                    }),
+                                    entries: Map::from([
+                                        (p::_Any::new(0), p::Pattern::Lit {
+                                            value: Box::new(p::AnyAtom::String("bench_pub".to_owned())),
+                                        }),
+                                        (p::_Any::new(1), p::Pattern::Bind {
+                                            pattern: Box::new(p::Pattern::Discard),
+                                        }),
+                                    ]),
+                                },
                                 observer: receiver,
                             });
                             ds.assert(t, language(), &Observe {
-                                pattern: p::Pattern::DBind(Box::new(p::DBind {
-                                    pattern: p::Pattern::DLit(Box::new(p::DLit {
-                                        value: p::AnyAtom::Bool(true),
-                                    })),
-                                })),
+                                pattern: p::Pattern::Bind {
+                                    pattern: Box::new(p::Pattern::Lit {
+                                        value: Box::new(p::AnyAtom::Bool(true)),
+                                    }),
+                                },
                                 observer: shutdown,
                             });
 

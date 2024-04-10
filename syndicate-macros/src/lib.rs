@@ -36,7 +36,7 @@ enum SymbolVariant<'a> {
 fn compile_sequence_members(vs: &[IOValue]) -> Vec<TokenStream> {
     vs.iter().enumerate().map(|(i, f)| {
         let p = compile_pattern(f);
-        quote!((#i .into(), #p))
+        quote!((syndicate::value::Value::from(#i).wrap(), #p))
     }).collect::<Vec<_>>()
 }
 
@@ -151,16 +151,14 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
     #[allow(non_snake_case)]
     let V_: TokenStream = quote!(syndicate::value);
     #[allow(non_snake_case)]
-    let MapFromIterator_: TokenStream = quote!(<#V_::Map<_, _> as std::iter::FromIterator<_>>::from_iter);
+    let MapFrom_: TokenStream = quote!(<#V_::Map<_, _>>::from);
 
     match v.value() {
         Value::Symbol(s) => match analyze_symbol(&s, true) {
             SymbolVariant::Binder(_) =>
-                quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
-                    pattern: #P_::Pattern::DDiscard(Box::new(#P_::DDiscard))
-                }))),
+                quote!(#P_::Pattern::Bind{ pattern: Box::new(#P_::Pattern::Discard) }),
             SymbolVariant::Discard =>
-                quote!(#P_::Pattern::DDiscard(Box::new(#P_::DDiscard))),
+                quote!(#P_::Pattern::Discard),
             SymbolVariant::Substitution(s) =>
                 lit(Ident::new(s, Span::call_site())),
             SymbolVariant::Normal(_) =>
@@ -172,9 +170,7 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                 Some(label) =>
                     if label.starts_with("$") && r.arity() == 1 {
                         let nested = compile_pattern(&r.fields()[0]);
-                        quote!(#P_::Pattern::DBind(Box::new(#P_::DBind {
-                            pattern: #nested
-                        })))
+                        quote!(#P_::Pattern::Bind{ pattern: Box::new(#nested) })
                     } else {
                         let label_stx = if label.starts_with("=") {
                             let id = Ident::new(&label[1..], Span::call_site());
@@ -183,18 +179,19 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                             quote!(#V_::Value::symbol(#label).wrap())
                         };
                         let members = compile_sequence_members(r.fields());
-                        quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Rec {
-                            label: #label_stx,
-                            fields: vec![#(#members),*],
-                        })))
+                        quote!(#P_::Pattern::Group {
+                            type_: Box::new(#P_::GroupType::Rec { label: #label_stx }),
+                            entries: #MapFrom_([#(#members),*]),
+                        })
                     }
             }
         }
         Value::Sequence(vs) => {
             let members = compile_sequence_members(vs);
-            quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Arr {
-                items: vec![#(#members),*],
-            })))
+            quote!(#P_::Pattern::Group {
+                type_: Box::new(#P_::GroupType::Arr),
+                entries: #MapFrom_([#(#members),*]),
+            })
         }
         Value::Set(_) =>
             panic!("Cannot match sets in patterns"),
@@ -204,9 +201,10 @@ fn compile_pattern(v: &IOValue) -> TokenStream {
                 let v = compile_pattern(v);
                 quote!((#k, #v))
             }).collect::<Vec<_>>();
-            quote!(#P_::Pattern::DCompound(Box::new(#P_::DCompound::Dict {
-                entries: #MapFromIterator_(vec![#(#members),*])
-            })))
+            quote!(#P_::Pattern::Group {
+                type_: Box::new(#P_::GroupType::Dict),
+                entries: #MapFrom_([#(#members),*]),
+            })
         }
         _ => lit(ValueCompiler::for_patterns().compile(v)),
     }

@@ -9,7 +9,7 @@ use syndicate::actor::*;
 use syndicate::dataspace::Dataspace;
 use syndicate::during;
 use syndicate::enclose;
-use syndicate::pattern::{lift_literal, drop_literal};
+use syndicate::pattern::{lift_literal, drop_literal, pattern_seq_from_dictionary};
 use syndicate::schemas::dataspace;
 use syndicate::schemas::dataspace_patterns as P;
 use syndicate::schemas::sturdy;
@@ -173,7 +173,7 @@ fn bad_instruction(message: &str) -> io::Error {
 }
 
 fn discard() -> P::Pattern {
-    P::Pattern::DDiscard(Box::new(P::DDiscard))
+    P::Pattern::Discard
 }
 
 fn dlit(value: AnyValue) -> P::Pattern {
@@ -272,7 +272,7 @@ impl<'env> PatternInstantiator<'env> {
                 Symbolic::Discard => discard(),
                 Symbolic::Binder(s) => {
                     self.binding_names.push(s);
-                    P::Pattern::DBind(Box::new(P::DBind { pattern: discard() }))
+                    P::Pattern::Bind { pattern: Box::new(discard()) }
                 }
                 Symbolic::Reference(s) =>
                     dlit(self.env.lookup(&s, "pattern-template variable")?.clone()),
@@ -287,43 +287,47 @@ impl<'env> PatternInstantiator<'env> {
                     Some(pat) => pat,
                     None => {
                         let label = self.instantiate_pattern(r.label())?;
-                        let fields = r.fields().iter().map(|p| self.instantiate_pattern(p))
-                            .collect::<io::Result<Vec<P::Pattern>>>()?;
-                        P::Pattern::DCompound(Box::new(P::DCompound::Rec {
-                            label: drop_literal(&label)
-                                .ok_or(bad_instruction("Record pattern must have literal label"))?,
-                            fields,
-                        }))
+                        let entries = r.fields().iter().enumerate()
+                        .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(p)?)))
+                            .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?;
+                        P::Pattern::Group {
+                            type_: Box::new(P::GroupType::Rec {
+                                label: drop_literal(&label)
+                                    .ok_or(bad_instruction("Record pattern must have literal label"))?,
+                            }),
+                            entries,
+                        }
                     }
                 }
             },
             Value::Sequence(v) =>
-                P::Pattern::DCompound(Box::new(P::DCompound::Arr {
-                    items: v.iter()
-                        .map(|p| self.instantiate_pattern(p))
-                        .collect::<io::Result<Vec<P::Pattern>>>()?,
-                })),
+                P::Pattern::Group {
+                    type_: Box::new(P::GroupType::Arr),
+                    entries: v.iter().enumerate()
+                        .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(p)?)))
+                        .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
+                },
             Value::Set(_) =>
                 Err(bad_instruction(&format!("Sets not permitted in patterns: {:?}", template)))?,
             Value::Dictionary(v) =>
-                P::Pattern::DCompound(Box::new(P::DCompound::Dict {
+                P::Pattern::Group {
+                    type_: Box::new(P::GroupType::Dict),
                     entries: v.iter()
                         .map(|(a, b)| Ok((a.clone(), self.instantiate_pattern(b)?)))
                         .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
-                })),
+                },
         })
     }
 
     fn maybe_binder_with_pattern(&mut self, r: &Record<AnyValue>) -> io::Result<Option<P::Pattern>> {
         match r.label().value().as_symbol().map(|s| analyze(&s)) {
-            Some(Symbolic::Binder(formal)) => if r.fields().len() == 1 {
+            Some(Symbolic::Binder(formal)) if r.fields().len() == 1 => {
                 let pattern = self.instantiate_pattern(&r.fields()[0])?;
                 self.binding_names.push(formal);
-                return Ok(Some(P::Pattern::DBind(Box::new(P::DBind { pattern }))));
+                Ok(Some(P::Pattern::Bind { pattern: Box::new(pattern) }))
             },
-            _ => (),
+            _ => Ok(None),
         }
-        Ok(None)
     }
 }
 
@@ -553,7 +557,7 @@ impl Env {
             RewriteTemplate::Accept { pattern_template } => {
                 let (_binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
                 Ok(sturdy::Rewrite {
-                    pattern: embed_pattern(&P::Pattern::DBind(Box::new(P::DBind { pattern }))),
+                    pattern: embed_pattern(&P::Pattern::Bind { pattern: Box::new(pattern) }),
                     template: sturdy::Template::TRef(Box::new(sturdy::TRef { binding: 0.into() })),
                 })
             }
@@ -674,24 +678,26 @@ impl Env {
 
 fn embed_pattern(p: &P::Pattern) -> sturdy::Pattern {
     match p {
-        P::Pattern::DDiscard(_) => sturdy::Pattern::PDiscard(Box::new(sturdy::PDiscard)),
-        P::Pattern::DBind(b) => sturdy::Pattern::PBind(Box::new(sturdy::PBind {
-            pattern: embed_pattern(&b.pattern),
+        P::Pattern::Discard => sturdy::Pattern::PDiscard(Box::new(sturdy::PDiscard)),
+        P::Pattern::Bind { pattern } => sturdy::Pattern::PBind(Box::new(sturdy::PBind {
+            pattern: embed_pattern(&**pattern),
         })),
-        P::Pattern::DLit(b) => sturdy::Pattern::Lit(Box::new(sturdy::Lit {
-            value: language().unparse(&b.value),
+        P::Pattern::Lit { value } => sturdy::Pattern::Lit(Box::new(sturdy::Lit {
+            value: language().unparse(&**value),
         })),
-        P::Pattern::DCompound(b) => sturdy::Pattern::PCompound(Box::new(match &**b {
-            P::DCompound::Rec { label, fields } =>
+        P::Pattern::Group { type_, entries } => sturdy::Pattern::PCompound(Box::new(match &**type_ {
+            P::GroupType::Rec { label } =>
                 sturdy::PCompound::Rec {
                     label: label.clone(),
-                    fields: fields.iter().map(embed_pattern).collect(),
+                    fields: pattern_seq_from_dictionary(entries).expect("correct field entries")
+                        .into_iter().map(embed_pattern).collect(),
                 },
-            P::DCompound::Arr { items } =>
+            P::GroupType::Arr =>
                 sturdy::PCompound::Arr {
-                    items: items.iter().map(embed_pattern).collect(),
+                    items: pattern_seq_from_dictionary(entries).expect("correct element entries")
+                        .into_iter().map(embed_pattern).collect(),
                 },
-            P::DCompound::Dict { entries } =>
+            P::GroupType::Dict =>
                 sturdy::PCompound::Dict {
                     entries: entries.iter().map(|(k, v)| (k.clone(), embed_pattern(v))).collect(),
                 },
