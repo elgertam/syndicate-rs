@@ -336,9 +336,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.5.1"
+version = "4.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "885e4d7d5af40bfb99ae6f9433e292feac98d452dcb3ec3d25dfe7552b77da8c"
+checksum = "dd79504325bf38b10165b02e89b4347300f855f273c4cb30c4a3209e6583275e"
 dependencies = [
  "clap 4.5.4",
 ]
@@ -1456,9 +1456,9 @@ checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
 name = "preserves"
-version = "4.995.1"
+version = "4.995.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c160ffeeae615caf059a15ce7ee98dc0aafb6512530263ce35527622867aee04"
+checksum = "bdc22936ee042b69240f80bac422262b1b514e537e8f40a7adb8eded2b80788f"
 dependencies = [
  "base64",
  "dtoa",
@@ -1471,9 +1471,9 @@ dependencies = [
 
 [[package]]
 name = "preserves-schema"
-version = "5.995.2"
+version = "5.995.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "358609ec823fa3f000c28638d6794163819cfbb53e5aefc38817efa19034e6c1"
+checksum = "56e7f701ce176a21b37abf14c3fcd461106c362e1a090150e29bec7768104679"
 dependencies = [
  "convert_case",
  "glob",
@@ -1519,9 +1519,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.35"
+version = "1.0.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "291ec9ab5efd934aaf503a6466c5d5251535d108ee747472c3977cc5acc868ef"
+checksum = "0fa76aaf39101c457836aec0ce2316dbdc3ab723cdda1c6bd4e6ad4208acaca7"
 dependencies = [
  "proc-macro2",
 ]
