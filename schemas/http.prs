@@ -31,8 +31,8 @@ HttpRequest = <http-request
 
 Headers = {@"Lowercase" symbol: string ...:...} .
 QueryValue = @string string / <file @filename string @headers Headers @body bytes> .
-RequestBody = @present bytes / @absent #f .
-RequestHost = @present string / @absent #f .
+RequestBody = @absent #f / @present bytes .
+RequestHost = @absent #f / @present string .
 
 # Assertion to handler entity
 HttpContext = <request @req HttpRequest @res #:HttpResponse> .
