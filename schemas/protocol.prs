@@ -1,8 +1,9 @@
 version 1 .
 
-Packet = Turn / Error / Extension .
+Packet = Turn / Error / Extension / Nop .
 
 Extension = <<rec> @label any @fields [any ...]> .
+Nop = #f .
 
 Error = <error @message string @detail any>.
 
