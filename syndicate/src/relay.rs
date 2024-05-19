@@ -385,6 +385,10 @@ impl TunnelRelay {
                 tracing::info!(?label, ?fields, "received Extension from peer");
                 Ok(())
             }
+            P::Packet::Nop(_b) => {
+                tracing::trace!("received Nop from peer");
+                Ok(())
+            }
             P::Packet::Error(b) => {
                 tracing::info!(message = ?b.message.clone(),
                                detail = ?b.detail.clone(),
