@@ -1,7 +1,24 @@
 on:
- - push
+  push:
+    branches:
+      - main
 jobs:
   build:
     runs-on: docker
+    container:
+      image: git.syndicate-lang.org/syndicate-lang/rust-builder:latest
     steps:
-      - run: echo All Good
+      - uses: actions/checkout@v3
+      - run: CROSS_CONTAINER_IN_CONTAINER=true make ci-release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: syndicate-server-x86_64
+          path: target/dist/x86_64
+      - uses: actions/upload-artifact@v3
+        with:
+          name: syndicate-server-aarch64
+          path: target/dist/aarch64
+      - uses: actions/upload-artifact@v3
+        with:
+          name: syndicate-server-armv7
+          path: target/dist/armv7

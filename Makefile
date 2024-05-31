@@ -78,3 +78,11 @@ aarch64-binary-release:
 
 aarch64-binary-debug:
 	CARGO_TARGET_DIR=target/target.aarch64 cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
+
+ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release
+	rm -rf target/dist
+	for arch in x86_64 aarch64 armv7; do \
+		mkdir -p target/dist/$$arch; \
+		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-macaroon target/dist/$$arch; \
+		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-server target/dist/$$arch; \
+	done
