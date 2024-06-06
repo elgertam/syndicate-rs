@@ -4,56 +4,34 @@ use noise_protocol::patterns::HandshakePattern;
 use noise_rust_crypto::Blake2s;
 use noise_rust_crypto::ChaCha20Poly1305;
 use noise_rust_crypto::X25519;
-use preserves_schema::Codec;
-use syndicate::relay::Mutex;
-use syndicate::relay::TunnelRelay;
-use syndicate::trace::TurnCause;
-use syndicate::value::NoEmbeddedDomainCodec;
-use syndicate::value::packed::PackedWriter;
 
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use syndicate::actor::*;
-use syndicate::enclose;
-use syndicate::value::NestedValue;
-use syndicate::schemas::dataspace;
-use syndicate::schemas::gatekeeper;
-use syndicate::schemas::noise;
-use syndicate::schemas::sturdy;
+use preserves_schema::Codec;
 
-use crate::language::language;
+use syndicate::actor::*;
+use syndicate::relay::Mutex;
+use syndicate::relay::TunnelRelay;
+use syndicate::trace::TurnCause;
+use syndicate::value::NestedValue;
+use syndicate::value::NoEmbeddedDomainCodec;
+use syndicate::value::PackedWriter;
 
 use syndicate_macros::during;
 use syndicate_macros::pattern;
 
-fn sturdy_step_type() -> String {
-    language().unparse(&sturdy::SturdyStepType).value().to_symbol().unwrap().clone()
-}
+use syndicate::schemas::dataspace;
+use syndicate::schemas::gatekeeper;
+use syndicate::schemas::noise;
+
+use crate::language;
 
 fn noise_step_type() -> String {
     language().unparse(&noise::NoiseStepType).value().to_symbol().unwrap().clone()
 }
 
-pub fn handle_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
-    during!(t, ds, language(), <bind <ref $desc> $target $observer>, |t: &mut Activation| {
-        t.spawn_link(None, move |t| {
-            target.value().to_embedded()?;
-            let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
-            let desc = language().parse::<sturdy::SturdyDescriptionDetail>(&desc)?;
-            let sr = sturdy::SturdyRef::mint(desc.oid, &desc.key);
-            if let gatekeeper::BindObserver::Present(o) = observer {
-                o.assert(t, language(), &gatekeeper::Bound::Bound {
-                    path_step: Box::new(gatekeeper::PathStep {
-                        step_type: sturdy_step_type(),
-                        detail: language().unparse(&sr.parameters),
-                    }),
-                });
-            }
-            Ok(())
-        });
-        Ok(())
-    });
+pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
     during!(t, ds, language(), <bind <noise $desc> $target $observer>, |t: &mut Activation| {
         t.spawn_link(None, move |t| {
             target.value().to_embedded()?;
@@ -102,108 +80,18 @@ pub fn handle_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
     Ok(())
 }
 
-pub fn facet_handle_resolve(
-    ds: &mut Arc<Cap>,
-    t: &mut Activation,
-    a: gatekeeper::Resolve,
-) -> ActorResult {
-    let mut detail: &'static str = "unsupported";
-
-    if a.step.step_type == sturdy_step_type() {
-        detail = "invalid";
-        if let Ok(s) = language().parse::<sturdy::SturdyStepDetail>(&a.step.detail) {
-            t.facet(|t| {
-                let f = handle_direct_resolution(ds, t, a.clone())?;
-                await_bind_sturdyref(ds, t, sturdy::SturdyRef { parameters: s.0 }, a.observer, f)
-            })?;
-            return Ok(());
-        }
-    }
-
+pub fn take_noise_step(t: &mut Activation, ds: &mut Arc<Cap>, a: &gatekeeper::Resolve, detail: &mut &'static str) -> Result<bool, ActorError> {
     if a.step.step_type == noise_step_type() {
-        detail = "invalid";
+        *detail = "invalid";
         if let Ok(s) = language().parse::<noise::NoiseStepDetail<AnyValue>>(&a.step.detail) {
             t.facet(|t| {
-                let f = handle_direct_resolution(ds, t, a.clone())?;
-                await_bind_noise(ds, t, s.0.0, a.observer, f)
+                let f = super::handle_direct_resolution(ds, t, a.clone())?;
+                await_bind_noise(ds, t, s.0.0, a.observer.clone(), f)
             })?;
-            return Ok(());
+            return Ok(true);
         }
     }
-
-    a.observer.assert(t, language(), &gatekeeper::Rejected {
-        detail: AnyValue::symbol(detail),
-    });
-
-    Ok(())
-}
-
-fn handle_direct_resolution(
-    ds: &mut Arc<Cap>,
-    t: &mut Activation,
-    a: gatekeeper::Resolve,
-) -> Result<FacetId, ActorError> {
-    let outer_facet = t.facet_id();
-    t.facet(move |t| {
-        let handler = syndicate::entity(a.observer)
-            .on_asserted(move |observer, t, a: AnyValue| {
-                t.stop_facet_and_continue(outer_facet, Some(
-                    enclose!((observer, a) move |t: &mut Activation| {
-                        observer.assert(t, language(), &a);
-                        Ok(())
-                    })))?;
-                Ok(None)
-            })
-            .create_cap(t);
-        ds.assert(t, language(), &gatekeeper::Resolve {
-            step: a.step.clone(),
-            observer: handler,
-        });
-        Ok(())
-    })
-}
-
-fn await_bind_sturdyref(
-    ds: &mut Arc<Cap>,
-    t: &mut Activation,
-    sturdyref: sturdy::SturdyRef,
-    observer: Arc<Cap>,
-    direct_resolution_facet: FacetId,
-) -> ActorResult {
-    let queried_oid = sturdyref.parameters.oid.clone();
-    let handler = syndicate::entity(observer)
-        .on_asserted(move |observer, t, a: AnyValue| {
-            t.stop_facet(direct_resolution_facet);
-            let bindings = a.value().to_sequence()?;
-            let key = bindings[0].value().to_bytestring()?;
-            let unattenuated_target = bindings[1].value().to_embedded()?;
-            match sturdyref.validate_and_attenuate(key, unattenuated_target) {
-                Err(e) => {
-                    tracing::warn!(sturdyref = ?language().unparse(&sturdyref),
-                                   "sturdyref failed validation: {}", e);
-                    observer.assert(t, language(), &gatekeeper::Resolved::Rejected(
-                        Box::new(gatekeeper::Rejected {
-                            detail: AnyValue::symbol("sturdyref-failed-validation"),
-                        })));
-                },
-                Ok(target) => {
-                    tracing::trace!(sturdyref = ?language().unparse(&sturdyref),
-                                    ?target,
-                                    "sturdyref resolved");
-                    observer.assert(t, language(), &gatekeeper::Resolved::Accepted {
-                        responder_session: target,
-                    });
-                }
-            }
-            Ok(None)
-        })
-        .create_cap(t);
-    ds.assert(t, language(), &dataspace::Observe {
-        // TODO: codegen plugin to generate pattern constructors
-        pattern: pattern!{<bind <ref { oid: #(&queried_oid), key: $ }> $ _>},
-        observer: handler,
-    });
-    Ok(())
+    Ok(false)
 }
 
 struct ValidatedNoiseSpec {

@@ -1,4 +1,5 @@
 use preserves_schema::Codec;
+use services::gatekeeper;
 
 use std::convert::TryInto;
 use std::io;
@@ -20,11 +21,11 @@ use syndicate::value::NestedValue;
 
 mod counter;
 mod dependencies;
-mod gatekeeper;
 mod http;
 mod language;
 mod lifecycle;
 mod protocol;
+mod resolution;
 mod script;
 mod services;
 
@@ -118,10 +119,7 @@ async fn main() -> ActorResult {
             }));
         }
 
-        let gatekeeper = Cap::guard(Language::arc(), t.create(
-            syndicate::entity(Arc::clone(&server_config_ds))
-                .on_asserted_facet(gatekeeper::facet_handle_resolve)));
-        gatekeeper::handle_binds(t, &server_config_ds)?;
+        let gatekeeper = gatekeeper::create_gatekeeper(t, &server_config_ds)?;
 
         let mut env = Map::new();
         env.insert("config".to_owned(), AnyValue::domain(Arc::clone(&server_config_ds)));
