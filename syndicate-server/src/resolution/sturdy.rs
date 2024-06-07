@@ -3,14 +3,18 @@ use std::sync::Arc;
 use preserves_schema::Codec;
 
 use syndicate::actor::*;
+use syndicate::during;
+use syndicate::rpc;
 use syndicate::value::NestedValue;
 
+use syndicate::enclose;
 use syndicate_macros::during;
 use syndicate_macros::pattern;
 
 use syndicate::schemas::dataspace;
 use syndicate::schemas::gatekeeper;
 use syndicate::schemas::sturdy;
+use syndicate::schemas::rpc as R;
 
 use crate::language;
 
@@ -94,5 +98,44 @@ fn await_bind_sturdyref(
         pattern: pattern!{<bind <ref { oid: #(&queried_oid), key: $ }> $ _>},
         observer: handler,
     });
+    Ok(())
+}
+
+pub fn handle_sturdy_path_steps(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {
+    during!(t, ds, language(),
+            <q <resolve-path-step $origin <ref $parameters: sturdy::SturdyPathStepDetail::<AnyValue>>>>,
+            enclose!((ds) move |t: &mut Activation| {
+                if let Some(origin) = origin.value().as_embedded().cloned() {
+                    let observer = Cap::guard(&language().syndicate, t.create(
+                        during::entity(()).on_asserted_facet(
+                            enclose!((origin, parameters) move |_, t, r: gatekeeper::Resolved| {
+                                ds.assert(t, language(), &rpc::answer(
+                                    language(),
+                                    gatekeeper::ResolvePathStep {
+                                        origin: origin.clone(),
+                                        path_step: gatekeeper::PathStep {
+                                            step_type: "ref".to_string(),
+                                            detail: language().unparse(&parameters),
+                                        },
+                                    },
+                                    match r {
+                                        gatekeeper::Resolved::Accepted { responder_session } =>
+                                            R::Result::Ok { value: language().unparse(
+                                                &gatekeeper::ResolvedPathStep(responder_session)) },
+                                        gatekeeper::Resolved::Rejected(b) =>
+                                            R::Result::Error { error: b.detail },
+                                    }));
+                                Ok(())
+                            }))));
+                    origin.assert(t, language(), &gatekeeper::Resolve {
+                        step: gatekeeper::Step {
+                            step_type: "ref".to_string(),
+                            detail: language().unparse(&parameters),
+                        },
+                        observer,
+                    });
+                }
+                Ok(())
+            }));
     Ok(())
 }
