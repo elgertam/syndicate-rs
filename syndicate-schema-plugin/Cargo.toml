@@ -11,9 +11,13 @@ license = "Apache-2.0"
 
 [lib]
 
-[dependencies]
+[build-dependencies]
 preserves-schema = "5.995"
-syndicate = { path = "../syndicate", version = "0.40.0"}
+
+[dependencies]
+preserves = "4.995"
+preserves-schema = "5.995"
+lazy_static = "1.4"
 
 [package.metadata.workspaces]
 independent = true

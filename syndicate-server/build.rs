@@ -7,7 +7,7 @@ fn main() -> std::io::Result<()> {
     gen_dir.push("src/schemas");
 
     let mut c = CompilerConfig::new("crate::schemas".to_owned());
-    c.plugins.push(Box::new(syndicate_schema_plugin::PatternPlugin));
+    c.plugins.push(Box::new(syndicate_schema_plugin::PatternPlugin::new()));
     c.add_external_module(ExternalModule::new(vec!["EntityRef".to_owned()], "syndicate::actor"));
     c.add_external_module(
         ExternalModule::new(vec!["TransportAddress".to_owned()],

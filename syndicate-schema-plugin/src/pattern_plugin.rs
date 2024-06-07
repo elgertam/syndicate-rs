@@ -7,16 +7,27 @@ use preserves_schema::gen::schema::*;
 use preserves_schema::syntax::block::escape_string;
 use preserves_schema::syntax::block::constructors::*;
 
+use preserves::value::IOValue;
+use preserves::value::Map;
+use preserves::value::NestedValue;
+
 use std::iter::FromIterator;
 
-use syndicate::pattern::lift_literal;
-use syndicate::schemas::dataspace_patterns as P;
-use syndicate::value::IOValue;
-use syndicate::value::Map;
-use syndicate::value::NestedValue;
+use crate::pattern::lift_literal;
+use crate::schemas::dataspace_patterns as P;
 
 #[derive(Debug)]
-pub struct PatternPlugin;
+pub struct PatternPlugin {
+    pub syndicate_crate: String,
+}
+
+impl PatternPlugin {
+    pub fn new() -> Self {
+        PatternPlugin {
+            syndicate_crate: "syndicate".to_string(),
+        }
+    }
+}
 
 type WalkState<'a, 'm, 'b> =
     preserves_schema::compiler::cycles::WalkState<&'a ModuleContext<'m, 'b>>;
@@ -35,7 +46,7 @@ impl Plugin for PatternPlugin {
                                          Purpose::Codegen,
                                          definition_name,
                                          definition);
-                let v = syndicate::language().unparse(&p);
+                let v = crate::language().unparse(&p);
                 let v = preserves_schema::support::preserves::value::TextWriter::encode(
                     &mut preserves_schema::support::preserves::value::NoEmbeddedDomainCodec,
                     &v).unwrap();
@@ -47,14 +58,15 @@ impl Plugin for PatternPlugin {
                     ty.generic_arg(ctxt),
                     " ", codeblock![
                         seq!["#[allow(unused)] pub fn wildcard_dataspace_pattern() ",
-                             "-> syndicate::schemas::dataspace_patterns::Pattern ",
+                             seq!["-> ", self.syndicate_crate.clone(), "::schemas::dataspace_patterns::Pattern "],
                              codeblock![
-                                 "use syndicate::schemas::dataspace_patterns::*;",
+                                 seq!["use ", self.syndicate_crate.clone(), "::schemas::dataspace_patterns::*;"],
                                  "use preserves_schema::Codec;",
-                                 seq!["let _v = syndicate::value::text::from_str(",
+                                 seq!["let _v = ", self.syndicate_crate.clone(), "::value::text::from_str(",
                                       escape_string(&v),
-                                      ", syndicate::value::ViaCodec::new(syndicate::value::NoEmbeddedDomainCodec)).unwrap();"],
-                                 "syndicate::language().parse(&_v).unwrap()"]]]]));
+                                      ", ", self.syndicate_crate.clone(), "::value::ViaCodec::new(",
+                                      self.syndicate_crate.clone(), "::value::NoEmbeddedDomainCodec)).unwrap();"],
+                                 seq![self.syndicate_crate.clone(), "::language().parse(&_v).unwrap()"]]]]]));
             }
         }
     }

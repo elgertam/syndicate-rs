@@ -7,12 +7,9 @@ fn main() -> std::io::Result<()> {
     gen_dir.push("src/schemas");
 
     let mut c = CompilerConfig::new("crate::schemas".to_owned());
-    c.plugins.push(Box::new(syndicate_schema_plugin::PatternPlugin {
-        syndicate_crate: "crate".to_string(),
-    }));
-    c.add_external_module(ExternalModule::new(vec!["EntityRef".to_owned()], "crate::actor"));
+    c.add_external_module(ExternalModule::new(vec!["EntityRef".to_owned()], "crate::placeholder"));
 
-    let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
+    let inputs = expand_inputs(&vec!["../syndicate/protocols/schema-bundle.bin".to_owned()])?;
     c.load_schemas_and_bundles(&inputs, &vec![])?;
     compile(&c, &mut CodeCollector::files(gen_dir))
 }

@@ -2,9 +2,9 @@ cargo-features = ["strip"]
 
 [workspace]
 members = [
+  "syndicate-schema-plugin",
   "syndicate",
   "syndicate-macros",
-  "syndicate-schema-plugin",
   "syndicate-server",
   "syndicate-tools",
   ]
