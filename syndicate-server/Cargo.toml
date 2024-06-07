@@ -9,6 +9,8 @@ homepage = "https://syndicate-lang.org/"
 repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
 license = "Apache-2.0"
 
+default-run = "syndicate-server"
+
 [features]
 jemalloc = ["dep:tikv-jemallocator"]
 
