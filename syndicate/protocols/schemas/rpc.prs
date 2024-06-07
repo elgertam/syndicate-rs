@@ -1,0 +1,11 @@
+version 1 .
+embeddedType EntityRef.Cap .
+
+# Assertion. Establishes a frame for a request.
+Question = <q @request any> .
+
+# Assertion or message. Responds to a question.
+Answer = <a @request any @response any> .
+
+# Value. Captures a common "ok-or-error" pattern as seen in e.g. Rust.
+Result = <ok @value any> / <error @error any> .

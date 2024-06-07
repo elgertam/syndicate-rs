@@ -52,14 +52,23 @@ Bound = <bound @pathStep PathStep> / Rejected .
 # ---------------------------------------------------------------------------
 # Protocol at client-side dataspaces, for resolution utilities
 
-# Assertion. In response to observation of this with appropriate captures/wildcards in `addr`
-# and `resolved`, respondent will follow `route.pathSteps` starting from one of the
-# `route.transports`, asserting `ResolvePath` with the final `Resolved` as well as the selected
-# transport `addr` and a `control` for it.
-ResolvePath = <resolve-path @route Route @addr any @control #:TransportControl @resolved Resolved> .
+# The client-side operates using `rpc.Question`s and `rpc.Answer`s.
 
-TransportConnection = <connect-transport @addr any @control #:TransportControl @resolved Resolved> .
-ResolvedPathStep = <path-step @origin #:Resolve @pathStep PathStep @resolved Resolved> .
+# Assert `rpc.Question` with `ResolvePath` to request resolution of `Route`. The resolution
+# utility will continuously try to satisfy the request, following `route.pathSteps` starting
+# from one of the `route.transports`, ultimately asserting `rpc.Answer` with an `rpc.Result` in
+# response. If the process completes successfully, the `rpc.Result.ok` will carry a
+# `ResolvedPath`.
+ResolvePath = <resolve-path @route Route> .
+ResolvedPath = <resolved-path @addr any @control #:TransportControl @responderSession #:any> .
+
+# Assertions. As `ResolvePath`/`ResolvedPath`, but just for an initial transport link setup.
+ConnectTransport = <connect-transport @addr any> .
+ConnectedTransport = <connected-transport @addr any @control #:TransportControl @responderSession #:any> .
+
+# Assertions. Like `ResolvePath`/`ResolvedPath`, but for incremental resolution along a route.
+ResolvePathStep = <resolve-path-step @origin #:Resolve @pathStep PathStep> .
+ResolvedPathStep = #:any .
 PathStep = <<rec> @stepType symbol [@detail any]> .
 
 # A `Route` describes a network path that can be followed to reach some target entity.
