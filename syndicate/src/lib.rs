@@ -20,6 +20,7 @@ pub mod error;
 pub mod pattern;
 pub mod relay;
 pub mod rewrite;
+pub mod rpc;
 pub mod supervise;
 
 pub mod schemas {

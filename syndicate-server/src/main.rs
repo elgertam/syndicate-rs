@@ -148,6 +148,8 @@ async fn main() -> ActorResult {
         services::http_router::on_demand(t, Arc::clone(&server_config_ds));
         services::tcp_relay_listener::on_demand(t, Arc::clone(&server_config_ds));
         services::unix_relay_listener::on_demand(t, Arc::clone(&server_config_ds));
+        resolution::client::start(t, Arc::clone(&server_config_ds));
+        resolution::transports::on_demand(t, Arc::clone(&server_config_ds));
 
         if config.debt_reporter {
             server_config_ds.assert(t, language(), &service::RunService {

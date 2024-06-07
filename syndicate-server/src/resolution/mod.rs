@@ -6,8 +6,10 @@ use syndicate::enclose;
 
 use crate::language;
 
-pub mod sturdy;
+pub mod client;
 pub mod noise;
+pub mod sturdy;
+pub mod transports;
 
 fn handle_direct_resolution(
     ds: &mut Arc<Cap>,
