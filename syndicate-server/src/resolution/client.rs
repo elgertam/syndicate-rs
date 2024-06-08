@@ -38,6 +38,9 @@ pub fn start(t: &mut Activation, ds: Arc<Cap>) {
 
     t.spawn(Some(AnyValue::symbol("sturdy_ref_step")),
             enclose!((ds) move |t| super::sturdy::handle_sturdy_path_steps(t, ds)));
+
+    t.spawn(Some(AnyValue::symbol("noise_ref_step")),
+            enclose!((ds) move |t| super::noise::handle_noise_path_steps(t, ds)));
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {

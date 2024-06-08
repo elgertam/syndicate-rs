@@ -3,7 +3,6 @@ use std::sync::Arc;
 use preserves_schema::Codec;
 
 use syndicate::actor::*;
-use syndicate::during;
 use syndicate::rpc;
 use syndicate::value::NestedValue;
 
@@ -107,7 +106,7 @@ pub fn handle_sturdy_path_steps(t: &mut Activation, ds: Arc<Cap>) -> ActorResult
             enclose!((ds) move |t: &mut Activation| {
                 if let Some(origin) = origin.value().as_embedded().cloned() {
                     let observer = Cap::guard(&language().syndicate, t.create(
-                        during::entity(()).on_asserted_facet(
+                        syndicate::entity(()).on_asserted_facet(
                             enclose!((origin, parameters) move |_, t, r: gatekeeper::Resolved| {
                                 ds.assert(t, language(), &rpc::answer(
                                     language(),
