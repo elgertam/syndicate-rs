@@ -1,0 +1,23 @@
+#!/bin/sh
+
+set -e
+exec 1>&2
+
+failed=
+cmp_and_fail() {
+    if ! cmp "$1" "$2"
+    then
+        failed=failed
+    fi
+}
+
+COMMAND=cmp_and_fail
+if [ "$1" = "--fix" ];
+then
+    COMMAND=cp
+fi
+
+# Ensure that various copies of cross-package data are identical.
+${COMMAND} syndicate/protocols/schema-bundle.bin syndicate-schema-plugin/schema-bundle.bin
+
+[ -z "$failed" ]

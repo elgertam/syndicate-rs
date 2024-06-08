@@ -1,3 +1,5 @@
+__ignored__ := $(shell ./setup.sh)
+
 # Use cargo release to manage publication and versions etc.
 #
 #   cargo install cargo-release
