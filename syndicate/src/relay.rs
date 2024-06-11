@@ -427,14 +427,19 @@ impl TunnelRelay {
                         }
                         P::Event::Retract(b) => {
                             let P::Retract { handle: remote_handle } = *b;
-                            let (local_handle, previous_pins) = match self.inbound_assertions.remove(&remote_handle) {
-                                None => return Err(error("Retraction of nonexistent handle", language().unparse(&remote_handle)))?,
-                                Some(wss) => wss,
-                            };
-                            self.membranes.release(previous_pins);
-                            self.membranes.release(pins);
-                            t.retract(local_handle);
-                            dump_membranes!(self.membranes);
+                            match self.inbound_assertions.remove(&remote_handle) {
+                                None => {
+                                    // This can happen when e.g. an assertion previously made
+                                    // failed to pass an attenuation filter
+                                    tracing::debug!(?remote_handle, "Retraction of nonexistent handle");
+                                }
+                                Some((local_handle, previous_pins)) => {
+                                    self.membranes.release(previous_pins);
+                                    self.membranes.release(pins);
+                                    t.retract(local_handle);
+                                    dump_membranes!(self.membranes);
+                                }
+                            }
                         }
                         P::Event::Message(b) => {
                             let P::Message { body: P::Assertion(a) } = *b;
