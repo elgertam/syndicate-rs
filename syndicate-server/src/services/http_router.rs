@@ -21,7 +21,14 @@ use crate::schemas::internal_services::HttpStaticFileServer;
 use syndicate_macros::during;
 
 lazy_static::lazy_static! {
-    pub static ref MIME_TABLE: Map<String, String> = load_mime_table("/etc/mime.types").unwrap_or_default();
+    pub static ref MIME_TABLE: Map<String, String> = load_mime_table(&mime_table_path()).unwrap_or_default();
+}
+
+pub fn mime_table_path() -> String {
+    match std::env::var("SYNDICATE_MIME_TYPES") {
+        Ok(p) => p,
+        Err(_) => "/etc/mime.types".to_string(),
+    }
 }
 
 pub fn load_mime_table(path: &str) -> Result<Map<String, String>, std::io::Error> {
