@@ -4,10 +4,9 @@ embeddedType EntityRef.Cap .
 # ---------------------------------------------------------------------------
 # Protocol at *gatekeeper* entities
 
-# Assertion. Gatekeeper will attempt to resolve `step`, responding with a `Resolved` to
-# `observer`.
-Resolve = <resolve @step Step @observer #:Resolved> .
-Resolved = <accepted @responderSession #:any> / Rejected .
+# Assertion. Gatekeeper will attempt to resolve `step`, responding to `observer` with
+# an `<ok #:any>` or an `<error @detail any>` assertion.
+Resolve = <resolve @step Step @observer #:rpc.Result> .
 Step = <<rec> @stepType symbol [@detail any]> .
 
 # ---------------------------------------------------------------------------
@@ -90,7 +89,3 @@ Route = <route @transports [any ...] @pathSteps PathStep ...> .
 
 TransportControl = ForceDisconnect .
 ForceDisconnect = <force-disconnect> .
-
-# ---------------------------------------------------------------------------
-
-Rejected = <rejected @detail any> .
