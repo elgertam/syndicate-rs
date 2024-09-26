@@ -15,12 +15,12 @@ default-run = "syndicate-server"
 jemalloc = ["dep:tikv-jemallocator"]
 
 [build-dependencies]
-preserves-schema = "5.995"
+preserves-schema = "5.996"
 syndicate = { path = "../syndicate", version = "0.41.0"}
 syndicate-schema-plugin = { path = "../syndicate-schema-plugin", version = "0.10.0"}
 
 [dependencies]
-preserves-schema = "5.995"
+preserves-schema = "5.996"
 syndicate = { path = "../syndicate", version = "0.41.0"}
 syndicate-macros = { path = "../syndicate-macros", version = "0.33.0"}
 
