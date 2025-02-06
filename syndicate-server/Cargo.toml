@@ -1,6 +1,6 @@
 [package]
 name = "syndicate-server"
-version = "0.48.1"
+version = "0.49.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
