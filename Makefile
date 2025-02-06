@@ -81,12 +81,13 @@ aarch64-binary-release:
 aarch64-binary-debug:
 	CARGO_TARGET_DIR=target/target.aarch64 cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
 
-ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release
+ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release x86_64-deb armv7-deb aarch64-deb
 	rm -rf target/dist
 	for arch in x86_64 aarch64 armv7; do \
 		mkdir -p target/dist/$$arch; \
 		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-macaroon target/dist/$$arch; \
 		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-server target/dist/$$arch; \
+		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/debian/*.deb target/dist/$$arch; \
 	done
 
 #####################################################################################
@@ -95,13 +96,13 @@ ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release
 #   cargo install cargo-deb
 
 x86_64-deb:
-	cargo deb --target=x86_64-unknown-linux-musl -p syndicate-server
-	cargo deb --target=x86_64-unknown-linux-musl -p syndicate-tools
+	CARGO_TARGET_DIR=target/target.x86_64 cargo deb --target=x86_64-unknown-linux-musl -p syndicate-server
+	CARGO_TARGET_DIR=target/target.x86_64 cargo deb --target=x86_64-unknown-linux-musl -p syndicate-tools
 
 armv7-deb:
-	cargo deb --target=armv7-unknown-linux-musleabihf -p syndicate-server
-	cargo deb --target=armv7-unknown-linux-musleabihf -p syndicate-tools
+	CARGO_TARGET_DIR=target/target.armv7 cargo deb --target=armv7-unknown-linux-musleabihf -p syndicate-server
+	CARGO_TARGET_DIR=target/target.armv7 cargo deb --target=armv7-unknown-linux-musleabihf -p syndicate-tools
 
 aarch64-deb:
-	cargo deb --target=aarch64-unknown-linux-musl -p syndicate-server
-	cargo deb --target=aarch64-unknown-linux-musl -p syndicate-tools
+	CARGO_TARGET_DIR=target/target.aarch64 cargo deb --target=aarch64-unknown-linux-musl -p syndicate-server
+	CARGO_TARGET_DIR=target/target.aarch64 cargo deb --target=aarch64-unknown-linux-musl -p syndicate-tools
