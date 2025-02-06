@@ -90,8 +90,8 @@ ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release x8
 		mkdir -p target/dist/$$arch; \
 		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-macaroon target/dist/$$arch; \
 		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-server target/dist/$$arch; \
-		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/debian/*.deb target/dist/$$arch; \
 	done
+	cp -a target/target.x86_64/x86_64-unknown-linux-musl*/debian/*.deb target/dist/x86_64
 
 #####################################################################################
 # Debian packages via cargo-deb:
