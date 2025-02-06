@@ -4,7 +4,7 @@
 #
 #     docker login git.syndicate-lang.org
 #
-# Use a token with read-only access to user scope, this seems to be sufficient (!)
+# Use a token with read/write access to package scope.
 
 set -e
 docker build -t git.syndicate-lang.org/syndicate-lang/rust-builder .

@@ -1,5 +1,6 @@
 FROM rust:latest
 RUN cargo install cross
+RUN cargo install cargo-deb
 
 # This is necessary for cross to be able to access /var/run/docker.sock
 COPY --from=docker:dind /usr/local/bin/docker /usr/local/bin/
