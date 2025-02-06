@@ -1,0 +1,11 @@
+[Unit]
+Description=Syndicate dataspace server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStartPre=mkdir -p /etc/syndicate/core
+ExecStart=/usr/bin/syndicate-server --no-banner --config /etc/syndicate/core
+
+[Install]
+WantedBy=multi-user.target

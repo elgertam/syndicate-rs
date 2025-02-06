@@ -88,3 +88,20 @@ ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release
 		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-macaroon target/dist/$$arch; \
 		cp -a target/target.$$arch/$$arch-unknown-linux-musl*/release/syndicate-server target/dist/$$arch; \
 	done
+
+#####################################################################################
+# Debian packages via cargo-deb:
+#
+#   cargo install cargo-deb
+
+x86_64-deb:
+	cargo deb --target=x86_64-unknown-linux-musl -p syndicate-server
+	cargo deb --target=x86_64-unknown-linux-musl -p syndicate-tools
+
+armv7-deb:
+	cargo deb --target=armv7-unknown-linux-musleabihf -p syndicate-server
+	cargo deb --target=armv7-unknown-linux-musleabihf -p syndicate-tools
+
+aarch64-deb:
+	cargo deb --target=aarch64-unknown-linux-musl -p syndicate-server
+	cargo deb --target=aarch64-unknown-linux-musl -p syndicate-tools
