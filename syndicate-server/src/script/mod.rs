@@ -97,6 +97,10 @@ pub enum Expr {
     Stringify {
         expr: Box<Expr>,
     },
+    Join {
+        separator: Box<Expr>,
+        pieces: Box<Expr>,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -331,6 +335,13 @@ impl<'env> PatternInstantiator<'env> {
     }
 }
 
+fn ensure_string(v: &AnyValue) -> io::Result<String> {
+    match v.value().as_string() {
+        Some(s) => Ok(s.clone()),
+        None => TextWriter::encode(&mut NoEmbeddedDomainCodec, v)
+    }
+}
+
 impl Env {
     pub fn new(path: PathBuf, bindings: Map<String, AnyValue>) -> Self {
         Env {
@@ -545,6 +556,16 @@ impl Env {
                 let v = self.eval_expr(t, expr)?;
                 let s = TextWriter::encode(&mut NoEmbeddedDomainCodec, &v)?;
                 Ok(AnyValue::new(s))
+            },
+            Expr::Join { separator, pieces } => {
+                let separator = ensure_string(&self.eval_expr(t, separator)?)?;
+                let pieces = self.eval_expr(t, pieces)?;
+                let pieces: Cow<'_, [AnyValue]> = match pieces.value().as_sequence() {
+                    Some(vs) => vs.into(),
+                    None => vec![pieces].into(),
+                };
+                let vs = pieces.iter().map(|e| ensure_string(&e)).collect::<Result<Vec<String>, _>>()?;
+                Ok(AnyValue::new(vs.join(&separator)))
             }
         }
     }
@@ -934,6 +955,13 @@ impl<'t> Parser<'t> {
         if self.peek() == &Value::symbol("stringify") {
             self.drop();
             return Some(Expr::Stringify { expr: Box::new(self.parse_expr()?) });
+        }
+
+        if self.peek() == &Value::symbol("join") {
+            self.drop();
+            let separator = Box::new(self.parse_expr()?);
+            let pieces = Box::new(self.parse_expr()?);
+            return Some(Expr::Join { separator, pieces });
         }
 
         return Some(Expr::Template{ template: self.shift() });
