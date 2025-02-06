@@ -81,7 +81,7 @@ aarch64-binary-release:
 aarch64-binary-debug:
 	CARGO_TARGET_DIR=target/target.aarch64 cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
 
-ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release x86_64-deb armv7-deb aarch64-deb
+ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release ci-cargo-deb x86_64-deb armv7-deb aarch64-deb
 	rm -rf target/dist
 	for arch in x86_64 aarch64 armv7; do \
 		mkdir -p target/dist/$$arch; \
@@ -94,6 +94,9 @@ ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release x8
 # Debian packages via cargo-deb:
 #
 #   cargo install cargo-deb
+
+ci-cargo-deb:
+	cargo install cargo-deb
 
 x86_64-deb:
 	CARGO_TARGET_DIR=target/target.x86_64 cargo deb --target=x86_64-unknown-linux-musl -p syndicate-server
