@@ -94,6 +94,7 @@ pub enum Expr {
     Dataspace,
     Timestamp,
     Facet,
+    ScriptDir,
     Stringify {
         expr: Box<Expr>,
     },
@@ -552,6 +553,13 @@ impl Env {
             Expr::Dataspace => Ok(AnyValue::domain(Cap::new(&t.create(Dataspace::new(None))))),
             Expr::Timestamp => Ok(AnyValue::new(chrono::Utc::now().to_rfc3339())),
             Expr::Facet => Ok(AnyValue::domain(Cap::new(&t.create(FacetHandle::new())))),
+            Expr::ScriptDir => {
+                let p = match self.path.parent().map(|p| p.to_string_lossy()) {
+                    Some(p) => if p == Cow::Borrowed("") { Cow::Borrowed(".") } else { p },
+                    None => Cow::Borrowed("."),
+                };
+                Ok(AnyValue::new(p.into_owned()))
+            }
             Expr::Stringify { expr } => {
                 let v = self.eval_expr(t, expr)?;
                 let s = TextWriter::encode(&mut NoEmbeddedDomainCodec, &v)?;
@@ -950,6 +958,11 @@ impl<'t> Parser<'t> {
         if self.peek() == &Value::symbol("facet") {
             self.drop();
             return Some(Expr::Facet);
+        }
+
+        if self.peek() == &Value::symbol("scriptdir") {
+            self.drop();
+            return Some(Expr::ScriptDir);
         }
 
         if self.peek() == &Value::symbol("stringify") {
