@@ -81,7 +81,10 @@ aarch64-binary-release:
 aarch64-binary-debug:
 	CARGO_TARGET_DIR=target/target.aarch64 cross build --target=aarch64-unknown-linux-musl --all-targets --features vendored-openssl
 
-ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release ci-cargo-deb x86_64-deb armv7-deb aarch64-deb
+# NB. Not building armv7-deb in CI; as of 2025-02-06 it produces "error: linking with `cc` failed: exit status: 1"
+# See e.g. https://git.syndicate-lang.org/syndicate-lang/syndicate-rs/actions/runs/66
+#
+ci-release: x86_64-binary-release aarch64-binary-release armv7-binary-release ci-cargo-deb x86_64-deb aarch64-deb
 	rm -rf target/dist
 	for arch in x86_64 aarch64 armv7; do \
 		mkdir -p target/dist/$$arch; \
