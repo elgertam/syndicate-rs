@@ -2028,7 +2028,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "blake2",
  "bytes",
@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-macros"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2072,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-server"
-version = "0.50.0"
+version = "0.50.1"
 dependencies = [
  "chrono",
  "futures",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-tools"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "clap 4.5.27",
  "clap_complete",

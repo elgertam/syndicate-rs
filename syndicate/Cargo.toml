@@ -1,6 +1,6 @@
 [package]
 name = "syndicate"
-version = "0.42.0"
+version = "0.43.0"
 authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
 edition = "2018"
 
