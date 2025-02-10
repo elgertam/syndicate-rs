@@ -11,6 +11,21 @@ use preserves_schema::ParseError;
 
 pub type Error = P::Error<AnyValue>;
 
+impl Error {
+    /// Construct an [`Error`] given a displayable `T`.
+    /// Uses the displayed form of the `T` as `message`, and `false` as detail (per convention).
+    ///
+    /// This function is useful to translate [`std::error::Error`] from some other API
+    /// into Syndicate `Error`:
+    ///
+    /// ```
+    /// return some_operation().map_err(Error::msg)
+    /// ```
+    pub fn msg<T: std::fmt::Display>(e: T) -> Self {
+        error(&e.to_string(), AnyValue::new(false))
+    }
+}
+
 impl std::error::Error for Error {}
 
 impl std::fmt::Display for Error {
@@ -19,7 +34,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-/// Construct an [`Error`] with the given `message` and `detail`.
+/// Construct an [`Error`] with the given `message` and `detail`; see also [`Error::msg`].
 ///
 /// When no relevant detail exists, convention is to set `detail` to `false`.
 pub fn error<Detail>(message: &str, detail: Detail) -> Error where AnyValue: From<Detail> {
