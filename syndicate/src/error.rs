@@ -44,8 +44,7 @@ pub fn error<Detail>(message: &str, detail: Detail) -> Error where AnyValue: Fro
     }
 }
 
-/// Encodes an [`ActorResult`][crate::actor::ActorResult] as an
-/// [`AnyValue`][crate::actor::AnyValue].
+/// Encodes an [`ActorResult`][crate::actor::ActorResult] as an [`AnyValue`].
 ///
 /// Used primarily when attempting to perform an
 /// [`Activation`][crate::actor::Activation] on an already-terminated

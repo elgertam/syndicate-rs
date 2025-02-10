@@ -50,9 +50,7 @@ impl Dataspace {
         self.index.endpoint_count()
     }
 
-    /// Retrieve the current count of
-    /// [`Observe`][crate::schemas::dataspace::Observe] assertions in
-    /// the dataspace.
+    /// Retrieve the current count of [`Observe`] assertions in the dataspace.
     pub fn observer_count(&self) -> usize {
         self.index.observer_count()
     }

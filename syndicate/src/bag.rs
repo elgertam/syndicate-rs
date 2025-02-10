@@ -1,5 +1,4 @@
-//! A "bag" data structure (based on
-//! [`BTreeMap`][std::collections::BTreeMap]), used in
+//! A "bag" data structure (based on [`BTreeMap`]), used in
 //! [dataspace][super::dataspace] indexing.
 
 use std::collections::BTreeMap;
