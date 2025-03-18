@@ -1,13 +1,13 @@
 [package]
 name = "syndicate-tools"
-version = "0.20.1"
-authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
-edition = "2018"
-
 description = "Syndicate command-line utilities."
-homepage = "https://syndicate-lang.org/"
-repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
-license = "Apache-2.0"
+version = "0.20.1"
+
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
 
 [dependencies]
 preserves = "4.996"

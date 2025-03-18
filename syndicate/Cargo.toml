@@ -1,13 +1,13 @@
 [package]
 name = "syndicate"
-version = "0.43.0"
-authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
-edition = "2018"
-
 description = "Syndicated Actor model for Rust, including network communication and Dataspaces."
-homepage = "https://syndicate-lang.org/"
-repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
-license = "Apache-2.0"
+version = "0.43.0"
+
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
 
 [features]
 vendored-openssl = ["openssl/vendored"]

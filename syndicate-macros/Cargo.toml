@@ -1,13 +1,13 @@
 [package]
 name = "syndicate-macros"
-version = "0.34.1"
-authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
-edition = "2018"
-
 description = "Support macros for programming with the Syndicated Actor model and Dataspaces."
-homepage = "https://syndicate-lang.org/"
-repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
-license = "Apache-2.0"
+version = "0.34.1"
+
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
 
 [lib]
 proc-macro = true

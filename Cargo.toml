@@ -9,6 +9,15 @@ members = [
   "syndicate-tools",
   ]
 
+resolver = "3"
+
+[workspace.package]
+authors = ["Tony Garnock-Jones <tonyg@leastfixedpoint.com>"]
+homepage = "https://syndicate-lang.org/"
+repository = "https://git.syndicate-lang.org/syndicate-lang/syndicate-rs"
+license = "Apache-2.0"
+edition = "2018"
+
 # [patch.crates-io]
 # #
 # # Use a bind mount for localdev:
