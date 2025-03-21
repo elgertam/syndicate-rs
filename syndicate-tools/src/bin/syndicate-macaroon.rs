@@ -12,23 +12,17 @@ use noise_protocol::Hash;
 use noise_rust_crypto::Blake2s;
 use noise_rust_crypto::X25519;
 use preserves::hex::HexParser;
-use preserves::value::BytesBinarySource;
-use preserves::value::NestedValue;
-use preserves::value::NoEmbeddedDomainCodec;
-use preserves::value::Reader;
-use preserves::value::TextReader;
-use preserves::value::ViaCodec;
-use preserves::value::TextWriter;
+use preserves::NoEmbeddedDomainCodec;
+use preserves::TextWriter;
 use syndicate::language;
 use syndicate::preserves_schema::Codec;
-use syndicate::preserves_schema::ParseError;
 use syndicate::schemas::noise;
 use syndicate::sturdy::Caveat;
 use syndicate::sturdy::SturdyRef;
 use syndicate::sturdy::_Any;
 
 #[derive(Clone, Debug)]
-struct Preserves<N: NestedValue>(N);
+struct Preserves(_Any);
 
 #[derive(Subcommand, Debug)]
 enum Action {
@@ -37,7 +31,7 @@ enum Action {
     Mint {
         #[arg(long, value_name="VALUE")]
         /// Preserves value to use as SturdyRef OID
-        oid: Preserves<_Any>,
+        oid: Preserves,
 
         #[arg(long, group="key")]
         /// Key phrase
@@ -49,7 +43,7 @@ enum Action {
 
         #[arg(long)]
         /// Caveats to add
-        caveat: Vec<Preserves<_Any>>,
+        caveat: Vec<Preserves>,
     },
 
     #[command(group(ArgGroup::new("key").required(true)))]
@@ -57,7 +51,7 @@ enum Action {
     Noise {
         #[arg(long, value_name="VALUE")]
         /// Preserves value to use as the service selector
-        service: Preserves<_Any>,
+        service: Preserves,
 
         #[arg(long, value_name="PROTOCOL")]
         /// Noise handshake protocol name
@@ -90,15 +84,15 @@ struct Cli {
     action: Action,
 }
 
-impl<N: NestedValue> FromStr for Preserves<N> {
-    type Err = ParseError;
+impl FromStr for Preserves {
+    type Err = preserves::Error;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Preserves(TextReader::new(&mut BytesBinarySource::new(s.as_bytes()),
-                                     ViaCodec::new(NoEmbeddedDomainCodec)).demand_next(false)?))
+        Ok(Preserves(preserves::read_text(s, true, &mut preserves::NoEmbeddedDomainCodec)?))
     }
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = <Cli as Parser>::parse();
 
     match args.action {
