@@ -9,6 +9,9 @@ repository.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[lib]
+bench = false
+
 [features]
 vendored-openssl = ["openssl/vendored"]
 
@@ -40,7 +43,7 @@ tracing-futures = "0.2"
 openssl = { version = "0.10", optional = true }
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "0.5.1"
 
 [[bench]]
 name = "bench_dataspace"

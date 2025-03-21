@@ -9,3 +9,9 @@ inotifytest:
 
 binary-debug:
 	cargo build --all-targets
+
+bench:
+	cargo bench --benches -- --save-baseline $$(git branch --show-current)
+
+compare-to-main:
+	cargo bench --benches -- --load-baseline $$(git branch --show-current) --baseline main
