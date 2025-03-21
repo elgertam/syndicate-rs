@@ -31,7 +31,7 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
 
     match stx {
         Stx::Atom(v) =>
-            Ok(lit(value_to_value_expr(&v))),
+            Ok(lit(value_to_value_expr(v.clone()))),
         Stx::Binder(_, maybe_ty, maybe_pat) => {
             let inner_pat_expr = match maybe_pat {
                 Some(p) => to_pattern_expr(&*p)?,

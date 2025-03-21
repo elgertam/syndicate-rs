@@ -15,13 +15,12 @@ use syn::parse::Parser;
 use syn::parse::ParseStream;
 use syn::parse_str;
 
-use syndicate::value::Double;
-use syndicate::value::IOValue;
-use syndicate::value::NestedValue;
+use syndicate::preserves::IOValue;
+use syndicate::preserves::Value;
 
 #[derive(Debug, Clone)]
 pub enum Stx {
-    Atom(IOValue),
+    Atom(Value<IOValue>),
     Binder(Option<Ident>, Option<Type>, Option<Box<Stx>>),
     Discard,
     Subst(TokenStream),
@@ -250,24 +249,24 @@ fn parse1(c: Cursor) -> Result<(Stx, Cursor)> {
         if i.to_string() == "_" {
             Ok((Stx::Discard, next))
         } else {
-            parse_id(c).and_then(|(q,c)| Ok((Stx::Atom(IOValue::symbol(&q)), c)))
+            parse_id(c).and_then(|(q,c)| Ok((Stx::Atom(Value::symbol(q)), c)))
         }
     } else if let Some((literal, next)) = c.literal() {
         let t: ExprLit = syn::parse_str(&literal.to_string())?;
         let v = match t.lit {
-            Lit::Str(s) => IOValue::new(s.value()),
-            Lit::ByteStr(bs) => IOValue::new(&bs.value()[..]),
-            Lit::Byte(b) => IOValue::new(b.value()),
+            Lit::Str(s) => Value::new(s.value()),
+            Lit::ByteStr(bs) => Value::bytes((&bs.value()[..]).to_owned()),
+            Lit::Byte(b) => Value::new(b.value()),
             Lit::Char(_) => return Err(Error::new(c.span(), "Literal characters not supported")),
             Lit::Int(i) => if i.suffix().starts_with("u") || !i.base10_digits().starts_with("-") {
-                IOValue::new(i.base10_parse::<u128>()?)
+                Value::new(i.base10_parse::<u128>()?)
             } else {
-                IOValue::new(i.base10_parse::<i128>()?)
+                Value::new(i.base10_parse::<i128>()?)
             }
             Lit::Float(f) => if f.suffix() == "f32" {
-                IOValue::new(&Double(f.base10_parse::<f32>()? as f64))
+                Value::new(f.base10_parse::<f32>()? as f64)
             } else {
-                IOValue::new(&Double(f.base10_parse::<f64>()?))
+                Value::new(f.base10_parse::<f64>()?)
             }
             Lit::Bool(_) => return Err(Error::new(c.span(), "Literal booleans not supported")),
             Lit::Verbatim(_) => return Err(Error::new(c.span(), "Verbatim literals not supported")),
