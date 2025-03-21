@@ -9,7 +9,7 @@ use crate::language::language;
 
 use syndicate_macros::on_message;
 
-pub fn updater<'a, N: Clone + Unparse<&'a Language<AnyValue>, AnyValue>>(
+pub fn updater<'a, N: Clone + Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>>(
     ds: Arc<Cap>,
     name: N,
 ) -> impl FnMut(&mut Activation, State) -> ActorResult {
@@ -20,7 +20,7 @@ pub fn updater<'a, N: Clone + Unparse<&'a Language<AnyValue>, AnyValue>>(
     }
 }
 
-pub fn lifecycle<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(
+pub fn lifecycle<'a, N: Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>>(
     service_name: &N,
     state: State,
 ) -> ServiceState {
@@ -30,16 +30,16 @@ pub fn lifecycle<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(
     }
 }
 
-pub fn started<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(service_name: &N) -> ServiceState {
+pub fn started<'a, N: Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>>(service_name: &N) -> ServiceState {
     lifecycle(service_name, State::Started)
 }
 
-pub fn ready<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(service_name: &N) -> ServiceState {
+pub fn ready<'a, N: Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>>(service_name: &N) -> ServiceState {
     lifecycle(service_name, State::Ready)
 }
 
 pub fn on_service_restart<'a,
-                          N: Unparse<&'a Language<AnyValue>, AnyValue>,
+                          N: Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>,
                           F: 'static + Send + FnMut(&mut Activation) -> ActorResult>(
     t: &mut Activation,
     ds: &Arc<Cap>,
@@ -49,7 +49,7 @@ pub fn on_service_restart<'a,
     on_message!(t, ds, language(), <restart-service #(&service_name.unparse(language()))>, f);
 }
 
-pub fn terminate_on_service_restart<'a, N: Unparse<&'a Language<AnyValue>, AnyValue>>(
+pub fn terminate_on_service_restart<'a, N: Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>>(
     t: &mut Activation,
     ds: &Arc<Cap>,
     service_name: &N,

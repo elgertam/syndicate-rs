@@ -17,7 +17,7 @@ pub fn lit<T: ToTokens>(e: T) -> TokenStream2 {
 fn compile_sequence_members(stxs: &Vec<Stx>) -> Result<Vec<TokenStream2>, &'static str> {
     stxs.iter().enumerate().map(|(i, stx)| {
         let p = to_pattern_expr(stx)?;
-        Ok(quote!((syndicate::value::Value::from(#i).wrap(), #p)))
+        Ok(quote!((syndicate::preserves::Value::new(#i), #p)))
     }).collect()
 }
 
@@ -25,7 +25,7 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
     #[allow(non_snake_case)]
     let P_: TokenStream2 = quote!(syndicate::schemas::dataspace_patterns);
     #[allow(non_snake_case)]
-    let V_: TokenStream2 = quote!(syndicate::value);
+    let V_: TokenStream2 = quote!(syndicate::preserves);
     #[allow(non_snake_case)]
     let MapFrom_: TokenStream2 = quote!(<#V_::Map<_, _>>::from);
 

@@ -5,7 +5,6 @@ use quote::quote_spanned;
 use syn::parse_macro_input;
 use syn::Expr;
 use syn::Ident;
-use syn::LitInt;
 use syn::Token;
 use syn::Type;
 use syn::parse::Error;
@@ -42,25 +41,23 @@ impl Parse for During {
 }
 
 impl During {
-    fn bindings(&self) -> (Vec<Ident>, Vec<Type>, Vec<LitInt>) {
+    fn bindings(&self) -> (Vec<Ident>, Vec<Type>) {
         let mut ids = vec![];
         let mut tys = vec![];
-        let mut indexes = vec![];
-        for (i, (maybe_id, ty)) in self.pat_stx.bindings().into_iter().enumerate() {
+        for (maybe_id, ty) in self.pat_stx.bindings().into_iter() {
             if let Some(id) = maybe_id {
-                indexes.push(LitInt::new(&i.to_string(), id.span()));
                 ids.push(id);
                 tys.push(ty);
             }
         }
-        (ids, tys, indexes)
+        (ids, tys)
     }
 }
 
 pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let d = parse_macro_input!(src as During);
     let During { turn_stx, ds_stx, lang_stx, pat_stx, body_stx } = &d;
-    let (varname_stx, type_stx, index_stx) = d.bindings();
+    let (varname_stx, type_stx) = d.bindings();
     let binding_count = varname_stx.len();
     let pat_stx_expr = match pat::to_pattern_expr(pat_stx) {
         Ok(e) => e,
@@ -71,18 +68,18 @@ pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let __lang = #lang_stx;
         let monitor = syndicate::during::entity(())
             .on_asserted_facet(move |_, t, captures: syndicate::actor::AnyValue| {
-                if let Some(captures) = {
-                    use syndicate::value::NestedValue;
-                    use syndicate::value::Value;
-                    captures.value().as_sequence()
-                }{
+                if captures.is_sequence() {
                     if captures.len() == #binding_count {
-                        #(let #varname_stx: #type_stx = match {
-                            use syndicate::preserves_schema::Codec;
-                            __lang.parse(&captures[#index_stx])
-                        } {
-                            Ok(v) => v,
-                            Err(_) => return Ok(()),
+                        let mut captures = captures.iter();
+                        #(let #varname_stx: #type_stx = match captures.next() {
+                            None => return Ok(()),
+                            Some(v) => {
+                                use syndicate::preserves_schema::Codec;
+                                match __lang.parse(&v) {
+                                    Ok(v) => v,
+                                    Err(_) => return Ok(()),
+                                }
+                            }
                         };)*
                         return (#body_stx)(t);
                     }
@@ -100,7 +97,7 @@ pub fn during(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub fn on_message(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let d = parse_macro_input!(src as During);
     let During { turn_stx, ds_stx, lang_stx, pat_stx, body_stx } = &d;
-    let (varname_stx, type_stx, index_stx) = d.bindings();
+    let (varname_stx, type_stx) = d.bindings();
     let binding_count = varname_stx.len();
     let pat_stx_expr = match pat::to_pattern_expr(pat_stx) {
         Ok(e) => e,
@@ -111,18 +108,18 @@ pub fn on_message(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let __lang = #lang_stx;
         let monitor = syndicate::during::entity(())
             .on_message(move |_, t, captures: syndicate::actor::AnyValue| {
-                if let Some(captures) = {
-                    use syndicate::value::NestedValue;
-                    use syndicate::value::Value;
-                    captures.value().as_sequence()
-                }{
+                if captures.is_sequence() {
                     if captures.len() == #binding_count {
-                        #(let #varname_stx: #type_stx = match {
-                            use syndicate::preserves_schema::Codec;
-                            __lang.parse(&captures[#index_stx])
-                        } {
-                            Ok(v) => v,
-                            Err(_) => return Ok(()),
+                        let mut captures = captures.iter();
+                        #(let #varname_stx: #type_stx = match captures.next() {
+                            None => return Ok(()),
+                            Some(v) => {
+                                use syndicate::preserves_schema::Codec;
+                                match __lang.parse(v) {
+                                    Ok(v) => v,
+                                    Err(_) => return Ok(()),
+                                }
+                            }
                         };)*
                         return (#body_stx)(t);
                     }

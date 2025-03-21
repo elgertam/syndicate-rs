@@ -11,8 +11,7 @@ use hyper::header::HeaderValue;
 use syndicate::actor::*;
 use syndicate::error::Error;
 use syndicate::trace;
-use syndicate::value::Map;
-use syndicate::value::NestedValue;
+use syndicate::preserves::Map;
 
 use syndicate::schemas::http;
 

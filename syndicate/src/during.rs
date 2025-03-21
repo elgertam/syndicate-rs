@@ -1,5 +1,4 @@
 use crate::actor::*;
-use crate::error::Error;
 
 use preserves::Map;
 
@@ -8,7 +7,7 @@ use std::marker::PhantomData;
 
 pub struct During<T>(Map<Handle, DuringRetractionHandler<T>>);
 pub type DuringRetractionHandler<T> = Box<dyn Send + FnOnce(&mut T, &mut Activation) -> ActorResult>;
-pub type DuringResult<E> = Result<Option<DuringRetractionHandler<E>>, Error>;
+pub type DuringResult<E> = Result<Option<DuringRetractionHandler<E>>, ActorError>;
 
 pub struct DuringEntity<M, E, Fa, Fm, Fs, Fx>
 where

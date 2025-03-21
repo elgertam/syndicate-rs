@@ -4,11 +4,12 @@ use preserves_schema::Codec;
 
 use syndicate::actor::*;
 use syndicate::rpc;
-use syndicate::value::NestedValue;
 
 use syndicate::enclose;
 use syndicate_macros::during;
 use syndicate_macros::pattern;
+
+use syndicate::preserves::ExpectedKind;
 
 use syndicate::schemas::dataspace;
 use syndicate::schemas::gatekeeper;
@@ -18,13 +19,13 @@ use syndicate::schemas::rpc as R;
 use crate::language;
 
 fn sturdy_step_type() -> String {
-    language().unparse(&sturdy::SturdyStepType).value().to_symbol().unwrap().clone()
+    language().unparse(&sturdy::SturdyStepType).to_symbol().unwrap().into_owned()
 }
 
 pub fn handle_sturdy_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
     during!(t, ds, language(), <bind <ref $desc> $target $observer>, |t: &mut Activation| {
         t.spawn_link(None, move |t| {
-            target.value().to_embedded()?;
+            target.to_embedded()?;
             let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
             let desc = language().parse::<sturdy::SturdyDescriptionDetail>(&desc)?;
             let sr = sturdy::SturdyRef::mint(desc.oid, &desc.key);
@@ -68,10 +69,10 @@ fn await_bind_sturdyref(
     let handler = syndicate::entity(observer)
         .on_asserted(move |observer, t, a: AnyValue| {
             t.stop_facet(direct_resolution_facet);
-            let bindings = a.value().to_sequence()?;
-            let key = bindings[0].value().to_bytestring()?;
-            let unattenuated_target = bindings[1].value().to_embedded()?;
-            match sturdyref.validate_and_attenuate(key, unattenuated_target) {
+            let bindings = a.collect_sequence().ok_or(ExpectedKind::Sequence)?;
+            let key = bindings[0].to_bytestring()?;
+            let unattenuated_target = bindings[1].to_embedded()?;
+            match sturdyref.validate_and_attenuate(key.as_ref(), unattenuated_target.as_ref()) {
                 Err(e) => {
                     tracing::warn!(sturdyref = ?language().unparse(&sturdyref),
                                    "sturdyref failed validation: {}", e);
@@ -102,9 +103,9 @@ fn await_bind_sturdyref(
 
 pub fn handle_sturdy_path_steps(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {
     during!(t, ds, language(),
-            <q <resolve-path-step $origin <ref $parameters: sturdy::SturdyPathStepDetail::<AnyValue>>>>,
+            <q <resolve-path-step $origin <ref $parameters: sturdy::SturdyPathStepDetail::<Arc<Cap>>>>>,
             enclose!((ds) move |t: &mut Activation| {
-                if let Some(origin) = origin.value().as_embedded().cloned() {
+                if let Some(origin) = origin.as_embedded().map(|r| r.into_owned()) {
                     let observer = Cap::guard(&language().syndicate, t.create(
                         syndicate::entity(()).on_asserted_facet(
                             enclose!((origin, parameters) move |_, t, r: gatekeeper::Resolved| {

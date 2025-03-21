@@ -39,7 +39,7 @@ enum SymbolVariant<'a> {
 fn compile_sequence_members(vs: Vec<Value<IOValue>>) -> Vec<TokenStream> {
     vs.into_iter().enumerate().map(|(i, f)| {
         let p = compile_pattern(f);
-        quote!((syndicate::preserves::Value::new(#i).wrap(), #p))
+        quote!((syndicate::preserves::Value::new(#i), #p))
     }).collect::<Vec<_>>()
 }
 
@@ -83,22 +83,22 @@ impl ValueCompiler {
         match v.value_class() {
             ValueClass::Atomic(_) => match v.as_atom().unwrap() {
                 Atom::Boolean(b) =>
-                    quote!(#V_::Value::new(#b).wrap()),
+                    quote!(#V_::Value::new(#b)),
                 Atom::Double(d) =>
-                    quote!(#V_::Value::new(#d).wrap()),
+                    quote!(#V_::Value::new(#d)),
                 Atom::SignedInteger(i) => {
                     let i = i128::try_from(i.as_ref()).expect("Literal integer out-of-range");
-                    quote!(#V_::Value::new(#i).wrap())
+                    quote!(#V_::Value::new(#i))
                 }
                 Atom::String(s) =>
-                    quote!(#V_::Value::new(#s).wrap()),
+                    quote!(#V_::Value::new(#s)),
                 Atom::ByteString(bs) => {
                     let bs = LitByteStr::new(bs.as_ref(), Span::call_site());
-                    quote!(#V_::Value::new(#bs).wrap())
+                    quote!(#V_::Value::new(#bs))
                 }
                 Atom::Symbol(s) => match analyze_symbol(&s, self.allow_binding_and_substitution) {
                     SymbolVariant::Normal(s) =>
-                        quote!(#V_::Value::symbol(#s).wrap()),
+                        quote!(#V_::Value::symbol(#s)),
                     SymbolVariant::Binder(_) |
                     SymbolVariant::Discard =>
                         panic!("Binding/Discard not supported here"),
@@ -123,7 +123,7 @@ impl ValueCompiler {
                     quote!({
                         let mut ___s = #V_::Set::new();
                         #(___s.insert(#vs);)*
-                        #V_::Value::new(___s).wrap()
+                        #V_::Value::new(___s)
                     })
                 }
                 CompoundClass::Dictionary => {
@@ -135,7 +135,7 @@ impl ValueCompiler {
                     quote!({
                         let mut ___d = #V_::Map::new();
                         #(#members;)*
-                        #V_::Value::new(___d).wrap()
+                        #V_::Value::new(___d)
                     })
                 }
             },
@@ -177,7 +177,7 @@ fn compile_pattern(v: Value<IOValue>) -> TokenStream {
                                 let id = Ident::new(&label[1..], Span::call_site());
                                 quote!(#id)
                             } else {
-                                quote!(#V_::Value::symbol(#label).wrap())
+                                quote!(#V_::Value::symbol(#label))
                             };
                             let members = compile_sequence_members(v.iter().collect());
                             quote!(#P_::Pattern::Group {

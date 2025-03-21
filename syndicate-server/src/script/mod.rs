@@ -13,13 +13,16 @@ use syndicate::pattern::{lift_literal, drop_literal, pattern_seq_from_dictionary
 use syndicate::schemas::dataspace;
 use syndicate::schemas::dataspace_patterns as P;
 use syndicate::schemas::sturdy;
-use syndicate::value::Map;
-use syndicate::value::NestedValue;
-use syndicate::value::NoEmbeddedDomainCodec;
-use syndicate::value::Record;
-use syndicate::value::Set;
-use syndicate::value::TextWriter;
-use syndicate::value::Value;
+use syndicate::preserves::AtomClass;
+use syndicate::preserves::CompoundClass;
+use syndicate::preserves::Map;
+use syndicate::preserves::NoEmbeddedDomainCodec;
+use syndicate::preserves::Record;
+use syndicate::preserves::Set;
+use syndicate::preserves::TextWriter;
+use syndicate::preserves::Value;
+use syndicate::preserves::ValueClass;
+use syndicate::preserves::ValueImpl;
 
 use crate::language::language;
 
@@ -150,9 +153,11 @@ impl FacetHandle {
 
 impl Entity<AnyValue> for FacetHandle {
     fn message(&mut self, t: &mut Activation, body: AnyValue) -> ActorResult {
-        if let Some("stop") = body.value().as_symbol().map(|s| s.as_str()) {
-            t.stop();
-            return Ok(())
+        if let Some(s) = body.as_symbol() {
+            if s.as_ref() == "stop" {
+                t.stop();
+                return Ok(())
+            }
         }
         tracing::warn!(?body, "Unrecognised message sent to FacetHandle");
         return Ok(())
@@ -189,14 +194,14 @@ fn tlit(value: AnyValue) -> sturdy::Template {
     sturdy::Template::Lit(Box::new(sturdy::Lit { value }))
 }
 
-fn parse_rewrite(raw_base_name: &AnyValue, e: &AnyValue) -> io::Result<RewriteTemplate> {
-    if let Some(fields) = e.value().as_simple_record("accept", Some(1)) {
+fn parse_rewrite(raw_base_name: &AnyValue, e: AnyValue) -> io::Result<RewriteTemplate> {
+    if let Some(fields) = e.collect_simple_record("accept", Some(1)) {
         return Ok(RewriteTemplate::Accept {
             pattern_template: fields[0].clone(),
         });
     }
 
-    if let Some(fields) = e.value().as_simple_record("rewrite", Some(2)) {
+    if let Some(fields) = e.collect_simple_record("rewrite", Some(2)) {
         return Ok(RewriteTemplate::Rewrite {
             pattern_template: fields[0].clone(),
             template_template: fields[1].clone(),
@@ -206,9 +211,9 @@ fn parse_rewrite(raw_base_name: &AnyValue, e: &AnyValue) -> io::Result<RewriteTe
     Err(bad_instruction(&format!("Bad rewrite in attenuation of {:?}: {:?}", raw_base_name, e)))
 }
 
-fn parse_caveat(raw_base_name: &AnyValue, e: &AnyValue) -> io::Result<CaveatTemplate> {
-    if let Some(fields) = e.value().as_simple_record("or", Some(1)) {
-        let raw_rewrites = match fields[0].value().as_sequence() {
+fn parse_caveat(raw_base_name: &AnyValue, e: AnyValue) -> io::Result<CaveatTemplate> {
+    if let Some(fields) = e.collect_simple_record("or", Some(1)) {
+        let raw_rewrites = match fields[0].collect_sequence() {
             None => Err(bad_instruction(&format!(
                 "Alternatives in <or> in attenuation of {:?} must have sequence of rewrites; got {:?}",
                 raw_base_name,
@@ -220,11 +225,11 @@ fn parse_caveat(raw_base_name: &AnyValue, e: &AnyValue) -> io::Result<CaveatTemp
         return Ok(CaveatTemplate::Alts{ alternatives });
     }
 
-    if let Some(fields) = e.value().as_simple_record("reject", Some(1)) {
+    if let Some(fields) = e.collect_simple_record("reject", Some(1)) {
         return Ok(CaveatTemplate::Reject{ pattern_template: fields[0].clone() });
     }
 
-    if let Ok(r) = parse_rewrite(raw_base_name, e) {
+    if let Ok(r) = parse_rewrite(raw_base_name, e.clone()) {
         return Ok(CaveatTemplate::Alts { alternatives: vec![r] });
     }
 
@@ -232,29 +237,29 @@ fn parse_caveat(raw_base_name: &AnyValue, e: &AnyValue) -> io::Result<CaveatTemp
 }
 
 fn parse_attenuation(r: &Record<AnyValue>) -> io::Result<Option<(String, Vec<CaveatTemplate>)>> {
-    if r.label() != &AnyValue::symbol("*") {
+    if r.label() != AnyValue::symbol("*") {
         return Ok(None);
     }
 
-    if r.fields().len() != 2 {
+    if r.len() != 2 {
         Err(bad_instruction(&format!(
             "Attenuation requires a reference and a sequence of caveats; got {:?}",
             r)))?;
     }
 
-    let raw_base_name = &r.fields()[0];
-    let base_name = match raw_base_name.value().as_symbol().map(|s| analyze(&s)) {
+    let raw_base_name = &r[0];
+    let base_name = match raw_base_name.as_symbol().map(|s| analyze(&s)) {
         Some(Symbolic::Reference(s)) => s,
         _ => Err(bad_instruction(&format!(
             "Attenuation must have variable reference as first argument; got {:?}",
             raw_base_name)))?,
     };
 
-    let raw_caveats = match r.fields()[1].value().as_sequence() {
+    let raw_caveats = match r[1].collect_sequence() {
         None => Err(bad_instruction(&format!(
             "Attenuation of {:?} must have sequence of caveats; got {:?}",
             raw_base_name,
-            r.fields()[1])))?,
+            r[1])))?,
         Some(vs) => vs,
     };
 
@@ -264,16 +269,8 @@ fn parse_attenuation(r: &Record<AnyValue>) -> io::Result<Option<(String, Vec<Cav
 
 impl<'env> PatternInstantiator<'env> {
     fn instantiate_pattern(&mut self, template: &AnyValue) -> io::Result<P::Pattern> {
-        Ok(match template.value() {
-            Value::Boolean(_) |
-            Value::Double(_) |
-            Value::SignedInteger(_) |
-            Value::String(_) |
-            Value::ByteString(_) |
-            Value::Embedded(_) =>
-                dlit(template.clone()),
-
-            Value::Symbol(s) => match analyze(s) {
+        Ok(match template.value_class() {
+            ValueClass::Atomic(AtomClass::Symbol) => match analyze(template.as_symbol().unwrap().as_ref()) {
                 Symbolic::Discard => discard(),
                 Symbolic::Binder(s) => {
                     self.binding_names.push(s);
@@ -282,52 +279,61 @@ impl<'env> PatternInstantiator<'env> {
                 Symbolic::Reference(s) =>
                     dlit(self.env.lookup(&s, "pattern-template variable")?.clone()),
                 Symbolic::Literal(s) | Symbolic::Bare(s) =>
-                    dlit(Value::Symbol(s).wrap()),
+                    dlit(Value::symbol(s)),
             },
 
-            Value::Record(r) => match parse_attenuation(r)? {
-                Some((base_name, caveats)) =>
-                    dlit(self.env.eval_attenuation(base_name, caveats)?),
-                None => match self.maybe_binder_with_pattern(r)? {
-                    Some(pat) => pat,
-                    None => {
-                        let label = self.instantiate_pattern(r.label())?;
-                        let entries = r.fields().iter().enumerate()
-                        .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(p)?)))
-                            .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?;
-                        P::Pattern::Group {
-                            type_: Box::new(P::GroupType::Rec {
-                                label: drop_literal(&label)
-                                    .ok_or(bad_instruction("Record pattern must have literal label"))?,
-                            }),
-                            entries,
+            ValueClass::Atomic(_) | ValueClass::Embedded =>
+                dlit(template.clone()),
+
+            ValueClass::Compound(CompoundClass::Record) => {
+                let r = template.collect_record().unwrap();
+                match parse_attenuation(&r)? {
+                    Some((base_name, caveats)) =>
+                        dlit(self.env.eval_attenuation(base_name, caveats)?),
+                    None => match self.maybe_binder_with_pattern(&r)? {
+                        Some(pat) => pat,
+                        None => {
+                            let label = self.instantiate_pattern(&r.label())?;
+                            let entries = r.iter().enumerate()
+                                .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(&p)?)))
+                                .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?;
+                            P::Pattern::Group {
+                                type_: Box::new(P::GroupType::Rec {
+                                    label: drop_literal(&label)
+                                        .ok_or(bad_instruction("Record pattern must have literal label"))?,
+                                }),
+                                entries,
+                            }
                         }
                     }
                 }
-            },
-            Value::Sequence(v) =>
+            }
+
+            ValueClass::Compound(CompoundClass::Sequence) =>
                 P::Pattern::Group {
                     type_: Box::new(P::GroupType::Arr),
-                    entries: v.iter().enumerate()
-                        .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(p)?)))
+                    entries: template.iter().enumerate()
+                        .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(&p)?)))
                         .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
                 },
-            Value::Set(_) =>
+
+            ValueClass::Compound(CompoundClass::Set) =>
                 Err(bad_instruction(&format!("Sets not permitted in patterns: {:?}", template)))?,
-            Value::Dictionary(v) =>
+
+            ValueClass::Compound(CompoundClass::Dictionary) =>
                 P::Pattern::Group {
                     type_: Box::new(P::GroupType::Dict),
-                    entries: v.iter()
-                        .map(|(a, b)| Ok((a.clone(), self.instantiate_pattern(b)?)))
+                    entries: template.entries()
+                        .map(|(a, b)| Ok((a.clone(), self.instantiate_pattern(&b)?)))
                         .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
                 },
         })
     }
 
     fn maybe_binder_with_pattern(&mut self, r: &Record<AnyValue>) -> io::Result<Option<P::Pattern>> {
-        match r.label().value().as_symbol().map(|s| analyze(&s)) {
-            Some(Symbolic::Binder(formal)) if r.fields().len() == 1 => {
-                let pattern = self.instantiate_pattern(&r.fields()[0])?;
+        match r.label().as_symbol().map(|s| analyze(s.as_ref())) {
+            Some(Symbolic::Binder(formal)) if r.len() == 1 => {
+                let pattern = self.instantiate_pattern(&r[0])?;
                 self.binding_names.push(formal);
                 Ok(Some(P::Pattern::Bind { pattern: Box::new(pattern) }))
             },
@@ -337,8 +343,8 @@ impl<'env> PatternInstantiator<'env> {
 }
 
 fn ensure_string(v: &AnyValue) -> io::Result<String> {
-    match v.value().as_string() {
-        Some(s) => Ok(s.clone()),
+    match v.as_string() {
+        Some(s) => Ok(s.into_owned()),
         None => TextWriter::encode(&mut NoEmbeddedDomainCodec, v)
     }
 }
@@ -358,13 +364,13 @@ impl Env {
         }
     }
 
-    fn lookup_target(&self, s: &str) -> io::Result<Arc<Cap>> {
-        Ok(self.lookup(s, "target variable")?.value().to_embedded()?.clone())
+    fn lookup_target(&self, s: &str) -> Result<Arc<Cap>, ActorError> {
+        Ok(self.lookup(s, "target variable")?.to_embedded()?.into_owned())
     }
 
     fn lookup(&self, s: &str, what: &'static str) -> io::Result<AnyValue> {
         if s == "." {
-            Ok(AnyValue::new(self.bindings.iter().map(|(k, v)| (AnyValue::symbol(k), v.clone()))
+            Ok(AnyValue::new(self.bindings.iter().map(|(k, v)| (AnyValue::symbol(k.clone()), v.clone()))
                              .collect::<Map<AnyValue, AnyValue>>()))
         } else {
             Ok(self.bindings.get(s).ok_or_else(
@@ -385,42 +391,47 @@ impl Env {
     }
 
     fn instantiate_value(&self, template: &AnyValue) -> io::Result<AnyValue> {
-        Ok(match template.value() {
-            Value::Boolean(_) |
-            Value::Double(_) |
-            Value::SignedInteger(_) |
-            Value::String(_) |
-            Value::ByteString(_) |
-            Value::Embedded(_) =>
-                template.clone(),
-
-            Value::Symbol(s) => match analyze(s) {
+        Ok(match template.value_class() {
+            ValueClass::Atomic(AtomClass::Symbol) => match analyze(template.as_symbol().unwrap().as_ref()) {
                 Symbolic::Binder(_) | Symbolic::Discard =>
                     Err(bad_instruction(&format!(
                         "Invalid use of wildcard in template: {:?}", template)))?,
                 Symbolic::Reference(s) =>
                     self.lookup(&s, "template variable")?,
                 Symbolic::Literal(s) | Symbolic::Bare(s) =>
-                    Value::Symbol(s).wrap(),
+                    Value::symbol(s),
             },
 
-            Value::Record(r) => match parse_attenuation(r)? {
-                Some((base_name, caveats)) =>
-                    self.eval_attenuation(base_name, caveats)?,
-                None =>
-                    Value::Record(Record(r.fields_vec().iter().map(|a| self.instantiate_value(a))
-                                         .collect::<Result<Vec<_>, _>>()?)).wrap(),
-            },
-            Value::Sequence(v) =>
-                Value::Sequence(v.iter().map(|a| self.instantiate_value(a))
-                                .collect::<Result<Vec<_>, _>>()?).wrap(),
-            Value::Set(v) =>
-                Value::Set(v.iter().map(|a| self.instantiate_value(a))
-                           .collect::<Result<Set<_>, _>>()?).wrap(),
-            Value::Dictionary(v) =>
-                Value::Dictionary(v.iter().map(|(a,b)| Ok((self.instantiate_value(a)?,
-                                                           self.instantiate_value(b)?)))
-                                  .collect::<io::Result<Map<_, _>>>()?).wrap(),
+            ValueClass::Atomic(_) | ValueClass::Embedded =>
+                template.clone(),
+
+            ValueClass::Compound(CompoundClass::Record) => {
+                let r = template.collect_record().unwrap();
+                match parse_attenuation(&r)? {
+                    Some((base_name, caveats)) =>
+                        self.eval_attenuation(base_name, caveats)?,
+                    None => {
+                        let mut v = r.into_owned()._into_vec();
+                        for f in v.iter_mut() {
+                            *f = self.instantiate_value(f)?;
+                        }
+                        Value::new(Record::_from_vec(v))
+                    }
+                }
+            }
+
+            ValueClass::Compound(CompoundClass::Sequence) =>
+                Value::new(template.iter().map(|a| self.instantiate_value(&a))
+                           .collect::<Result<Vec<_>, _>>()?),
+
+            ValueClass::Compound(CompoundClass::Set) =>
+                Value::new(template.iter().map(|a| self.instantiate_value(&a))
+                           .collect::<Result<Set<_>, _>>()?),
+
+            ValueClass::Compound(CompoundClass::Dictionary) =>
+                Value::new(template.entries().map(|(a,b)| Ok((self.instantiate_value(&a)?,
+                                                              self.instantiate_value(&b)?)))
+                           .collect::<io::Result<Map<_, _>>>()?),
         })
     }
 
@@ -436,7 +447,7 @@ impl Env {
     }
 
     pub fn extend(&mut self, binding_names: &Vec<String>, captures: Vec<AnyValue>) {
-        for (k, v) in binding_names.iter().zip(captures) {
+        for (k, v) in binding_names.as_slice().iter().zip(captures) {
             self.bindings.insert(k.clone(), v);
         }
     }
@@ -447,13 +458,13 @@ impl Env {
         caveats: Vec<CaveatTemplate>,
     ) -> io::Result<AnyValue> {
         let base_value = self.lookup(&base_name, "attenuation-base variable")?;
-        match base_value.value().as_embedded() {
+        match base_value.as_embedded() {
             None => Err(bad_instruction(&format!(
                 "Value to be attenuated is {:?} but must be capability",
                 base_value))),
             Some(base_cap) => {
                 match base_cap.attenuate(&caveats.iter().map(|c| self.instantiate_caveat(c)).collect::<Result<Vec<_>, _>>()?) {
-                    Ok(derived_cap) => Ok(AnyValue::domain(derived_cap)),
+                    Ok(derived_cap) => Ok(AnyValue::embedded(derived_cap)),
                     Err(caveat_error) =>
                         Err(bad_instruction(&format!("Attenuation of {:?} failed: {:?}",
                                                      base_value,
@@ -470,15 +481,15 @@ impl Env {
         captures: AnyValue,
         body: &Instruction,
     ) -> ActorResult {
-        if let Some(captures) = captures.value_owned().into_sequence() {
+        if let Some(captures) = captures.collect_sequence() {
             let mut env = self.clone();
-            env.extend(binding_names, captures);
+            env.extend(binding_names, captures.into_owned());
             env.safe_eval(t, body);
         }
         Ok(())
     }
 
-    pub fn eval(&mut self, t: &mut Activation, i: &Instruction) -> io::Result<()> {
+    pub fn eval(&mut self, t: &mut Activation, i: &Instruction) -> Result<(), ActorError> {
         match i {
             Instruction::Assert { target, template } => {
                 self.lookup_target(target)?.assert(t, &(), &self.instantiate_value(template)?);
@@ -550,9 +561,9 @@ impl Env {
     pub fn eval_expr(&self, t: &mut Activation, e: &Expr) -> io::Result<AnyValue> {
         match e {
             Expr::Template { template } => self.instantiate_value(template),
-            Expr::Dataspace => Ok(AnyValue::domain(Cap::new(&t.create(Dataspace::new(None))))),
+            Expr::Dataspace => Ok(AnyValue::embedded(Cap::new(&t.create(Dataspace::new(None))))),
             Expr::Timestamp => Ok(AnyValue::new(chrono::Utc::now().to_rfc3339())),
-            Expr::Facet => Ok(AnyValue::domain(Cap::new(&t.create(FacetHandle::new())))),
+            Expr::Facet => Ok(AnyValue::embedded(Cap::new(&t.create(FacetHandle::new())))),
             Expr::ScriptDir => {
                 let p = match self.path.parent().map(|p| p.to_string_lossy()) {
                     Some(p) => if p == Cow::Borrowed("") { Cow::Borrowed(".") } else { p },
@@ -568,9 +579,9 @@ impl Env {
             Expr::Join { separator, pieces } => {
                 let separator = ensure_string(&self.eval_expr(t, separator)?)?;
                 let pieces = self.eval_expr(t, pieces)?;
-                let pieces: Cow<'_, [AnyValue]> = match pieces.value().as_sequence() {
-                    Some(vs) => vs.into(),
-                    None => vec![pieces].into(),
+                let pieces = match pieces.collect_sequence() {
+                    Some(vs) => vs.into_owned(),
+                    None => vec![pieces],
                 };
                 let vs = pieces.iter().map(|e| ensure_string(&e)).collect::<Result<Vec<String>, _>>()?;
                 Ok(AnyValue::new(vs.join(&separator)))
@@ -631,19 +642,11 @@ impl Env {
         template: &AnyValue,
     ) -> io::Result<sturdy::Template> {
         let find_bound = |s: &str| {
-            binding_names.iter().enumerate().find(|(_i, n)| *n == s).map(|(i, _n)| i)
+            binding_names.as_slice().iter().enumerate().find(|(_i, n)| *n == s).map(|(i, _n)| i)
         };
 
-        Ok(match template.value() {
-            Value::Boolean(_) |
-            Value::Double(_) |
-            Value::SignedInteger(_) |
-            Value::String(_) |
-            Value::ByteString(_) |
-            Value::Embedded(_) =>
-                tlit(template.clone()),
-
-            Value::Symbol(s) => match analyze(s) {
+        Ok(match template.value_class() {
+            ValueClass::Atomic(AtomClass::Symbol) => match analyze(template.as_symbol().unwrap().as_ref()) {
                 Symbolic::Binder(_) | Symbolic::Discard =>
                     Err(bad_instruction(&format!(
                         "Invalid use of wildcard in template: {:?}", template)))?,
@@ -655,50 +658,59 @@ impl Env {
                             tlit(self.lookup(&s, "attenuation-template variable")?),
                     },
                 Symbolic::Literal(s) | Symbolic::Bare(s) =>
-                    tlit(Value::Symbol(s).wrap()),
+                    tlit(Value::symbol(s)),
             },
 
-            Value::Record(r) => match parse_attenuation(r)? {
-                Some((base_name, caveats)) =>
-                    match find_bound(&base_name) {
-                        Some(i) =>
-                            sturdy::Template::TAttenuate(Box::new(sturdy::TAttenuate {
-                                template: sturdy::Template::TRef(Box::new(sturdy::TRef {
-                                    binding: i.into(),
+            ValueClass::Atomic(_) | ValueClass::Embedded =>
+                tlit(template.clone()),
+
+            ValueClass::Compound(CompoundClass::Record) => {
+                let r = template.collect_record().unwrap();
+                match parse_attenuation(&r)? {
+                    Some((base_name, caveats)) =>
+                        match find_bound(&base_name) {
+                            Some(i) =>
+                                sturdy::Template::TAttenuate(Box::new(sturdy::TAttenuate {
+                                    template: sturdy::Template::TRef(Box::new(sturdy::TRef {
+                                        binding: i.into(),
+                                    })),
+                                    attenuation: caveats.iter()
+                                        .map(|c| self.instantiate_caveat(c))
+                                        .collect::<Result<Vec<_>, _>>()?,
                                 })),
-                                attenuation: caveats.iter()
-                                    .map(|c| self.instantiate_caveat(c))
-                                    .collect::<Result<Vec<_>, _>>()?,
-                            })),
-                        None =>
-                            tlit(self.eval_attenuation(base_name, caveats)?),
-                    },
-                None => {
-                    // TODO: properly consolidate constant templates into literals.
-                    match self.instantiate_template(binding_names, r.label())? {
-                        sturdy::Template::Lit(b) =>
-                            sturdy::Template::TCompound(Box::new(sturdy::TCompound::Rec {
-                                label: b.value,
-                                fields: r.fields().iter()
-                                    .map(|t| self.instantiate_template(binding_names, t))
-                                    .collect::<io::Result<Vec<sturdy::Template>>>()?,
-                            })),
-                        _ => Err(bad_instruction("Record template must have literal label"))?,
+                            None =>
+                                tlit(self.eval_attenuation(base_name, caveats)?),
+                        },
+                    None => {
+                        // TODO: properly consolidate constant templates into literals.
+                        match self.instantiate_template(binding_names, &r.label())? {
+                            sturdy::Template::Lit(b) =>
+                                sturdy::Template::TCompound(Box::new(sturdy::TCompound::Rec {
+                                    label: b.value,
+                                    fields: r.iter()
+                                        .map(|t| self.instantiate_template(binding_names, &t))
+                                        .collect::<io::Result<Vec<sturdy::Template>>>()?,
+                                })),
+                            _ => Err(bad_instruction("Record template must have literal label"))?,
+                        }
                     }
                 }
-            },
-            Value::Sequence(v) =>
+            }
+
+            ValueClass::Compound(CompoundClass::Sequence) =>
                 sturdy::Template::TCompound(Box::new(sturdy::TCompound::Arr {
-                    items: v.iter()
-                        .map(|p| self.instantiate_template(binding_names, p))
+                    items: template.iter()
+                        .map(|p| self.instantiate_template(binding_names, &p))
                         .collect::<io::Result<Vec<sturdy::Template>>>()?,
                 })),
-            Value::Set(_) =>
+
+            ValueClass::Compound(CompoundClass::Set) =>
                 Err(bad_instruction(&format!("Sets not permitted in templates: {:?}", template)))?,
-            Value::Dictionary(v) =>
+
+            ValueClass::Compound(CompoundClass::Dictionary) =>
                 sturdy::Template::TCompound(Box::new(sturdy::TCompound::Dict {
-                    entries: v.iter()
-                        .map(|(a, b)| Ok((a.clone(), self.instantiate_template(binding_names, b)?)))
+                    entries: template.entries()
+                        .map(|(a, b)| Ok((a.clone(), self.instantiate_template(binding_names, &b)?)))
                         .collect::<io::Result<Map<_, sturdy::Template>>>()?,
                 })),
         })
@@ -742,8 +754,8 @@ impl<'t> Parser<'t> {
         }
     }
 
-    fn peek(&mut self) -> &'t Value<AnyValue> {
-        self.tokens[0].value()
+    fn peek(&mut self) -> &'t AnyValue {
+        &self.tokens[0]
     }
 
     fn shift(&mut self) -> AnyValue {
@@ -781,16 +793,16 @@ impl<'t> Parser<'t> {
             });
         }
 
-        if let Some(tokens) = self.peek().as_sequence() {
+        if let Some(tokens) = self.peek().collect_sequence() {
             self.drop();
-            let mut inner_parser = Parser::new(tokens);
+            let mut inner_parser = Parser::new(tokens.as_ref());
             let instructions = inner_parser.parse_all(target, outer_target);
             self.errors.extend(inner_parser.errors);
             return Parsed::Value(Instruction::Sequence { instructions });
         }
 
         if let Some(s) = self.peek().as_symbol() {
-            match analyze(s) {
+            match analyze(s.as_ref()) {
                 Symbolic::Binder(s) => {
                     self.drop();
 
@@ -843,7 +855,7 @@ impl<'t> Parser<'t> {
                 Symbolic::Bare(s) => {
                     if s == "let" {
                         self.drop();
-                        if self.len() >= 2 && self.tokens[1].value().as_symbol().map(String::as_str) == Some("=")
+                        if self.len() >= 2 && self.tokens[1].as_symbol().map(|s| s.as_ref() == "=") == Some(true)
                         {
                             let pattern_template = self.shift();
                             self.drop();

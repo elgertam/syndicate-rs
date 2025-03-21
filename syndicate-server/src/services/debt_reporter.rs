@@ -5,8 +5,7 @@ use std::sync::atomic::Ordering;
 
 use syndicate::actor::*;
 use syndicate::enclose;
-use syndicate::preserves::rec;
-use syndicate::preserves::value::NestedValue;
+use syndicate_macros::template;
 
 use crate::language::language;
 use crate::lifecycle;
@@ -17,8 +16,8 @@ use syndicate_macros::during;
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("debt_reporter_listener")), move |t| {
         Ok(during!(t, ds, language(), <run-service $spec: DebtReporter>, |t: &mut Activation| {
-            t.spawn_link(Some(rec![AnyValue::symbol("debt_reporter"), language().unparse(&spec)]),
-                         enclose!((ds) |t| run(t, ds, spec)));
+            let spec_v = language().unparse(&spec);
+            t.spawn_link(Some(template!("<debt_reporter =spec_v>")), enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }))
     });

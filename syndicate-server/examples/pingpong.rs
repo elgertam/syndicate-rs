@@ -10,8 +10,10 @@ use syndicate::language;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
-use syndicate::value::NestedValue;
-use syndicate::value::Value;
+
+use syndicate::preserves::ExpectedKind;
+use syndicate::preserves::Record;
+use syndicate::preserves::Value;
 
 use tokio::net::TcpStream;
 
@@ -52,10 +54,7 @@ fn now() -> u64 {
 }
 
 fn simple_record2(label: &str, v1: AnyValue, v2: AnyValue) -> AnyValue {
-    let mut r = Value::simple_record(label, 2);
-    r.fields_vec_mut().push(v1);
-    r.fields_vec_mut().push(v2);
-    r.finish().wrap()
+    Value::new(Record::_from_vec(vec![Value::symbol(label.to_string()), v1, v2]))
 }
 
 fn report_latencies(rtt_ns_samples: &Vec<u64>) {
@@ -115,7 +114,7 @@ async fn main() -> ActorResult {
                 Cap::new(&t.create(
                     syndicate::entity(())
                         .on_message(move |(), t, m: AnyValue| {
-                            match m.value().as_boolean() {
+                            match m.as_boolean() {
                                 Some(_) => {
                                     tracing::info!("{:?} turns, {:?} events in the last second",
                                                    turn_counter,
@@ -125,7 +124,7 @@ async fn main() -> ActorResult {
                                 }
                                 None => {
                                     event_counter += 1;
-                                    let bindings = m.value().to_sequence()?;
+                                    let bindings = m.collect_sequence().ok_or(ExpectedKind::Sequence)?;
                                     let timestamp = &bindings[0];
                                     let padding = &bindings[1];
 
@@ -141,7 +140,7 @@ async fn main() -> ActorResult {
                                                 *current_reply.lock().expect("unpoisoned") = None;
                                                 Ok(())
                                             }));
-                                            let rtt_ns = now() - timestamp.value().to_u64()?;
+                                            let rtt_ns = now() - timestamp.to_u64()??;
                                             rtt_ns_samples[rtt_batch_count] = rtt_ns;
                                             rtt_batch_count += 1;
 
@@ -152,7 +151,7 @@ async fn main() -> ActorResult {
                                             }
 
                                             *g = Some(simple_record2(&send_label,
-                                                                     Value::from(now()).wrap(),
+                                                                     Value::new(now()),
                                                                      padding.clone()));
                                         }
                                         ds.message(t, &(), g.as_ref().expect("some reply"));
@@ -182,10 +181,10 @@ async fn main() -> ActorResult {
                 let action_count = c.action_count;
                 let account = Arc::clone(t.account());
                 t.linked_task(Some(AnyValue::symbol("boot-ping")), async move {
-                    let padding = AnyValue::bytestring(vec![0; bytes_padding]);
+                    let padding = AnyValue::bytes(vec![0; bytes_padding]);
                     for _ in 0..turn_count {
                         let current_rec = simple_record2(send_label,
-                                                         Value::from(now()).wrap(),
+                                                         Value::new(now()),
                                                          padding.clone());
                         facet.activate(&account, None, |t| {
                             for _ in 0..action_count {

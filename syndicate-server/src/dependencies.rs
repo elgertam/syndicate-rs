@@ -4,20 +4,20 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
-use syndicate::preserves::rec;
 use syndicate::schemas::service;
-use syndicate::value::NestedValue;
 
 use crate::counter;
 use crate::language::language;
 
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 pub fn boot(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("dependencies_listener")), move |t| {
         Ok(during!(t, ds, language(), <require-service $spec>, |t: &mut Activation| {
             tracing::debug!(?spec, "tracking dependencies");
-            t.spawn_link(Some(rec![AnyValue::symbol("dependencies"), language().unparse(&spec)]),
+            let spec_v = language().unparse(&spec);
+            t.spawn_link(Some(template!("<dependencies =spec_v>")),
                          enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }))

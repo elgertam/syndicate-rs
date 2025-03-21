@@ -7,11 +7,9 @@ use std::sync::Arc;
 use syndicate::actor::*;
 use syndicate::enclose;
 use syndicate::error::Error;
-use syndicate::preserves::rec;
-use syndicate::preserves::value::Map;
-use syndicate::preserves::value::NestedValue;
+use syndicate::preserves::Map;
+use syndicate::preserves::signed_integer::SignedInteger;
 use syndicate::schemas::http;
-use syndicate::value::signed_integer::SignedInteger;
 
 use crate::language::language;
 use crate::lifecycle;
@@ -19,6 +17,7 @@ use crate::schemas::internal_services::HttpRouter;
 use crate::schemas::internal_services::HttpStaticFileServer;
 
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 lazy_static::lazy_static! {
     pub static ref MIME_TABLE: Map<String, String> = load_mime_table(&mime_table_path()).unwrap_or_default();
@@ -48,13 +47,14 @@ pub fn load_mime_table(path: &str) -> Result<Map<String, String>, std::io::Error
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("http_router_listener")), move |t| {
-        enclose!((ds) during!(t, ds, language(), <run-service $spec: HttpRouter::<AnyValue>>, |t: &mut Activation| {
-            t.spawn_link(Some(rec![AnyValue::symbol("http_router"), language().unparse(&spec)]),
-                         enclose!((ds) |t| run(t, ds, spec)));
+        enclose!((ds) during!(t, ds, language(), <run-service $spec: HttpRouter::<Arc<Cap>>>, |t: &mut Activation| {
+            let spec_v = language().unparse(&spec);
+            t.spawn_link(Some(template!("<http_router =spec_v>")), enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }));
         enclose!((ds) during!(t, ds, language(), <run-service $spec: HttpStaticFileServer>, |t: &mut Activation| {
-            t.spawn_link(Some(rec![AnyValue::symbol("http_static_file_server"), language().unparse(&spec)]),
+            let spec_v = language().unparse(&spec);
+            t.spawn_link(Some(template!("<http_static_file_server =spec_v>")),
                          enclose!((ds) |t| run_static_file_server(t, ds, spec)));
             Ok(())
         }));
@@ -91,11 +91,11 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
             let port2 = port.clone();
             during!(t, httpd, language(), <http-bind $host #(&port2) $method $path $handler>, |t: &mut Activation| {
                 tracing::debug!("+HTTP binding {:?} {:?} {:?} {:?} {:?}", host, port, method, path, handler);
-                let port = port.value().to_signedinteger()?;
+                let port = match port.to_signed_integer() { Ok(v) => v.into_owned(), Err(_) => return Ok(()) };
                 let host = language().parse::<http::HostPattern>(&host)?;
                 let path = language().parse::<http::PathPattern>(&path)?;
                 let method = language().parse::<http::MethodPattern>(&method)?;
-                let handler_cap = handler.value().to_embedded()?.clone();
+                let handler_cap = match handler.to_embedded() { Ok(v) => v.into_owned(), Err(_) => return Ok(()) };
                 let handler_terminated = t.named_field("handler-terminated", false);
                 t.get_mut(&routes)
                     .entry(port.clone()).or_default()
@@ -142,7 +142,8 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
 
     during!(t, httpd, language(), <request $req $res>, |t: &mut Activation| {
         let req = match language().parse::<http::HttpRequest>(&req) { Ok(v) => v, Err(_) => return Ok(()) };
-        let res = match res.value().to_embedded() { Ok(v) => v, Err(_) => return Ok(()) };
+        let res = match res.to_embedded() { Ok(v) => v, Err(_) => return Ok(()) };
+        let res = res.as_ref();
 
         tracing::trace!("Looking up handler for {:#?} in {:#?}", &req, &t.get(&routes));
 
@@ -334,8 +335,8 @@ impl HttpStaticFileServer {
     }
 }
 
-impl Entity<http::HttpContext<AnyValue>> for HttpStaticFileServer {
-    fn assert(&mut self, t: &mut Activation, assertion: http::HttpContext<AnyValue>, _handle: Handle) -> ActorResult {
+impl Entity<http::HttpContext<Arc<Cap>>> for HttpStaticFileServer {
+    fn assert(&mut self, t: &mut Activation, assertion: http::HttpContext<Arc<Cap>>, _handle: Handle) -> ActorResult {
         let http::HttpContext { req, res } = assertion;
         if let Err(e) = self.respond(t, &req, &res) {
             tracing::error!(?req, error=?e);
@@ -349,7 +350,7 @@ fn run_static_file_server(t: &mut Activation, ds: Arc<Cap>, spec: HttpStaticFile
     let object = Cap::guard(&language().syndicate, t.create(spec.clone()));
     ds.assert(t, language(), &syndicate::schemas::service::ServiceObject {
         service_name: language().unparse(&spec),
-        object: AnyValue::domain(object),
+        object: AnyValue::embedded(object),
     });
     Ok(())
 }

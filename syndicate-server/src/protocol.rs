@@ -14,7 +14,6 @@ use syndicate::error::Error;
 use syndicate::error::error;
 use syndicate::relay;
 use syndicate::trace;
-use syndicate::value::NestedValue;
 
 use tokio::net::TcpStream;
 

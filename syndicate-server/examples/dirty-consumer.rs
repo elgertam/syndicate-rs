@@ -10,11 +10,11 @@ use syndicate::schemas::Language;
 use syndicate::schemas::protocol as P;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
-use syndicate::value::BinarySource;
-use syndicate::value::BytesBinarySource;
-use syndicate::value::IOValue;
-use syndicate::value::PackedWriter;
-use syndicate::value::Reader;
+use syndicate::preserves::BinarySource;
+use syndicate::preserves::BytesBinarySource;
+use syndicate::preserves::IOValue;
+use syndicate::preserves::PackedWriter;
+use syndicate::preserves::Reader;
 
 use std::io::Read;
 use std::io::Write;
@@ -47,13 +47,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pattern: syndicate_macros::pattern!{<Says $ $>},
                         observer: iolang.unparse(&sturdy::WireRef::Mine {
                             oid: Box::new(sturdy::Oid(2.into())),
-                        }),
+                        }).into(),
                     })),
                     handle: P::Handle(2.into()),
                 })),
             }
         ]);
-        stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&turn))?)?;
+        stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&turn).into())?)?;
     }
 
     let mut buf = [0; 131072];
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         let mut src = BytesBinarySource::new(&buf);
-        src.packed_iovalues().demand_next(false)?;
+        src.packed().try_next_iovalue(false)?;
         src.index
     };
 

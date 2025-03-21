@@ -8,9 +8,10 @@ use structopt::StructOpt;
 
 use syndicate::schemas::Language;
 use syndicate::schemas::protocol as P;
-use syndicate::value::IOValue;
-use syndicate::value::PackedWriter;
-use syndicate::value::Value;
+use syndicate::preserves::IOValue;
+use syndicate::preserves::PackedWriter;
+use syndicate::preserves::Record;
+use syndicate::preserves::Value;
 
 use std::io::Write;
 use std::net::TcpStream;
@@ -30,11 +31,8 @@ pub struct Config {
 }
 
 #[inline]
-fn says(who: IOValue, what: IOValue) -> IOValue {
-    let mut r = Value::simple_record("Says", 2);
-    r.fields_vec_mut().push(who);
-    r.fields_vec_mut().push(what);
-    r.finish().wrap()
+fn says(who: IOValue, what: IOValue) -> Value<IOValue> {
+    Value::new(Record::_from_vec(vec![Value::symbol("Says"), who.into(), what.into()]))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,13 +41,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = TcpStream::connect("127.0.0.1:9001")?;
     dirty::dirty_resolve(&mut stream, &config.dataspace)?;
 
-    let padding: IOValue = Value::ByteString(vec![0; config.bytes_padding]).wrap();
+    let padding = IOValue::bytes(vec![0; config.bytes_padding]);
     let mut events = Vec::new();
     for _ in 0 .. config.action_count {
         events.push(P::TurnEvent::<IOValue> {
             oid: P::Oid(1.into()),
             event: P::Event::Message(Box::new(P::Message {
-                body: P::Assertion(says(Value::from("producer").wrap(), padding.clone())),
+                body: P::Assertion(says(IOValue::new("producer"), padding.clone())),
             })),
         });
     }
@@ -58,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf: Vec<u8> = vec![];
     let iolang = Language::<IOValue>::default();
     while buf.len() < 16384 {
-        buf.extend(&PackedWriter::encode_iovalue(&iolang.unparse(&turn))?);
+        buf.extend(&PackedWriter::encode_iovalue(&iolang.unparse(&turn).into())?);
     }
 
     loop {

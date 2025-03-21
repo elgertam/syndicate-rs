@@ -1,10 +1,8 @@
 use structopt::StructOpt;
 
 use syndicate::actor::*;
-use syndicate::preserves::rec;
 use syndicate::relay;
 use syndicate::sturdy;
-use syndicate::value::NestedValue;
 
 use tokio::net::TcpStream;
 
@@ -25,7 +23,8 @@ async fn main() -> ActorResult {
             let facet = t.facet_ref();
             let account = Account::new(None, None);
             t.linked_task(Some(AnyValue::symbol("sender")), async move {
-                let presence = rec![AnyValue::symbol("Present"), AnyValue::new(std::process::id())];
+                let presence = AnyValue::record(AnyValue::symbol("Present"), vec![
+                    AnyValue::new(std::process::id())]);
                 loop {
                     let mut handle = None;
                     facet.activate(&account, None, |t| {

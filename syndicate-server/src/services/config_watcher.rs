@@ -3,8 +3,6 @@ use notify::Watcher;
 use notify::RecursiveMode;
 use notify::watcher;
 
-use syndicate::preserves::rec;
-
 use std::fs;
 use std::future;
 use std::io;
@@ -19,13 +17,12 @@ use syndicate::error::Error;
 use syndicate::enclose;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::trace;
-use syndicate::value::BinarySource;
-use syndicate::value::BytesBinarySource;
-use syndicate::value::Map;
-use syndicate::value::NestedValue;
-use syndicate::value::NoEmbeddedDomainCodec;
-use syndicate::value::Reader;
-use syndicate::value::ViaCodec;
+use syndicate::preserves::BinarySource;
+use syndicate::preserves::BytesBinarySource;
+use syndicate::preserves::Map;
+use syndicate::preserves::NoEmbeddedDomainCodec;
+use syndicate::preserves::Reader;
+use syndicate::preserves::ReaderResult;
 
 use crate::language::language;
 use crate::lifecycle;
@@ -33,13 +30,15 @@ use crate::schemas::internal_services;
 use crate::script;
 
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("config_watcher")), move |t| {
-        Ok(during!(t, config_ds, language(), <run-service $spec: internal_services::ConfigWatcher::<AnyValue>>, |t| {
+        Ok(during!(t, config_ds, language(), <run-service $spec: internal_services::ConfigWatcher::<Arc<Cap>>>, |t| {
+            let path_v = AnyValue::new(spec.path.clone());
             Supervisor::start(
                 t,
-                Some(rec![AnyValue::symbol("config"), AnyValue::new(spec.path.clone())]),
+                Some(template!("<config =path_v>")),
                 SupervisorConfiguration::default(),
                 enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
                 enclose!((config_ds) move |t| enclose!((config_ds, spec) run(t, config_ds, spec))))
@@ -54,13 +53,11 @@ fn convert_notify_error(e: notify::Error) -> Error {
 fn process_existing_file(
     t: &mut Activation,
     mut env: script::Env,
-) -> io::Result<Option<FacetId>> {
+) -> ReaderResult<Option<FacetId>> {
     let mut contents = fs::read(&env.path)?;
     contents.append(&mut Vec::from("\n[]".as_bytes())); // improved ergonomics of trailing comments
-    let tokens: Vec<AnyValue> = BytesBinarySource::new(&contents)
-        .text::<AnyValue, _>(ViaCodec::new(NoEmbeddedDomainCodec))
-        .configured(true)
-        .collect::<Result<Vec<_>, _>>()?;
+    let tokens: Vec<AnyValue> =
+        BytesBinarySource::new(&contents).text().read_all(true, &mut NoEmbeddedDomainCodec)?;
     match script::Parser::new(&tokens).parse_top("config") {
         Ok(Some(i)) => Ok(Some(t.facet(|t| {
             tracing::debug!("Instructions for file {:?}: {:#?}", &env.path, &i);
@@ -80,7 +77,7 @@ fn process_existing_file(
 fn process_path(
     t: &mut Activation,
     env: script::Env,
-) -> io::Result<Option<FacetId>> {
+) -> ReaderResult<Option<FacetId>> {
     match fs::metadata(&env.path) {
         Ok(md) => if md.is_file() {
             process_existing_file(t, env)

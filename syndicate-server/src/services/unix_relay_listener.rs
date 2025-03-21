@@ -7,8 +7,6 @@ use std::sync::Arc;
 use syndicate::actor::*;
 use syndicate::enclose;
 use syndicate::error::Error;
-use syndicate::preserves::rec;
-use syndicate::preserves::value::NestedValue;
 use syndicate::relay;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::trace;
@@ -22,13 +20,15 @@ use crate::protocol::run_connection;
 use crate::schemas::internal_services::UnixRelayListener;
 
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("unix_relay_listener")), move |t| {
-        Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener::<AnyValue>>, |t| {
+        Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener::<Arc<Cap>>>, |t| {
+            let spec_v = language().unparse(&spec);
             Supervisor::start(
                 t,
-                Some(rec![AnyValue::symbol("relay"), language().unparse(&spec)]),
+                Some(template!("<relay =spec_v>")),
                 SupervisorConfiguration::default(),
                 enclose!((ds, spec) lifecycle::updater(ds, spec)),
                 enclose!((ds) move |t| enclose!((ds, spec) run(t, ds, spec))))
@@ -62,9 +62,9 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
             let (stream, _addr) = listener.accept().await?;
             let peer = stream.peer_cred()?;
             let gatekeeper = spec.gatekeeper.clone();
-            let name = Some(rec![AnyValue::symbol("unix"),
-                                 AnyValue::new(peer.pid().unwrap_or(-1)),
-                                 AnyValue::new(peer.uid())]);
+            let peer_pid = AnyValue::new(peer.pid().unwrap_or(-1));
+            let peer_uid = AnyValue::new(peer.uid());
+            let name = Some(template!("<unix =peer_pid =peer_uid>"));
             let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("connect"));
             let account = Account::new(name.clone(), trace_collector.clone());
             if !facet.activate(

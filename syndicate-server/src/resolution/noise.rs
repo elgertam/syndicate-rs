@@ -15,13 +15,14 @@ use syndicate::relay::Mutex;
 use syndicate::relay::TunnelRelay;
 use syndicate::rpc;
 use syndicate::trace::TurnCause;
-use syndicate::value::NestedValue;
-use syndicate::value::NoEmbeddedDomainCodec;
-use syndicate::value::PackedWriter;
 
 use syndicate::enclose;
 use syndicate_macros::during;
 use syndicate_macros::pattern;
+
+use syndicate::preserves::ExpectedKind;
+use syndicate::preserves::NoEmbeddedDomainCodec;
+use syndicate::preserves::PackedWriter;
 
 use syndicate::schemas::dataspace;
 use syndicate::schemas::gatekeeper;
@@ -32,15 +33,15 @@ use syndicate::schemas::sturdy;
 use crate::language;
 
 fn noise_step_type() -> String {
-    language().unparse(&noise::NoiseStepType).value().to_symbol().unwrap().clone()
+    language().unparse(&noise::NoiseStepType).to_symbol().unwrap().into_owned()
 }
 
 pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
     during!(t, ds, language(), <bind <noise $desc> $target $observer>, |t: &mut Activation| {
         t.spawn_link(None, move |t| {
-            target.value().to_embedded()?;
+            target.to_embedded()?;
             let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
-            let spec = language().parse::<noise::NoiseDescriptionDetail<AnyValue>>(&desc)?.0;
+            let spec = language().parse::<noise::NoiseDescriptionDetail<Arc<Cap>>>(&desc)?.0;
             match validate_noise_service_spec(spec) {
                 Ok(spec) => if let gatekeeper::BindObserver::Present(o) = observer {
                     o.assert(t, language(), &gatekeeper::Bound::Bound {
@@ -87,7 +88,7 @@ pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
 pub fn take_noise_step(t: &mut Activation, ds: &mut Arc<Cap>, a: &gatekeeper::Resolve, detail: &mut &'static str) -> Result<bool, ActorError> {
     if a.step.step_type == noise_step_type() {
         *detail = "invalid";
-        if let Ok(s) = language().parse::<noise::NoiseStepDetail<AnyValue>>(&a.step.detail) {
+        if let Ok(s) = language().parse::<noise::NoiseStepDetail<Arc<Cap>>>(&a.step.detail) {
             t.facet(|t| {
                 let f = super::handle_direct_resolution(ds, t, a.clone())?;
                 await_bind_noise(ds, t, s.0.0, a.observer.clone(), f)
@@ -108,11 +109,11 @@ struct ValidatedNoiseSpec {
 }
 
 fn default_noise_protocol() -> String {
-    language().unparse(&noise::DefaultProtocol).value().to_string().unwrap().clone()
+    language().unparse(&noise::DefaultProtocol).to_str().unwrap().into_owned()
 }
 
 fn validate_noise_spec(
-    spec: noise::NoiseSpec<AnyValue>,
+    spec: noise::NoiseSpec<Arc<Cap>>,
 ) -> Result<ValidatedNoiseSpec, ActorError> {
     let protocol = match spec.protocol {
         noise::NoiseProtocol::Present { protocol } => protocol,
@@ -149,7 +150,7 @@ fn validate_noise_spec(
 }
 
 fn validate_noise_service_spec(
-    spec: noise::NoiseServiceSpec<AnyValue>,
+    spec: noise::NoiseServiceSpec<Arc<Cap>>,
 ) -> Result<ValidatedNoiseSpec, ActorError> {
     let noise::NoiseServiceSpec { base, secret_key } = spec;
     let v = validate_noise_spec(base)?;
@@ -174,9 +175,9 @@ fn await_bind_noise(
             t.stop_facet(direct_resolution_facet);
             let observer = Arc::clone(&observer);
             t.spawn_link(None, move |t| {
-                let bindings = a.value().to_sequence()?;
+                let bindings = a.collect_sequence().ok_or(ExpectedKind::Sequence)?;
                 let spec = validate_noise_service_spec(language().parse(&bindings[0])?)?;
-                let service = bindings[1].value().to_embedded()?.clone();
+                let service = bindings[1].to_embedded()?.into_owned();
                 let hs = make_handshake(&spec, false)?;
                 let responder_session = Cap::guard(crate::Language::arc(), t.create(
                     ResponderState::Introduction{ service, hs }));
@@ -458,7 +459,8 @@ pub fn handle_noise_path_steps(t: &mut Activation, ds: Arc<Cap>) -> ActorResult 
             <q <resolve-path-step $origin <noise $spec0>>>,
             enclose!((ds) move |t: &mut Activation| {
                 if let Ok(spec) = language().parse::<noise::NoiseSpec>(&spec0) {
-                    if let Some(origin) = origin.value().as_embedded().cloned() {
+                    if let Some(origin) = origin.as_embedded() {
+                        let origin = origin.into_owned();
                         t.spawn_link(None, move |t| run_noise_initiator(t, ds, origin, spec));
                     }
                 }
@@ -551,7 +553,7 @@ impl Entity<noise::Packet> for InitiatorState {
                     let question = question.clone();
                     *self = InitiatorState::Transport(ts);
                     ds.assert(t, language(), &rpc::answer(language(), question, R::Result::Ok {
-                        value: AnyValue::domain(peer_service) }));
+                        value: AnyValue::embedded(peer_service) }));
                 }
             }
             InitiatorState::Transport(ts) => ts.handle_packet(t, p)?,

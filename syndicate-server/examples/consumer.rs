@@ -7,7 +7,6 @@ use syndicate::language;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
-use syndicate::value::NestedValue;
 
 use tokio::net::TcpStream;
 
@@ -29,7 +28,7 @@ async fn main() -> ActorResult {
         relay::connect_stream(t, i, o, false, sturdyref, (), |_state, t, ds| {
             let consumer = syndicate::entity(0)
                 .on_message(|message_count, _t, m: AnyValue| {
-                    if m.value().is_boolean() {
+                    if m.as_boolean().is_some() {
                         tracing::info!("{:?} messages in the last second", message_count);
                         *message_count = 0;
                     } else {

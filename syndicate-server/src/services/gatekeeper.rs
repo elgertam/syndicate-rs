@@ -4,11 +4,10 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
-use syndicate::preserves::rec;
-use syndicate::preserves::value::NestedValue;
 use syndicate::schemas::gatekeeper;
 
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 use crate::language::Language;
 use crate::language::language;
@@ -19,9 +18,9 @@ use crate::schemas::internal_services::Gatekeeper;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("gatekeeper_listener")), move |t| {
-        Ok(during!(t, ds, language(), <run-service $spec: Gatekeeper::<AnyValue>>, |t: &mut Activation| {
-            t.spawn_link(Some(rec![AnyValue::symbol("gatekeeper"), language().unparse(&spec)]),
-                         enclose!((ds) |t| run(t, ds, spec)));
+        Ok(during!(t, ds, language(), <run-service $spec: Gatekeeper::<Arc<Cap>>>, |t: &mut Activation| {
+            let spec_v = language().unparse(&spec);
+            t.spawn_link(Some(template!("<gatekeeper =spec_v>")), enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }))
     });
@@ -35,11 +34,11 @@ pub fn create_gatekeeper(t: &mut Activation, bindspace: &Arc<Cap>) -> Result<Arc
             .on_asserted_facet(facet_handle_resolve))))
 }
 
-fn run(t: &mut Activation, ds: Arc<Cap>, spec: Gatekeeper<AnyValue>) -> ActorResult {
+fn run(t: &mut Activation, ds: Arc<Cap>, spec: Gatekeeper<Arc<Cap>>) -> ActorResult {
     let gk = create_gatekeeper(t, &spec.bindspace)?;
     ds.assert(t, language(), &syndicate::schemas::service::ServiceObject {
         service_name: language().unparse(&spec),
-        object: AnyValue::domain(gk),
+        object: AnyValue::embedded(gk),
     });
     ds.assert(t, language(), &lifecycle::started(&spec));
     ds.assert(t, language(), &lifecycle::ready(&spec));

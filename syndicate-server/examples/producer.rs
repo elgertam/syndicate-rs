@@ -1,10 +1,8 @@
 use structopt::StructOpt;
 
 use syndicate::actor::*;
-use syndicate::preserves::rec;
 use syndicate::relay;
 use syndicate::sturdy;
-use syndicate::value::NestedValue;
 
 use tokio::net::TcpStream;
 
@@ -29,7 +27,7 @@ async fn main() -> ActorResult {
     Actor::top(None, |t| {
         relay::connect_stream(t, i, o, false, sturdyref, (), move |_state, t, ds| {
             let facet = t.facet_ref();
-            let padding = AnyValue::new(&vec![0u8; config.bytes_padding][..]);
+            let padding = AnyValue::bytes(vec![0u8; config.bytes_padding]);
             let action_count = config.action_count;
             let account = Account::new(None, None);
             t.linked_task(Some(AnyValue::symbol("sender")), async move {
@@ -37,9 +35,9 @@ async fn main() -> ActorResult {
                     account.ensure_clear_funds().await;
                     facet.activate(&account, None, |t| {
                         for _ in 0..action_count {
-                            ds.message(t, &(), &rec![AnyValue::symbol("Says"),
-                                                     AnyValue::new("producer"),
-                                                     padding.clone()]);
+                            ds.message(t, &(), &AnyValue::record(AnyValue::symbol("Says"), vec![
+                                AnyValue::new("producer"),
+                                padding.clone()]));
                         }
                         Ok(())
                     });

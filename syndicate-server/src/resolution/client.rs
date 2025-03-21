@@ -1,13 +1,12 @@
 use preserves_schema::Codec;
 use syndicate::dataspace::Dataspace;
-use syndicate::preserves::value::Set;
+use syndicate::preserves::Set;
 
 use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::rpc;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
-use syndicate::value::NestedValue;
 
 use syndicate::schemas::gatekeeper as G;
 use syndicate::schemas::rpc as R;
@@ -15,16 +14,17 @@ use syndicate::schemas::rpc as R;
 use crate::language;
 
 use syndicate::enclose;
-use syndicate::preserves::rec;
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 pub fn start(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("path_resolver")), enclose!((ds) move |t| {
         during!(t, ds, language(), <q <resolve-path $route0>>, |t| {
             if let Ok(route) = language().parse::<G::Route>(&route0) {
+                let route_v = language().unparse(&route);
                 Supervisor::start(
                     t,
-                    Some(rec![AnyValue::symbol("path_resolver"), language().unparse(&route)]),
+                    Some(template!("<path_resolver =route_v>")),
                     SupervisorConfiguration::default(),
                     |_t, _s| Ok(()),
                     enclose!((ds) move |t| enclose!((ds, route) run(t, ds, route))))
@@ -50,7 +50,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
         ds.assert(t, language(), &rpc::question(language(), G::ConnectTransport { addr: addr.clone() }));
         enclose!((candidates) during!(
             t, ds, language(),
-            <a <connect-transport #(addr)> <ok $c: G::ConnectedTransport::<AnyValue>>>,
+            <a <connect-transport #(addr)> <ok $c: G::ConnectedTransport::<Arc<Cap>>>>,
             |t: &mut Activation| {
                 t.get_mut(&candidates).insert(c.clone());
                 t.on_stop(enclose!((candidates, c) move |t: &mut Activation| {
@@ -79,14 +79,14 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
     t.dataflow(enclose!((root_peer) move |t| {
         let p = t.get(&root_peer).as_ref().cloned();
         t.update(&mut handle_zero, &steps_ref, p.map(|p| AnyValue::new(
-            vec![AnyValue::new(0), AnyValue::domain(p)])));
+            vec![AnyValue::new(0), AnyValue::embedded(p)])));
         Ok(())
     }))?;
 
     for (i, step) in route.path_steps.clone().into_iter().enumerate() {
         enclose!((ds, steps_ds) during!(
             t, steps_ds, language(),
-            [#(&AnyValue::new(i)), $origin: G::ResolvedPathStep::<AnyValue>],
+            [#(&AnyValue::new(i)), $origin: G::ResolvedPathStep::<Arc<Cap>>],
             enclose!((ds, step, steps_ds) move |t: &mut Activation| {
                 let q = G::ResolvePathStep { origin: origin.0, path_step: step };
                 ds.assert(t, language(), &rpc::question(language(), q.clone()));
@@ -101,10 +101,10 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
                                     ds.assert(t, language(), &rpc::answer(language(), q, a));
                                 }
                                 R::Result::Ok { value } => {
-                                    if let Some(next) = value.value().as_embedded() {
+                                    if let Some(next) = value.as_embedded() {
                                         steps_ds.assert(t, language(), &AnyValue::new(
                                             vec![AnyValue::new(i + 1),
-                                                 AnyValue::domain(next.clone())]));
+                                                 AnyValue::embedded(next.into_owned())]));
                                     } else {
                                         ds.assert(t, language(), &rpc::answer(
                                             language(), q, R::Result::Error {
@@ -122,7 +122,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
 
     let i = route.path_steps.len();
     during!(t, steps_ds, language(),
-            [#(&AnyValue::new(i)), $r: G::ResolvedPathStep::<AnyValue>],
+            [#(&AnyValue::new(i)), $r: G::ResolvedPathStep::<Arc<Cap>>],
             enclose!((best, ds, route) move |t: &mut Activation| {
                 let G::ConnectedTransport { addr, control, .. } =
                     t.get(&best).as_ref().unwrap().clone();

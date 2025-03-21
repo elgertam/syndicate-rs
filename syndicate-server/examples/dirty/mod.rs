@@ -4,9 +4,9 @@ use syndicate::schemas::Language;
 use syndicate::schemas::gatekeeper;
 use syndicate::schemas::protocol as P;
 use syndicate::sturdy;
-use syndicate::value::IOValue;
-use syndicate::value::NestedValue;
-use syndicate::value::PackedWriter;
+use syndicate::preserves::IOValue;
+use syndicate::preserves::PackedWriter;
+use syndicate::preserves::value_map_embedded;
 
 use std::io::Read;
 use std::io::Write;
@@ -17,8 +17,8 @@ pub fn dirty_resolve(stream: &mut TcpStream, dataspace: &str) -> Result<(), Box<
 
     let sturdyref = sturdy::SturdyRef::from_hex(dataspace)?;
     let sturdyref = iolang.parse::<gatekeeper::Step<IOValue>>(
-        &syndicate::language().unparse(&sturdyref)
-            .copy_via(&mut |_| Err("no!"))?)?;
+        &value_map_embedded(&syndicate::language().unparse(&sturdyref),
+                            &mut |_| Err("no!"))?)?;
 
     let resolve_turn = P::Turn(vec![
         P::TurnEvent {
@@ -28,13 +28,13 @@ pub fn dirty_resolve(stream: &mut TcpStream, dataspace: &str) -> Result<(), Box<
                     step: sturdyref,
                     observer: iolang.unparse(&sturdy::WireRef::Mine {
                         oid: Box::new(sturdy::Oid(0.into())),
-                    }),
+                    }).into(),
                 })),
                 handle: P::Handle(1.into()),
             })),
         }
     ]);
-    stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&resolve_turn))?)?;
+    stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&resolve_turn).into())?)?;
 
     {
         let mut buf = [0; 1024];

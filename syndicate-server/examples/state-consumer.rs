@@ -7,7 +7,6 @@ use syndicate::language;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
-use syndicate::value::NestedValue;
 
 use tokio::net::TcpStream;
 

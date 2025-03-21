@@ -4,11 +4,10 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
-use syndicate::preserves::rec;
 use syndicate::schemas::service;
-use syndicate::supervise::{Supervisor, SupervisorConfiguration};
+use syndicate::supervise::Supervisor;
+use syndicate::supervise::SupervisorConfiguration;
 use syndicate::trace;
-use syndicate::value::NestedValue;
 
 use tokio::io::AsyncRead;
 use tokio::io::AsyncBufReadExt;
@@ -21,10 +20,11 @@ use crate::lifecycle;
 use crate::schemas::external_services::*;
 
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("daemon_listener")), move |t| {
-        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService::<AnyValue>>,
+        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService::<Arc<Cap>>>,
                    enclose!((config_ds, root_ds) move |t: &mut Activation| {
                        supervise_daemon(t, config_ds, root_ds, spec)
                    })))
@@ -233,7 +233,7 @@ impl DaemonInstance {
             let facet = t.facet_ref();
             let log_ds = self.log_ds.clone();
             let service = self.service.clone();
-            let kind = AnyValue::symbol(kind);
+            let kind = AnyValue::symbol(kind.to_string());
             let pid = match pid {
                 Some(n) => AnyValue::new(n),
                 None => AnyValue::symbol("unknown"),
@@ -242,7 +242,7 @@ impl DaemonInstance {
             t.linked_task(None, async move {
                 let mut r = BufReader::new(r);
                 let cause = trace_collector.as_ref().map(
-                    |_| trace::TurnCause::external(kind.value().as_symbol().unwrap()));
+                    |_| trace::TurnCause::external(kind.as_symbol().unwrap().as_ref()));
                 let account = Account::new(None, trace_collector);
                 loop {
                     let mut buf = Vec::new();
@@ -250,20 +250,20 @@ impl DaemonInstance {
                         Ok(0) | Err(_) => break,
                         Ok(_) => (),
                     }
-                    let buf = match std::str::from_utf8(&buf) {
+                    let buf = match String::from_utf8(buf) {
                         Ok(s) => AnyValue::new(s),
-                        Err(_) => AnyValue::bytestring(buf),
+                        Err(bs) => AnyValue::bytes(bs.into_bytes()),
                     };
                     let now = AnyValue::new(chrono::Utc::now().to_rfc3339());
                     if !facet.activate(
                         &account, cause.clone(), enclose!((pid, service, kind) |t| {
                             log_ds.message(t, &(), &syndicate_macros::template!(
                                 "<log =now {
-                               pid: =pid,
-                               service: =service,
-                               stream: =kind,
-                               line: =buf,
-                             }>"));
+                                   pid: =pid,
+                                   service: =service,
+                                   stream: =kind,
+                                   line: =buf,
+                                 }>"));
                             Ok(())
                         }))
                     {
@@ -311,8 +311,9 @@ impl DaemonInstance {
             }
 
             let trace_collector = t.trace_collector();
+            let service_v = self.service.clone();
             t.linked_task(
-                Some(rec![AnyValue::symbol("wait"), self.service.clone()]),
+                Some(template!("<wait =service_v>")),
                 enclose!((facet) async move {
                     tracing::trace!("waiting for process exit");
                     let status = child.wait().await?;
@@ -347,7 +348,7 @@ impl DaemonInstance {
             tracing::info!(?cap);
             self.config_ds.assert(t, language(), &service::ServiceObject {
                 service_name: self.service.clone(),
-                object: AnyValue::domain(cap),
+                object: AnyValue::embedded(cap),
             });
             Ok(())
         })?;

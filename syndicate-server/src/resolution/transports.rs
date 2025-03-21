@@ -8,7 +8,6 @@ use std::sync::Arc;
 use syndicate::actor::*;
 use syndicate::rpc;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
-use syndicate::value::NestedValue;
 
 use syndicate::schemas::transport_address::Tcp;
 use syndicate::schemas::rpc as R;
@@ -19,8 +18,8 @@ use tokio::net::TcpStream;
 use crate::language;
 
 use syndicate::enclose;
-use syndicate::preserves::rec;
 use syndicate_macros::during;
+use syndicate_macros::template;
 
 struct TransportControl;
 
@@ -35,9 +34,10 @@ impl Entity<G::TransportControl> for TransportControl {
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("transport_connector")), move |t| {
         during!(t, ds, language(), <q <connect-transport $addr: Tcp>>, |t| {
+            let addr_v = language().unparse(&addr);
             Supervisor::start(
                 t,
-                Some(rec![AnyValue::symbol("relay"), language().unparse(&addr)]),
+                Some(template!("<relay =addr_v>")),
                 SupervisorConfiguration::default(),
                 |_t, _s| Ok(()),
                 enclose!((ds) move |t| enclose!((ds, addr) run(t, ds, addr))))
@@ -82,7 +82,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, addr: Tcp) -> ActorResult {
                     ds.assert(t, language(), &rpc::answer(
                         language(),
                         G::ConnectTransport { addr: language().unparse(&addr) },
-                        R::Result::Error { error: AnyValue::symbol(&format!("{:?}", e.kind())) }));
+                        R::Result::Error { error: AnyValue::symbol(format!("{:?}", e.kind())) }));
                     Ok(())
                 });
                 Ok(LinkedTaskTermination::Normal)

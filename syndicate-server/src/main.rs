@@ -16,8 +16,7 @@ use syndicate::schemas::service;
 use syndicate::schemas::transport_address;
 use syndicate::trace;
 
-use syndicate::value::Map;
-use syndicate::value::NestedValue;
+use syndicate::preserves::Map;
 
 mod counter;
 mod dependencies;
@@ -128,12 +127,12 @@ async fn main() -> ActorResult {
         let gatekeeper = gatekeeper::create_gatekeeper(t, &server_config_ds)?;
 
         let mut env = Map::new();
-        env.insert("config".to_owned(), AnyValue::domain(Arc::clone(&server_config_ds)));
-        env.insert("log".to_owned(), AnyValue::domain(Arc::clone(&log_ds)));
-        env.insert("gatekeeper".to_owned(), AnyValue::domain(Arc::clone(&gatekeeper)));
+        env.insert("config".to_owned(), AnyValue::embedded(Arc::clone(&server_config_ds)));
+        env.insert("log".to_owned(), AnyValue::embedded(Arc::clone(&log_ds)));
+        env.insert("gatekeeper".to_owned(), AnyValue::embedded(Arc::clone(&gatekeeper)));
 
         if config.control {
-            env.insert("control".to_owned(), AnyValue::domain(Cap::guard(Language::arc(), t.create(
+            env.insert("control".to_owned(), AnyValue::embedded(Cap::guard(Language::arc(), t.create(
                 syndicate::entity(())
                     .on_message(|_, _t, m: crate::schemas::control::ExitServer| {
                         tracing::info!("$control received exit request with code {}", m.code);
@@ -205,28 +204,28 @@ async fn main() -> ActorResult {
             let n_stream: AnyValue = AnyValue::symbol("stream");
             let e = syndicate::during::entity(())
                 .on_message(move |(), _t, captures: AnyValue| {
-                    if let Some(captures) = captures.value_owned().into_sequence() {
-                        let mut captures = captures.into_iter();
-                        let timestamp = captures.next()
-                            .and_then(|t| t.value_owned().into_string())
-                            .unwrap_or_else(|| "-".to_owned());
-                        if let Some(mut d) = captures.next()
-                            .and_then(|d| d.value_owned().into_dictionary())
-                        {
-                            let pid = d.remove(&n_pid).unwrap_or_else(|| n_unknown.clone());
-                            let service = d.remove(&n_service).unwrap_or_else(|| n_unknown.clone());
-                            let line = d.remove(&n_line).unwrap_or_else(|| n_unknown.clone());
-                            let stream = d.remove(&n_stream).unwrap_or_else(|| n_unknown.clone());
-                            let message = format!("{} {:?}[{:?}] {:?}: {:?}",
-                                                  timestamp,
-                                                  service,
-                                                  pid,
-                                                  stream,
-                                                  line);
-                            if d.is_empty() {
-                                tracing::info!(target: "", "{}", message);
-                            } else {
-                                tracing::info!(target: "",  "{} {:?}", message, d);
+                    if captures.is_sequence() {
+                        let mut captures = captures.iter();
+                        let timestamp = captures.next().unwrap_or_else(|| AnyValue::new("-"));
+                        let timestamp = timestamp.as_string().unwrap_or_else(|| "-".into());
+                        if let Some(d) = captures.next() {
+                            if d.is_dictionary() {
+                                let mut d = d.entries().collect::<Map<_,_>>();
+                                let pid = d.remove(&n_pid).unwrap_or_else(|| n_unknown.clone());
+                                let service = d.remove(&n_service).unwrap_or_else(|| n_unknown.clone());
+                                let line = d.remove(&n_line).unwrap_or_else(|| n_unknown.clone());
+                                let stream = d.remove(&n_stream).unwrap_or_else(|| n_unknown.clone());
+                                let message = format!("{} {:?}[{:?}] {:?}: {:?}",
+                                                      timestamp,
+                                                      service,
+                                                      pid,
+                                                      stream,
+                                                      line);
+                                if d.is_empty() {
+                                    tracing::info!(target: "", "{}", message);
+                                } else {
+                                    tracing::info!(target: "",  "{} {:?}", message, d);
+                                }
                             }
                         }
                     }
