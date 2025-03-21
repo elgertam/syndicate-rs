@@ -1,9 +1,12 @@
 //! The implementation of [capability attenuation][crate::actor::Cap]:
 //! filtering and rewriting of assertions and messages.
 
-use preserves::value::Map;
-use preserves::value::NestedValue;
-use preserves::value::Value;
+use preserves::AtomClass;
+use preserves::CompoundClass;
+use preserves::Map;
+use preserves::Record;
+use preserves::Value;
+use preserves::ValueClass;
 
 use std::convert::TryFrom;
 
@@ -117,17 +120,18 @@ impl Pattern {
     }
 
     fn matches(&self, a: &_Any, bindings: &mut Vec<_Any>) -> bool {
+        let ac = a.value_class();
         match self {
             Pattern::PDiscard(_) => true,
             Pattern::PAtom(b) => match &**b {
-                PAtom::Boolean => a.value().is_boolean(),
-                PAtom::Double => a.value().is_double(),
-                PAtom::SignedInteger => a.value().is_signedinteger(),
-                PAtom::String => a.value().is_string(),
-                PAtom::ByteString => a.value().is_bytestring(),
-                PAtom::Symbol => a.value().is_symbol(),
+                PAtom::Boolean => ac == ValueClass::Atomic(AtomClass::Boolean),
+                PAtom::Double => ac == ValueClass::Atomic(AtomClass::Double),
+                PAtom::SignedInteger => ac == ValueClass::Atomic(AtomClass::SignedInteger),
+                PAtom::String => ac == ValueClass::Atomic(AtomClass::String),
+                PAtom::ByteString => ac == ValueClass::Atomic(AtomClass::ByteString),
+                PAtom::Symbol => ac == ValueClass::Atomic(AtomClass::Symbol),
             }
-            Pattern::PEmbedded(_) => a.value().is_embedded(),
+            Pattern::PEmbedded(_) => ac == ValueClass::Embedded,
             Pattern::PBind(b) => {
                 bindings.push(a.clone());
                 (&**b).pattern.matches(a, bindings)
@@ -141,45 +145,38 @@ impl Pattern {
             Pattern::PNot(b) => !(&**b).pattern.matches(a, bindings),
             Pattern::Lit(b) => &(&**b).value == a,
             Pattern::PCompound(b) => match &**b {
-                PCompound::Rec { label, fields } => {
-                    match a.value().as_record(Some(fields.len())) {
-                        Some(r) => {
-                            if r.label() != label { return false; }
-                            if r.fields().len() != fields.len() { return false; }
-                            for (i, p) in fields.iter().enumerate() {
-                                if !p.matches(&r.fields()[i], bindings) { return false; }
+                PCompound::Rec { label, fields } =>
+                    ac == ValueClass::Compound(CompoundClass::Record)
+                        && &a.label() == label
+                        && a.len() == fields.len()
+                        && {
+                            for (i, v) in a.iter().enumerate() {
+                                let p = &fields[i];
+                                if !p.matches(&v, bindings) { return false; }
                             }
                             true
                         },
-                        None => false,
-                    }
-                }
-                PCompound::Arr { items } => {
-                    match a.value().as_sequence() {
-                        Some(vs) => {
-                            if vs.len() != items.len() { return false; }
-                            for (i, p) in items.iter().enumerate() {
-                                if !p.matches(&vs[i], bindings) { return false; }
+                PCompound::Arr { items } =>
+                    ac == ValueClass::Compound(CompoundClass::Sequence)
+                        && a.len() == items.len()
+                        && {
+                            for (i, v) in a.iter().enumerate() {
+                                let p = &items[i];
+                                if !p.matches(&v, bindings) { return false; }
                             }
                             true
                         },
-                        None => false,
-                    }
-                }
-                PCompound::Dict { entries } => {
-                    match a.value().as_dictionary() {
-                        Some(es) => {
+                PCompound::Dict { entries } =>
+                    ac == ValueClass::Compound(CompoundClass::Dictionary)
+                        && {
                             for (k, p) in entries.iter() {
-                                match es.get(k) {
-                                    Some(v) => if !p.matches(v, bindings) { return false; },
+                                match a.get(k) {
+                                    Some(v) => if !p.matches(&v, bindings) { return false; },
                                     None => return false,
                                 }
                             }
                             true
-                        }
-                        None => false,
-                    }
-                }
+                        },
             }
         }
     }
@@ -223,32 +220,33 @@ impl Template {
             Template::TAttenuate(b) => {
                 let TAttenuate { template, attenuation } = &**b;
                 template.instantiate(bindings)
-                    .and_then(|r| r.value().as_embedded().cloned())
-                    .map(|r| Value::Embedded(r.attenuate(attenuation).expect("checked attenuation")).wrap())
+                    .and_then(|r| r.as_embedded().map(|c| c.into_owned()))
+                    .map(|r| Value::embedded(r.attenuate(attenuation).expect("checked attenuation")))
             }
             Template::TRef(b) => Some(bindings[usize::try_from(&(&**b).binding).expect("in-range index")].clone()),
             Template::Lit(b) => Some((&**b).value.clone()),
             Template::TCompound(b) => match &**b {
                 TCompound::Rec { label, fields } => {
-                    let mut r = Value::record(label.clone(), fields.len());
+                    let mut vs = Vec::with_capacity(fields.len() + 1);
+                    vs.push(label.clone());
                     for t in fields.iter() {
-                        r.fields_vec_mut().push(t.instantiate(bindings)?);
+                        vs.push(t.instantiate(bindings)?);
                     }
-                    Some(r.finish().wrap())
+                    Some(Value::new(Record::_from_vec(vs)))
                 }
                 TCompound::Arr { items } => {
                     let mut r = Vec::with_capacity(items.len());
                     for t in items.iter() {
                         r.push(t.instantiate(bindings)?);
                     }
-                    Some(Value::from(r).wrap())
+                    Some(Value::new(r))
                 }
                 TCompound::Dict { entries } => {
                     let mut r = Map::new();
                     for (k, t) in entries.iter() {
                         r.insert(k.clone(), t.instantiate(bindings)?);
                     }
-                    Some(Value::from(r).wrap())
+                    Some(Value::new(r))
                 }
             }
         }

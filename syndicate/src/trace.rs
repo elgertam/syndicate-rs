@@ -6,8 +6,8 @@
 
 pub use super::schemas::trace::*;
 
-use preserves::value::NestedValue;
-use preserves::value::Writer;
+use preserves::IOValue;
+use preserves::Writer;
 use preserves_schema::Codec;
 
 use super::actor::{self, AnyValue, Ref, Cap};
@@ -82,19 +82,23 @@ impl TurnDescription {
 
 impl TurnCause {
     pub fn external(description: &str) -> Self {
-        Self::External { description: AnyValue::new(description) }
+        Self::External { description: AnyValue::new(description.to_string()) }
     }
 }
 
 struct CapEncoder;
 
-impl preserves::value::DomainEncode<Arc<Cap>> for CapEncoder {
-    fn encode_embedded<W: Writer>(
+impl preserves::DomainEncode<Arc<Cap>> for CapEncoder {
+    fn encode_embedded(
         &mut self,
-        w: &mut W,
+        w: &mut dyn Writer,
         d: &Arc<Cap>,
     ) -> std::io::Result<()> {
         w.write_string(&d.debug_str())
+    }
+
+    fn encode_value(&mut self, d: &Arc<Cap>) -> std::io::Result<IOValue> {
+        Ok(IOValue::new(d.debug_str()))
     }
 }
 
@@ -126,11 +130,11 @@ impl TraceCollector {
         TraceCollector { tx }
     }
 
-    pub fn ascii<W: 'static + std::io::Write + Send>(w: W) -> TraceCollector {
-        let mut writer = preserves::value::TextWriter::new(w);
+    pub fn text<W: 'static + std::io::Write + Send>(w: W) -> TraceCollector {
+        let mut writer = preserves::TextWriter::new(w);
         Self::new(move |event| match event {
             CollectorEvent::Event(entry) => {
-                writer.write(&mut CapEncoder, &language().unparse(&entry))
+                language().unparse(&entry).write(&mut writer, &mut CapEncoder)
                     .expect("failed to write TraceCollector entry");
                 writer.borrow_write().write_all(b"\n")
                     .expect("failed to write TraceCollector newline");
@@ -141,10 +145,10 @@ impl TraceCollector {
     }
 
     pub fn packed<W: 'static + std::io::Write + Send>(w: W) -> TraceCollector {
-        let mut writer = preserves::value::PackedWriter::new(w);
+        let mut writer = preserves::PackedWriter::new(w);
         Self::new(move |event| match event {
             CollectorEvent::Event(entry) =>
-                writer.write(&mut CapEncoder, &language().unparse(&entry))
+                language().unparse(&entry).write(&mut writer, &mut CapEncoder)
                 .expect("failed to write TraceCollector entry"),
             CollectorEvent::PeriodicFlush =>
                 writer.flush().expect("failed to flush TraceCollector output"),

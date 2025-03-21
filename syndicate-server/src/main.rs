@@ -91,11 +91,12 @@ async fn main() -> ActorResult {
         eprintln!(r"{}   \____{}/{}_/ {} /____/\__, /_/ /_/\____/_/\___/\__/_/\__/\___/", GREEN, BRIGHT_GREEN, GREEN, NORMAL);
         eprintln!(r"                  /____/");
         eprintln!(r"");
-        eprintln!(r" {}version {} [syndicate {}, preserves {}]{}",
+        eprintln!(r" {}version {} [syndicate {}, preserves {}, preserves spec {}]{}",
                   BRIGHT_YELLOW,
                   env!("CARGO_PKG_VERSION"),
                   syndicate::syndicate_package_version(),
                   syndicate::preserves::preserves_package_version(),
+                  syndicate::preserves::preserves_spec_version(),
                   NORMAL);
         eprintln!(r"");
         eprintln!(r" documentation & reference material: https://syndicate-lang.org/");
@@ -106,7 +107,7 @@ async fn main() -> ActorResult {
     tracing::trace!("startup");
 
     let trace_collector = config.trace_file.clone().map(
-        |p| Ok::<trace::TraceCollector, io::Error>(trace::TraceCollector::ascii(
+        |p| Ok::<trace::TraceCollector, io::Error>(trace::TraceCollector::text(
             io::BufWriter::new(std::fs::File::create(p)?))))
         .transpose()?;
 

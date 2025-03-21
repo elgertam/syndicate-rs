@@ -222,6 +222,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
+name = "bytemuck"
+version = "1.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b1fc10dbac614ebc03540c9dbd60e83887fda27794998c6528f1782047d540"
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1095,15 +1101,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "instant"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
-dependencies = [
- "cfg-if 1.0.0",
-]
-
-[[package]]
 name = "iovec"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1190,7 +1187,7 @@ checksum = "c0ff37bd590ca25063e35af745c343cb7a0271906fb7b37e4813e8f79f00268d"
 dependencies = [
  "bitflags 2.9.0",
  "libc",
- "redox_syscall 0.5.10",
+ "redox_syscall",
 ]
 
 [[package]]
@@ -1348,20 +1345,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
-dependencies = [
- "num-bigint",
- "num-complex",
- "num-integer",
- "num-iter",
- "num-rational",
- "num-traits",
-]
-
-[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1372,42 +1355,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-complex"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "num-iter"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
-dependencies = [
- "autocfg",
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-rational"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
-dependencies = [
- "num-bigint",
- "num-integer",
  "num-traits",
 ]
 
@@ -1497,37 +1449,12 @@ dependencies = [
 
 [[package]]
 name = "parking_lot"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d17b78036a60663b797adeaee46f5c9dfebb86948d1255007a1d6be0271ff99"
-dependencies = [
- "instant",
- "lock_api",
- "parking_lot_core 0.8.6",
-]
-
-[[package]]
-name = "parking_lot"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
 dependencies = [
  "lock_api",
- "parking_lot_core 0.9.10",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60a2cfe6f0ad2bfc16aefa463b497d5c7a5ecd44a23efa72aa342d90177356dc"
-dependencies = [
- "cfg-if 1.0.0",
- "instant",
- "libc",
- "redox_syscall 0.2.16",
- "smallvec",
- "winapi 0.3.9",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -1538,7 +1465,7 @@ checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
 dependencies = [
  "cfg-if 1.0.0",
  "libc",
- "redox_syscall 0.5.10",
+ "redox_syscall",
  "smallvec",
  "windows-targets",
 ]
@@ -1649,24 +1576,20 @@ dependencies = [
 
 [[package]]
 name = "preserves"
-version = "4.996.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c921411091a6e538644181cee222cf93963bf792d2ed22dc072a7df9361cc12"
+version = "5.0.0-rc.2"
 dependencies = [
  "base64",
+ "bytemuck",
  "dtoa",
  "lazy_static",
- "num",
+ "num-bigint",
+ "num-traits",
  "regex",
- "serde",
- "serde_bytes",
 ]
 
 [[package]]
 name = "preserves-schema"
-version = "5.996.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9fbedd7735084d4028a57c23ff69d2e7fc67505d1cd54eb5fefd0c5febbb979"
+version = "6.0.0-rc.2"
 dependencies = [
  "convert_case",
  "glob",
@@ -1674,7 +1597,6 @@ dependencies = [
  "preserves",
  "regex",
  "structopt",
- "thiserror",
 ]
 
 [[package]]
@@ -1780,15 +1702,6 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
-dependencies = [
- "bitflags 1.3.2",
-]
-
-[[package]]
-name = "redox_syscall"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b8c0c260b63a8219631167be35e6a988e9554dbd323f8bd08439c8ed1302bd1"
@@ -1880,15 +1793,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
 dependencies = [
  "serde_derive",
-]
-
-[[package]]
-name = "serde_bytes"
-version = "0.11.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -2067,7 +1971,7 @@ dependencies = [
  "hmac",
  "lazy_static",
  "openssl",
- "parking_lot 0.11.2",
+ "parking_lot",
  "preserves",
  "preserves-schema",
  "syndicate-schema-plugin",
@@ -2111,7 +2015,7 @@ dependencies = [
  "noise-protocol",
  "noise-rust-crypto",
  "notify",
- "parking_lot 0.12.3",
+ "parking_lot",
  "preserves-schema",
  "structopt",
  "syndicate",

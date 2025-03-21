@@ -1,6 +1,6 @@
 use preserves_schema::compiler::*;
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let buildroot = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
 
     let mut gen_dir = buildroot.clone();
@@ -28,5 +28,5 @@ fn main() -> std::io::Result<()> {
     let inputs = expand_inputs(&vec!["protocols/schema-bundle.bin".to_owned()])?;
     c.load_schemas_and_bundles(&inputs, &vec![])?;
     c.load_xref_bin("syndicate", syndicate::schemas::_bundle())?;
-    compile(&c, &mut CodeCollector::files(gen_dir))
+    Ok(compile(&c, &mut CodeCollector::files(gen_dir))?)
 }

@@ -2,13 +2,14 @@ use blake2::Blake2s256;
 use getrandom::getrandom;
 use hmac::{SimpleHmac, Mac};
 
-use preserves::error::io_syntax_error;
 use preserves::hex::HexParser;
 use preserves::hex::HexFormatter;
-use preserves::value::NestedValue;
-use preserves::value::NoEmbeddedDomainCodec;
-use preserves::value::packed::PackedWriter;
-use preserves::value::packed::from_bytes;
+use preserves::Domain;
+use preserves::NoEmbeddedDomainCodec;
+use preserves::ReaderResult;
+use preserves::Value;
+use preserves::packed::PackedWriter;
+use preserves::read_packed;
 use preserves_schema::Codec;
 
 use std::io;
@@ -40,7 +41,7 @@ impl std::fmt::Display for ValidationError {
 
 impl From<ValidationError> for io::Error {
     fn from(v: ValidationError) -> Self {
-        io_syntax_error(&v.to_string())
+        io::Error::new(io::ErrorKind::InvalidData, v.to_string())
     }
 }
 
@@ -70,12 +71,12 @@ pub fn new_key() -> Vec<u8> {
     buf
 }
 
-pub fn encode<N: NestedValue>(v: &N) -> Vec<u8> {
+pub fn encode<D: Domain>(v: &Value<D>) -> Vec<u8> {
     PackedWriter::encode(&mut NoEmbeddedDomainCodec, v).expect("no io errors")
 }
 
-pub fn decode<N: NestedValue>(bs: &[u8]) -> io::Result<N> {
-    from_bytes(bs, &mut NoEmbeddedDomainCodec)
+pub fn decode<D: Domain>(bs: &[u8]) -> ReaderResult<Value<D>> {
+    read_packed(bs, false, &mut NoEmbeddedDomainCodec)
 }
 
 impl SturdyRef {

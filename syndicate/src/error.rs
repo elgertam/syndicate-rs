@@ -1,15 +1,16 @@
 //! Actor errors.
 
+use std::sync::Arc;
+
 use super::actor::AnyValue;
+use super::actor::Cap;
 use super::language;
 use super::schemas::protocol as P;
 
-use preserves::value::NestedValue;
-use preserves::value::Value;
+use preserves::Value;
 use preserves_schema::Codec;
-use preserves_schema::ParseError;
 
-pub type Error = P::Error<AnyValue>;
+pub type Error = P::Error<Arc<Cap>>;
 
 impl Error {
     /// Construct an [`Error`] given a displayable `T`.
@@ -18,7 +19,7 @@ impl Error {
     /// This function is useful to translate [`std::error::Error`] from some other API
     /// into Syndicate `Error`:
     ///
-    /// ```
+    /// ```ignore
     /// return some_operation().map_err(Error::msg)
     /// ```
     pub fn msg<T: std::fmt::Display>(e: T) -> Self {
@@ -51,16 +52,12 @@ pub fn error<Detail>(message: &str, detail: Detail) -> Error where AnyValue: Fro
 /// actor.
 pub fn encode_error(result: Result<(), Error>) -> AnyValue {
     match result {
-        Ok(()) => {
-            let mut r = Value::record(AnyValue::symbol("Ok"), 1);
-            r.fields_vec_mut().push(Value::record(AnyValue::symbol("tuple"), 0).finish().wrap());
-            r.finish().wrap()
-        }
-        Err(e) => {
-            let mut r = Value::record(AnyValue::symbol("Err"), 1);
-            r.fields_vec_mut().push(language().unparse(&e));
-            r.finish().wrap()
-        }
+        Ok(()) =>
+            Value::record(AnyValue::symbol("Ok"), vec![
+                Value::record(AnyValue::symbol("tuple"), vec![])]),
+        Err(e) =>
+            Value::record(AnyValue::symbol("Err"), vec![
+                language().unparse(&e)]),
     }
 }
 
@@ -76,14 +73,8 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<ParseError> for Error {
-    fn from(v: ParseError) -> Self {
-        error(&format!("{}", v), AnyValue::new(false))
-    }
-}
-
-impl From<preserves::error::Error> for Error {
-    fn from(v: preserves::error::Error) -> Self {
+impl From<preserves::Error> for Error {
+    fn from(v: preserves::Error) -> Self {
         error(&format!("{}", v), AnyValue::new(false))
     }
 }

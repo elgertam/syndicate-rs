@@ -1,8 +1,6 @@
 //! Extremely simple single-actor supervision. Vastly simplified compared to the available
 //! options in [Erlang/OTP](https://erlang.org/doc/man/supervisor.html).
 
-use preserves::value::NestedValue;
-
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -12,6 +10,8 @@ use tokio::time::Instant;
 
 use crate::actor::*;
 use crate::schemas::service::State;
+
+use preserves::Value;
 
 pub type Boot = Arc<Mutex<Box<dyn Send + FnMut(&mut Activation) -> ActorResult>>>;
 
@@ -127,7 +127,7 @@ impl Supervisor {
         let self_ref = t.create_inert();
         let state_field = t.named_field("supervisee_state", State::Started);
         let my_name = name.as_ref().map(
-            |n| preserves::rec![AnyValue::symbol("supervisor"), n.clone()]);
+            |n| Value::record(AnyValue::symbol("supervisor"), vec![n.clone()]));
         let mut supervisor = Supervisor {
             self_ref: Arc::clone(&self_ref),
             child_name: name,

@@ -13,7 +13,7 @@ use super::skeleton;
 use super::actor::*;
 use super::schemas::dataspace::*;
 
-use preserves::value::Map;
+use preserves::Map;
 use preserves_schema::Codec;
 
 /// A Dataspace object (entity).

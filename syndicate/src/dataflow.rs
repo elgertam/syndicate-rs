@@ -1,5 +1,5 @@
-use preserves::value::Map;
-use preserves::value::Set;
+use preserves::Map;
+use preserves::Set;
 
 use std::fmt::Debug;
 

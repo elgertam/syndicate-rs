@@ -19,25 +19,24 @@ use futures::StreamExt;
 
 pub use parking_lot::Mutex;
 
-use preserves::error::Error as PreservesError;
-use preserves::error::is_eof_io_error;
-use preserves::value::BinarySource;
-use preserves::value::BytesBinarySource;
-use preserves::value::DomainDecode;
-use preserves::value::DomainEncode;
-use preserves::value::Map;
-use preserves::value::NestedValue;
-use preserves::value::NoEmbeddedDomainCodec;
-use preserves::value::PackedWriter;
-use preserves::value::Set;
-use preserves::value::TextWriter;
-use preserves::value::ViaCodec;
-use preserves::value::Writer;
-use preserves::value::signed_integer::SignedInteger;
+use preserves::BinarySource;
+use preserves::BytesBinarySource;
+use preserves::DomainDecode;
+use preserves::DomainEncode;
+use preserves::IOValue;
+use preserves::IOValueReader;
+use preserves::Map;
+use preserves::PackedWriter;
+use preserves::Reader;
+use preserves::ReaderResult;
+use preserves::Set;
+use preserves::SyntaxError;
+use preserves::TextWriter;
+use preserves::signed_integer::SignedInteger;
+use preserves::value_map_embedded;
 
 use preserves_schema::Codec;
 use preserves_schema::Deserialize;
-use preserves_schema::ParseError;
 use preserves_schema::support::Unparse;
 
 use std::io;
@@ -100,7 +99,7 @@ pub struct TunnelRelay
     inbound_assertions: Map</* remote */ P::Handle, (/* local */ Handle, Vec<Arc<WireSymbol>>)>,
     outbound_assertions: Map<P::Handle, Vec<Arc<WireSymbol>>>,
     membranes: Membranes,
-    pending_outbound: Vec<P::TurnEvent<AnyValue>>,
+    pending_outbound: Vec<P::TurnEvent<Arc<Cap>>>,
     output: UnboundedSender<LoanedItem<Vec<u8>>>,
     output_text: bool,
 }
@@ -195,7 +194,7 @@ pub fn connect_stream<I, O, Step, E, F>(
 ) -> ActorResult where
     I: 'static + Send + AsyncRead,
     O: 'static + Send + AsyncWrite,
-    Step: for<'a> Unparse<&'a Language<AnyValue>, AnyValue>,
+    Step: for<'a> Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>,
     E: 'static + Send,
     F: 'static + Send + FnMut(&mut E, &mut Activation, Arc<Cap>) -> during::DuringResult<E>
 {
@@ -209,7 +208,7 @@ pub fn connect_stream<I, O, Step, E, F>(
         }
     }));
     let step = language().parse::<gatekeeper::Step>(&language().unparse(&step))?;
-    gatekeeper.assert(t, language(), &gatekeeper::Resolve::<AnyValue> {
+    gatekeeper.assert(t, language(), &gatekeeper::Resolve::<Arc<Cap>> {
         step,
         observer: Cap::guard(Language::arc(), main_entity),
     });
@@ -331,7 +330,7 @@ impl TunnelRelay {
         (result, tr_ref, output_rx)
     }
 
-    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> (Result<P::Packet<AnyValue>, ParseError>, usize) {
+    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> (Result<P::Packet<Arc<Cap>>, preserves::Error>, usize) {
         let mut src = BytesBinarySource::new(&bs);
         let mut dec = ActivatedMembranes {
             turn: t,
@@ -339,19 +338,19 @@ impl TunnelRelay {
             membranes: &mut self.membranes,
         };
         match src.peek() {
-            Ok(v) => if v >= 128 {
+            Ok(Some(v)) => if v >= 128 {
                 self.output_text = false;
-                let mut r = src.packed(&mut dec);
-                let res = P::Packet::deserialize(&mut r);
-                (res, r.source.index)
+                let mut r = src.packed();
+                let res = P::Packet::deserialize(&mut r, &mut dec);
+                (res, r.source.index as usize)
             } else {
                 self.output_text = true;
-                let mut dec = ViaCodec::new(dec);
-                let mut r = src.text::<AnyValue, _>(&mut dec);
-                let res = P::Packet::deserialize(&mut r);
-                (res, r.source.index)
+                let mut r = src.text();
+                let res = P::Packet::deserialize(&mut r, &mut dec);
+                (res, r.source.index as usize)
             },
-            Err(e) => (Err(e.into()), 0)
+            Ok(None) => (Err(SyntaxError::eof().at(None)), 0),
+            Err(e) => (Err(e.into()), 0),
         }
     }
 
@@ -362,12 +361,15 @@ impl TunnelRelay {
     }
 
     pub fn handle_inbound_stream(&mut self, t: &mut Activation, buf: &mut BytesMut) -> ActorResult {
+        use preserves::{Error, SyntaxError, UnexpectedKind};
         loop {
             tracing::trace!(buffer = ?buf, "inbound stream");
             let (result, count) = self.deserialize_one(t, buf);
             match result {
-                Err(ParseError::Preserves(PreservesError::Io(e)))
-                    if is_eof_io_error(&e) => return Ok(()),
+                Err(Error::SyntaxError {
+                    detail: SyntaxError::Unexpected(UnexpectedKind::Eof),
+                    ..
+                }) => return Ok(()),
                 Err(e) => return Err(e)?,
                 Ok(item) => {
                     buf.advance(count);
@@ -377,7 +379,7 @@ impl TunnelRelay {
         }
     }
 
-    pub fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<AnyValue>) -> ActorResult {
+    pub fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<Arc<Cap>>) -> ActorResult {
         tracing::debug!(packet = ?p, "-->");
         match p {
             P::Packet::Extension(b) => {
@@ -414,8 +416,8 @@ impl TunnelRelay {
                     match event {
                         P::Event::Assert(b) => {
                             let P::Assert { assertion: P::Assertion(a), handle: remote_handle } = *b;
-                            a.foreach_embedded::<_, Error>(
-                                &mut |r| Ok(pins.push(self.membranes.lookup_ref(r))))?;
+                            a.foreach_embedded(
+                                &mut |r| Ok(pins.push(self.membranes.lookup_ref(r)))).unwrap();
                             if let Some(local_handle) = target.assert(t, &(), &a) {
                                 if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, pins)) {
                                     return Err(error("Assertion with duplicate handle", AnyValue::new(false)))?;
@@ -448,10 +450,10 @@ impl TunnelRelay {
                                 let rc = ws.current_ref_count();
                                 pins.push(ws);
                                 match rc {
-                                    1 => Err(error("Cannot receive transient reference", AnyValue::new(false))),
-                                    _ => Ok(())
+                                    1 => Err(()),
+                                    _ => Ok(()),
                                 }
-                            })?;
+                            }).map_err(|_| error("Cannot receive transient reference", AnyValue::new(false)))?;
                             target.message(t, &(), &a);
                             self.membranes.release(pins);
                             dump_membranes!(self.membranes);
@@ -493,7 +495,7 @@ impl TunnelRelay {
         &mut self,
         _t: &mut Activation,
         remote_oid: sturdy::Oid,
-        event: &P::Event<AnyValue>,
+        event: &P::Event<Arc<Cap>>,
     ) -> ActorResult {
         match event {
             P::Event::Assert(b) => {
@@ -501,8 +503,8 @@ impl TunnelRelay {
                 if let Some(target_ws) = self.membranes.imported.oid_map.get(&remote_oid).map(Arc::clone) {
                     target_ws.inc_ref(); // encoding won't do this; target oid is syntactically special
                     let mut pins = vec![target_ws];
-                    a.foreach_embedded::<_, Error>(
-                        &mut |r| Ok(pins.push(self.membranes.lookup_ref(r))))?;
+                    a.foreach_embedded(
+                        &mut |r| Ok(pins.push(self.membranes.lookup_ref(r)))).unwrap();
                     self.outbound_assertions.insert(handle.clone(), pins);
                     dump_membranes!(self.membranes);
                 } else {
@@ -532,11 +534,11 @@ impl TunnelRelay {
                 a.foreach_embedded(&mut |r| {
                     let ws = self.membranes.lookup_ref(r);
                     if self.membranes.release_one(ws) { // undo the inc_ref from encoding
-                        Err(error("Sent transient reference", AnyValue::new(false)))
+                        Err(())
                     } else {
                         Ok(())
                     }
-                })?;
+                }).map_err(|_| error("Sent transient reference", AnyValue::new(false)))?;
                 dump_membranes!(self.membranes);
             },
             P::Event::Sync(_b) =>
@@ -545,7 +547,7 @@ impl TunnelRelay {
         Ok(())
     }
 
-    pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet<AnyValue>) -> ActorResult {
+    pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet<Arc<Cap>>) -> ActorResult {
         let item = language().unparse(&p);
         tracing::debug!(packet = ?item, "<--");
 
@@ -562,7 +564,7 @@ impl TunnelRelay {
         Ok(())
     }
 
-    pub fn send_event(&mut self, t: &mut Activation, remote_oid: sturdy::Oid, event: P::Event<AnyValue>) -> ActorResult {
+    pub fn send_event(&mut self, t: &mut Activation, remote_oid: sturdy::Oid, event: P::Event<Arc<Cap>>) -> ActorResult {
         if self.pending_outbound.is_empty() {
             let self_ref = Arc::clone(&self.self_ref);
             t.pre_commit(move |t| {
@@ -634,14 +636,13 @@ impl Membranes {
         }
     }
 
-    fn decode_embedded<'de, 'src, S: BinarySource<'de>>(
+    fn decode_wireref(
         &mut self,
         t: &mut Activation,
         relay_ref: &TunnelRelayRef,
-        src: &'src mut S,
-        _read_annotations: bool,
-    ) -> io::Result<Arc<Cap>> {
-        match sturdy::WireRef::deserialize(&mut src.packed(NoEmbeddedDomainCodec))? {
+        wr: sturdy::WireRef,
+    ) -> ReaderResult<Arc<Cap>> {
+        match wr {
             sturdy::WireRef::Mine{ oid: b } => {
                 let oid = *b;
                 let ws = self.imported.oid_map.get(&oid).map(Arc::clone)
@@ -679,25 +680,9 @@ impl Membranes {
             }
         }
     }
-}
 
-impl<'a, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'm> {
-    fn decode_embedded<'de, 'src, S: BinarySource<'de>>(
-        &mut self,
-        src: &'src mut S,
-        read_annotations: bool,
-    ) -> io::Result<Arc<Cap>> {
-        self.membranes.decode_embedded(self.turn, self.tr_ref, src, read_annotations)
-    }
-}
-
-impl DomainEncode<Arc<Cap>> for Membranes {
-    fn encode_embedded<W: Writer>(
-        &mut self,
-        w: &mut W,
-        d: &Arc<Cap>,
-    ) -> io::Result<()> {
-        w.write(&mut NoEmbeddedDomainCodec, &language().unparse(&match self.exported.ref_map.get(d) {
+    fn encode_wireref(&mut self, d: &Arc<Cap>) -> sturdy::WireRef {
+        match self.exported.ref_map.get(d) {
             Some(ws) => sturdy::WireRef::Mine {
                 oid: Box::new(ws.inc_ref().oid.clone()),
             },
@@ -722,7 +707,40 @@ impl DomainEncode<Arc<Cap>> for Membranes {
                         oid: Box::new(self.export_ref(Arc::clone(d)).inc_ref().oid.clone()),
                     },
             }
-        }))
+        }
+    }
+}
+
+impl<'a, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'm> {
+    fn decode_embedded<'de, R: Reader<'de> + ?Sized, VR: IOValueReader + ?Sized>(
+        &mut self,
+        r: &mut R,
+        _read_annotations: bool,
+    ) -> ReaderResult<Arc<Cap>> {
+        let wr = sturdy::WireRef::deserialize(r, self)?;
+        self.membranes.decode_wireref(self.turn, self.tr_ref, wr)
+    }
+
+    fn decode_value(&mut self, v: IOValue) -> ReaderResult<Arc<Cap>> {
+        let v = value_map_embedded(&v, &mut |c| self.decode_value(c.clone()))?;
+        let wr = language().parse::<sturdy::WireRef>(&v)?;
+        self.membranes.decode_wireref(self.turn, self.tr_ref, wr)
+    }
+}
+
+impl DomainEncode<Arc<Cap>> for Membranes {
+    fn encode_embedded(
+        &mut self,
+        w: &mut dyn preserves::Writer,
+        d: &Arc<Cap>,
+    ) -> io::Result<()> {
+        language().unparse(&self.encode_wireref(d)).write(w, self)
+    }
+
+    fn encode_value(&mut self, d: &Arc<Cap>) -> io::Result<IOValue> {
+        let v = language().unparse(&self.encode_wireref(d));
+        let v = value_map_embedded(&v, &mut |c| self.encode_value(c))?;
+        Ok(v.into())
     }
 }
 

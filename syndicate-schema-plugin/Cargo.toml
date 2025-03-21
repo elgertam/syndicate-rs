@@ -12,12 +12,12 @@ edition.workspace = true
 [lib]
 
 [build-dependencies]
-preserves-schema = "5.996"
+preserves-schema.workspace = true
 
 [dependencies]
-preserves = "4.996"
-preserves-schema = "5.996"
-lazy_static = "1.4"
+preserves.workspace = true
+preserves-schema.workspace = true
+lazy_static.workspace = true
 
 [package.metadata.workspaces]
 independent = true

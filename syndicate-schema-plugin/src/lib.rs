@@ -1,6 +1,5 @@
 use std::sync::Arc;
-use preserves::value::ArcValue;
-use preserves::value::Domain;
+use preserves::Domain;
 
 mod schemas {
     //! Auto-generated codecs for [Syndicate protocol
@@ -16,7 +15,7 @@ mod placeholder {
 pub enum Cap {}
 impl Domain for Cap {}
 
-preserves_schema::define_language!(language(): Language<ArcValue<Arc<Cap>>> {
+preserves_schema::define_language!(language(): Language<Arc<Cap>> {
     syndicate: schemas::Language,
 });
 

@@ -10,7 +10,7 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
-preserves = "4.996"
+preserves.workspace = true
 syndicate = { path = "../syndicate", version = "0.43.0"}
 
 clap = { version = "^4.0", features = ["derive"] }

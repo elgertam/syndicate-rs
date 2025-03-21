@@ -11,9 +11,9 @@ use syndicate::during::entity;
 use syndicate::dataspace::Dataspace;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::schemas::dataspace_patterns as p;
-use syndicate::value::Map;
-use syndicate::value::NestedValue;
-use syndicate::value::Value;
+use preserves::Map;
+use preserves::Record;
+use preserves::Value;
 
 use tokio::runtime::Runtime;
 
@@ -21,10 +21,7 @@ use tracing::Level;
 
 #[inline]
 fn says(who: AnyValue, what: AnyValue) -> AnyValue {
-    let mut r = Value::simple_record("Says", 2);
-    r.fields_vec_mut().push(who);
-    r.fields_vec_mut().push(what);
-    r.finish().wrap()
+    Value::new(Record::_from_vec(vec![Value::symbol("Says"), who, what]))
 }
 
 struct ShutdownEntity;
@@ -60,8 +57,7 @@ pub fn bench_pub(c: &mut Criterion) {
                     let ds = t.create(Dataspace::new(None));
                     let shutdown = t.create(ShutdownEntity);
                     for _ in 0..iters {
-                        t.message(&ds, says(AnyValue::new("bench_pub"),
-                                            Value::ByteString(vec![]).wrap()));
+                        t.message(&ds, says(AnyValue::new("bench_pub"), Value::bytes(vec![])));
                     }
                     t.message(&shutdown, AnyValue::new(true));
                     Ok(())
@@ -138,7 +134,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             t.after(core::time::Duration::from_secs(0), move |t| {
                                 for _i in 0..iters {
                                     ds.message(t, &(), &says(AnyValue::new("bench_pub"),
-                                                             Value::ByteString(vec![]).wrap()));
+                                                             Value::bytes(vec![])));
                                 }
                                 ds.message(t, &(), &AnyValue::new(true));
                                 Ok(())

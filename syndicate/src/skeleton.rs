@@ -7,7 +7,11 @@
 
 use super::bag;
 
-use preserves::value::{Map, NestedValue, Set, Value};
+use preserves::CompoundClass;
+use preserves::Map;
+use preserves::Set;
+use preserves::Value;
+use preserves::ValueClass;
 use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
@@ -225,8 +229,8 @@ impl Node {
         let mut next_node = table.entry(guard.clone()).or_insert_with(|| {
             Self::new(Continuation::new(
                 continuation.cached_assertions.iter()
-                    .filter(|a| match project_path(a, path) {
-                        Some(v) => Some(&guard) == class_of(v).as_ref(),
+                    .filter(|a| match project_path((*a).clone(), path) {
+                        Some(v) => Some(&guard) == class_of(&v).as_ref(),
                         None => false,
                     })
                     .cloned()
@@ -299,7 +303,7 @@ where FCont: FnMut(&mut Continuation, &AnyValue) -> (),
     }
 
     fn perform(&mut self, n: &mut Node) {
-        self.node(n, &Stack::Item(&Value::from(vec![self.outer_value.clone()]).wrap(), &Stack::Empty))
+        self.node(n, &Stack::Item(&Value::new(vec![self.outer_value.clone()]), &Stack::Empty))
     }
 
     fn node(&mut self, n: &mut Node, term_stack: &Stack<&AnyValue>) {
@@ -308,9 +312,9 @@ where FCont: FnMut(&mut Continuation, &AnyValue) -> (),
             let mut next_stack = term_stack;
             for _ in 0..selector.pop_count { next_stack = next_stack.pop() }
             if let Some(next_value) = step(next_stack.top(), &selector.step) {
-                if let Some(next_class) = class_of(next_value) {
+                if let Some(next_class) = class_of(&next_value) {
                     if let Some(next_node) = table.get_mut(&next_class) {
-                        self.node(next_node, &Stack::Item(next_value, next_stack))
+                        self.node(next_node, &Stack::Item(&next_value, next_stack))
                     }
                 }
             }
@@ -355,18 +359,17 @@ where FCont: FnMut(&mut Continuation, &AnyValue) -> (),
 }
 
 fn class_of(v: &AnyValue) -> Option<ds::GroupType> {
-    match v.value() {
-        Value::Sequence(_) => Some(ds::GroupType::Arr),
-        Value::Record(r) => Some(ds::GroupType::Rec { label: r.label().clone() }),
-        Value::Dictionary(_) => Some(ds::GroupType::Dict),
+    match v.value_class() {
+        ValueClass::Compound(CompoundClass::Sequence) => Some(ds::GroupType::Arr),
+        ValueClass::Compound(CompoundClass::Record) => Some(ds::GroupType::Rec { label: v.label() }),
+        ValueClass::Compound(CompoundClass::Dictionary) => Some(ds::GroupType::Dict),
         _ => None,
     }
 }
 
-fn project_path<'a>(v: &'a AnyValue, p: &Path) -> Option<&'a AnyValue> {
-    let mut v = v;
+fn project_path<'a>(mut v: AnyValue, p: &Path) -> Option<AnyValue> {
     for i in p {
-        match step(v, i) {
+        match step(&v, i) {
             Some(w) => v = w,
             None => return None,
         }
@@ -377,7 +380,7 @@ fn project_path<'a>(v: &'a AnyValue, p: &Path) -> Option<&'a AnyValue> {
 fn project_paths<'a>(v: &'a AnyValue, ps: &Paths) -> Option<Captures> {
     let mut vs = Vec::new();
     for p in ps {
-        match project_path(v, p) {
+        match project_path(v.clone(), p) {
             Some(c) => vs.push(c.clone()),
             None => return None,
         }
@@ -385,17 +388,17 @@ fn project_paths<'a>(v: &'a AnyValue, ps: &Paths) -> Option<Captures> {
     Some(Captures::new(vs))
 }
 
-fn step<'a>(v: &'a AnyValue, s: &PathStep) -> Option<&'a AnyValue> {
-    match v.value() {
-        Value::Sequence(vs) => {
-            let i = s.value().as_usize()?;
-            if i < vs.len() { Some(&vs[i]) } else { None }
+fn step<'a>(v: &'a AnyValue, s: &PathStep) -> Option<AnyValue> {
+    match v.value_class() {
+        ValueClass::Compound(CompoundClass::Sequence) => {
+            let i = s.as_usize()?.ok()?;
+            if i < v.len() { Some(v.index(i)) } else { None }
         }
-        Value::Record(r) => {
-            let i = s.value().as_usize()?;
-            if i < r.arity() { Some(&r.fields()[i]) } else { None }
+        ValueClass::Compound(CompoundClass::Record) => {
+            let i = s.as_usize()?.ok()?;
+            if i < v.len() { Some(v.index(i)) } else { None }
         }
-        Value::Dictionary(m) => m.get(s),
+        ValueClass::Compound(CompoundClass::Dictionary) => v.get(s),
         _ => None,
     }
 }

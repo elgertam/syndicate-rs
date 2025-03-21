@@ -7,9 +7,11 @@ use preserves_schema::gen::schema::*;
 use preserves_schema::syntax::block::escape_string;
 use preserves_schema::syntax::block::constructors::*;
 
-use preserves::value::IOValue;
-use preserves::value::Map;
-use preserves::value::NestedValue;
+use preserves::IOValue;
+use preserves::Map;
+use preserves::NoEmbeddedDomainCodec;
+use preserves::Value;
+use preserves::value_deepcopy_via;
 
 use std::iter::FromIterator;
 
@@ -47,9 +49,7 @@ impl Plugin for PatternPlugin {
                                          definition_name,
                                          definition);
                 let v = crate::language().unparse(&p);
-                let v = preserves_schema::support::preserves::value::TextWriter::encode(
-                    &mut preserves_schema::support::preserves::value::NoEmbeddedDomainCodec,
-                    &v).unwrap();
+                let v = preserves::TextWriter::encode(&mut NoEmbeddedDomainCodec, &v).unwrap();
                 ctxt.define_type(item(seq![
                     "impl",
                     ty.generic_decl(ctxt),
@@ -62,10 +62,10 @@ impl Plugin for PatternPlugin {
                              codeblock![
                                  seq!["use ", self.syndicate_crate.clone(), "::schemas::dataspace_patterns::*;"],
                                  "use preserves_schema::Codec;",
-                                 seq!["let _v = ", self.syndicate_crate.clone(), "::value::text::from_str(",
+                                 seq!["let _v = ", self.syndicate_crate.clone(), "::preserves::read_text(",
                                       escape_string(&v),
-                                      ", ", self.syndicate_crate.clone(), "::value::ViaCodec::new(",
-                                      self.syndicate_crate.clone(), "::value::NoEmbeddedDomainCodec)).unwrap();"],
+                                      ", false, ",
+                                      "&mut ", self.syndicate_crate.clone(), "::preserves::NoEmbeddedDomainCodec).unwrap();"],
                                  seq![self.syndicate_crate.clone(), "::language().parse(&_v).unwrap()"]]]]]));
             }
         }
@@ -99,8 +99,8 @@ impl WildcardPattern for Pattern {
     }
 }
 
-fn from_io(v: &IOValue) -> Option<P::_Any> {
-    Some(v.value().copy_via(&mut |_| Err(())).ok()?.wrap())
+fn from_io(v: &Value<IOValue>) -> Option<P::_Any> {
+    value_deepcopy_via(v.into(), &mut |_| Err::<P::_Any, _>(())).ok()
 }
 
 impl WildcardPattern for CompoundPattern {

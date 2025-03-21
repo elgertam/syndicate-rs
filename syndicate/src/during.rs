@@ -1,7 +1,7 @@
 use crate::actor::*;
 use crate::error::Error;
 
-use preserves::value::Map;
+use preserves::Map;
 
 use std::sync::Arc;
 use std::marker::PhantomData;

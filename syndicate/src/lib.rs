@@ -2,9 +2,6 @@
 #![feature(min_specialization)]
 
 #[doc(inline)]
-pub use preserves::value;
-
-#[doc(inline)]
 pub use preserves;
 
 #[doc(inline)]
@@ -64,21 +61,22 @@ pub fn syndicate_package_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-preserves_schema::define_language!(language(): Language<actor::AnyValue> {
+preserves_schema::define_language!(language(): Language<std::sync::Arc<actor::Cap>> {
     syndicate: schemas::Language,
 });
 
 #[cfg(test)]
 mod protocol_test {
     use crate::*;
-    use preserves::value::{BytesBinarySource, BinarySource, IOValueDomainCodec, ViaCodec, IOValue};
+    use preserves::*;
     use preserves_schema::Deserialize;
 
     #[test] fn decode_sync() {
         let input_str = "[[2 <S #:[0 11]>]]";
         let mut src = BytesBinarySource::new(input_str.as_bytes());
-        let mut r = src.text::<IOValue, _>(ViaCodec::new(IOValueDomainCodec));
-        let packet: schemas::protocol::Packet<IOValue> = schemas::protocol::Packet::deserialize(&mut r).unwrap();
+        let mut r = src.text();
+        let packet: schemas::protocol::Packet<IOValue> =
+            schemas::protocol::Packet::deserialize(&mut r, &mut IOValueDomainDecode).unwrap();
         println!("{:?}", packet);
     }
 }

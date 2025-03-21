@@ -4,10 +4,12 @@ use crate::schemas::dataspace_patterns::*;
 
 use super::language;
 
-use preserves::value::Map;
-use preserves::value::NestedValue;
-use preserves::value::Record;
-use preserves::value::Value;
+use preserves::CompoundClass;
+use preserves::Map;
+use preserves::Record;
+use preserves::Value;
+use preserves::ValueClass;
+use preserves::signed_integer::OutOfRange;
 use preserves_schema::Codec;
 
 pub type PathStep = _Any;
@@ -86,7 +88,7 @@ impl Analyzer {
     }
 }
 
-impl Pattern<_Any> {
+impl Pattern<_Ptr> {
     pub fn match_value(&self, value: &_Any) -> Option<Vec<_Any>> {
         let mut matcher = PatternMatcher::new();
         if matcher.run(self, value) {
@@ -104,19 +106,23 @@ impl PatternMatcher {
         }
     }
 
-    fn run_seq<'a, F: 'a + Fn(usize) -> &'a _Any>(&mut self, entries: &Map<_Any, Pattern<_Any>>, values: F) -> bool {
+    fn run_seq<F: Fn(usize) -> Option<_Any>>(&mut self, entries: &Map<_Any, Pattern<_Ptr>>, values: F) -> bool {
         for (k, p) in entries {
-            match k.value().as_usize() {
+            match k.as_usize() {
                 None => return false,
-                Some(i) => if !self.run(p, values(i)) {
-                    return false;
-                }
+                Some(Err(OutOfRange(_))) => return false,
+                Some(Ok(i)) => match values(i) {
+                    Some(v) => if !self.run(p, &v) {
+                        return false;
+                    },
+                    None => return false,
+                },
             }
         }
         true
     }
 
-    fn run(&mut self, pattern: &Pattern<_Any>, value: &_Any) -> bool {
+    fn run(&mut self, pattern: &Pattern<_Ptr>, value: &_Any) -> bool {
         match pattern {
             Pattern::Discard => true,
             Pattern::Bind { pattern } => {
@@ -125,62 +131,50 @@ impl PatternMatcher {
             }
             Pattern::Lit { value: expected } => value == &language().unparse(&**expected),
             Pattern::Group { type_, entries } => match &**type_ {
-                GroupType::Rec { label } => {
-                    match value.value().as_record(None) {
-                        None => false,
-                        Some(r) =>
-                            r.label() == label &&
-                            self.run_seq(entries, |i| &r.fields()[i])
-                    }
-                }
-                GroupType::Arr => {
-                    match value.value().as_sequence() {
-                        None => false,
-                        Some(vs) =>
-                            self.run_seq(entries, |i| &vs[i])
-                    }
-                }
-                GroupType::Dict => {
-                    match value.value().as_dictionary() {
-                        None => false,
-                        Some(actual_entries) => {
-                            for (k, p) in entries {
-                                if !actual_entries.get(k).map(|v| self.run(p, v)).unwrap_or(false) {
-                                    return false;
-                                }
+                GroupType::Rec { label } =>
+                    value.is_record() &&
+                    &value.label() == label &&
+                    self.run_seq(entries, |i| (i < value.len()).then(|| value.index(i))),
+                GroupType::Arr =>
+                    value.is_sequence() &&
+                    self.run_seq(entries, |i| (i < value.len()).then(|| value.index(i))),
+                GroupType::Dict =>
+                    value.is_dictionary() && {
+                        for (k, p) in entries {
+                            if !value.get(k).map(|v| self.run(p, &v)).unwrap_or(false) {
+                                return false;
                             }
-                            true
                         }
-                    }
-                }
+                        true
+                    },
             }
         }
     }
 }
 
 pub fn lift_literal(v: &_Any) -> Pattern {
-    match v.value() {
-        Value::Record(r) => Pattern::Group {
-            type_: Box::new(GroupType::Rec { label: r.label().clone() }),
-            entries: r.fields().iter().enumerate()
-                .map(|(i, v)| (_Any::new(i), lift_literal(v)))
+    match v.value_class() {
+        ValueClass::Compound(CompoundClass::Record) => Pattern::Group {
+            type_: Box::new(GroupType::Rec { label: v.label() }),
+            entries: v.iter().enumerate()
+                .map(|(i, v)| (_Any::new(i), lift_literal(&v)))
                 .collect(),
         },
-        Value::Sequence(items) => Pattern::Group {
+        ValueClass::Compound(CompoundClass::Sequence) => Pattern::Group {
             type_: Box::new(GroupType::Arr),
-            entries: items.iter().enumerate()
-                .map(|(i, v)| (_Any::new(i), lift_literal(v)))
+            entries: v.iter().enumerate()
+                .map(|(i, v)| (_Any::new(i), lift_literal(&v)))
                 .collect(),
         },
-        Value::Set(_members) => panic!("Cannot express literal set in pattern"),
-        Value::Dictionary(entries) => Pattern::Group {
+        ValueClass::Compound(CompoundClass::Set) => panic!("Cannot express literal set in pattern"),
+        ValueClass::Compound(CompoundClass::Dictionary) => Pattern::Group {
             type_: Box::new(GroupType::Dict),
-            entries: entries.iter()
-                .map(|(k, v)| (k.clone(), lift_literal(v)))
+            entries: v.entries()
+                .map(|(k, v)| (k, lift_literal(&v)))
                 .collect(),
         },
         _other => Pattern::Lit {
-            value: Box::new(language().parse(v).expect("Non-compound datum can be converted to AnyAtom")),
+            value: Box::new(language().parse(v).expect("Failed converting non-compound datum to AnyAtom")),
         },
     }
 }
@@ -190,7 +184,7 @@ const DISCARD: Pattern = Pattern::Discard;
 pub fn pattern_seq_from_dictionary(entries: &Map<_Any, Pattern>) -> Option<Vec<&Pattern>> {
     let mut max_k: Option<usize> = None;
     for k in entries.keys() {
-        max_k = max_k.max(Some(k.value().as_usize()?));
+        max_k = max_k.max(Some(k.as_usize()?.ok()?));
     }
     let mut seq = vec![];
     if let Some(max_k) = max_k {
@@ -213,13 +207,13 @@ pub fn drop_literal(p: &Pattern) -> Option<_Any> {
     match p {
         Pattern::Group { type_, entries } => match &**type_ {
             GroupType::Rec { label } =>
-                Some(Value::Record(Record(drop_literal_entries_seq(vec![label.clone()], entries)?)).wrap()),
+                Some(Value::new(Record::_from_vec(drop_literal_entries_seq(vec![label.clone()], entries)?))),
             GroupType::Arr =>
-                Some(Value::Sequence(drop_literal_entries_seq(vec![], entries)?).wrap()),
+                Some(Value::new(drop_literal_entries_seq(vec![], entries)?)),
             GroupType::Dict =>
-            Some(Value::Dictionary(entries.iter()
+            Some(Value::new(entries.iter()
                 .map(|(k, p)| Some((k.clone(), drop_literal(p)?)))
-                .collect::<Option<Map<_Any, _Any>>>()?).wrap()),
+                .collect::<Option<Map<_Any, _Any>>>()?)),
         },
         Pattern::Lit { value } => Some(language().unparse(&**value)),
         _ => None,

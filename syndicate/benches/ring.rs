@@ -7,8 +7,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use syndicate::actor::*;
-use syndicate::preserves::rec;
-use syndicate::value::NestedValue;
+use preserves::Value;
 
 use tokio::runtime::Runtime;
 
@@ -91,7 +90,7 @@ pub fn bench_ring(c: &mut Criterion) {
                             let spawner_ref = Arc::clone(&self.self_ref);
                             ACTORS_CREATED.fetch_add(1, Ordering::Relaxed);
                             t.spawn(
-                                Some(rec![AnyValue::symbol("forwarder"), AnyValue::new(i)]),
+                                Some(Value::record(Value::symbol("forwarder"), vec![Value::new(i)])),
                                 move |t| {
                                     let _ = t.prevent_inert_check();
                                     let f = t.create(Forwarder {

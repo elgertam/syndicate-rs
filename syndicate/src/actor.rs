@@ -19,13 +19,11 @@ use super::trace;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 
-use preserves::value::ArcValue;
-use preserves::value::Domain;
-use preserves::value::IOValue;
-use preserves::value::Map;
-use preserves::value::NestedValue;
-use preserves::value::Set;
-use preserves_schema::ParseError;
+use preserves::Value;
+use preserves::Domain;
+use preserves::Map;
+use preserves::ValueImpl;
+use preserves::Set;
 use preserves_schema::support::Parse;
 use preserves_schema::support::Unparse;
 
@@ -57,7 +55,7 @@ use tokio_util::sync::CancellationToken;
 /// `M`-values can be exchanged among objects, for distributed or
 /// polyglot systems a *lingua franca* has to be chosen. `AnyValue` is
 /// that language.
-pub type AnyValue = ArcValue<Arc<Cap>>;
+pub type AnyValue = Value<Arc<Cap>>;
 
 /// The type of the optional names attached to actors, tasks, and [`Account`]s.
 pub type Name = Option<AnyValue>;
@@ -508,8 +506,8 @@ pub struct Cap {
 /// underlying entity.
 pub struct Guard<L, M>
 where
-    M: for<'a> Unparse<&'a L, AnyValue>,
-    M: for<'a> Parse<&'a L, AnyValue>,
+    M: for<'a> Unparse<&'a L, Arc<Cap>>,
+    M: for<'a> Parse<&'a L, Arc<Cap>>,
 {
     underlying: Arc<Ref<M>>,
     literals: Arc<L>,
@@ -587,12 +585,12 @@ preserves_schema::support::lazy_static! {
 }
 
 impl TryFrom<&AnyValue> for Synced {
-    type Error = ParseError;
+    type Error = preserves::Error;
     fn try_from(value: &AnyValue) -> Result<Self, Self::Error> {
-        if let Some(true) = value.value().as_boolean() {
+        if let Some(true) = value.as_boolean() {
             Ok(Synced)
         } else {
-            Err(ParseError::conformance_error("Synced"))
+            Err(preserves::SyntaxError::new(None, "Synced"))
         }
     }
 }
@@ -603,13 +601,13 @@ impl From<&Synced> for AnyValue {
     }
 }
 
-impl<'a> Parse<&'a (), AnyValue> for Synced {
-    fn parse(_language: &'a (), value: &AnyValue) -> Result<Self, ParseError> {
+impl<'a> Parse<&'a (), Arc<Cap>> for Synced {
+    fn parse(_language: &'a (), value: &AnyValue) -> Result<Self, preserves::Error> {
         Synced::try_from(value)
     }
 }
 
-impl<'a> Unparse<&'a (), AnyValue> for Synced {
+impl<'a> Unparse<&'a (), Arc<Cap>> for Synced {
     fn unparse(&self, _language: &'a ()) -> AnyValue {
         self.into()
     }
@@ -2450,8 +2448,8 @@ impl Cap {
         underlying: Arc<Ref<M>>,
     ) -> Arc<Self>
     where
-        M: for<'a> Unparse<&'a L, AnyValue>,
-        M: for<'a> Parse<&'a L, AnyValue>,
+        M: for<'a> Unparse<&'a L, Arc<Cap>>,
+        M: for<'a> Parse<&'a L, Arc<Cap>>,
     {
         let literals = Arc::clone(literals);
         Self::new(&Arc::new(Ref {
@@ -2494,13 +2492,13 @@ impl Cap {
     /// Translates `m` into an `AnyValue`, passes it through
     /// [`rewrite`][Self::rewrite], and then
     /// [`assert`s][Activation::assert] it using the activation `t`.
-    pub fn assert<L, M: Unparse<L, AnyValue>>(&self, t: &mut Activation, literals: L, m: &M) -> Option<Handle>
+    pub fn assert<L, M: Unparse<L, Arc<Cap>>>(&self, t: &mut Activation, literals: L, m: &M) -> Option<Handle>
     {
         self.rewrite(m.unparse(literals)).map(|m| t.assert(&self.underlying, m))
     }
 
     /// `update` is to [`assert`] as [`Activation::update`] is to [`Activation::assert`].
-    pub fn update<L, M: Unparse<L, AnyValue>>(
+    pub fn update<L, M: Unparse<L, Arc<Cap>>>(
         &self,
         t: &mut Activation,
         handle: &mut Option<Handle>,
@@ -2513,7 +2511,7 @@ impl Cap {
     /// Translates `m` into an `AnyValue`, passes it through
     /// [`rewrite`][Self::rewrite], and then sends it via method
     /// [`message`][Activation::message] on the activation `t`.
-    pub fn message<L, M: Unparse<L, AnyValue>>(&self, t: &mut Activation, literals: L, m: &M)
+    pub fn message<L, M: Unparse<L, Arc<Cap>>>(&self, t: &mut Activation, literals: L, m: &M)
     {
         if let Some(m) = self.rewrite(m.unparse(literals)) {
             t.message(&self.underlying, m)
@@ -2546,23 +2544,10 @@ impl std::fmt::Debug for Cap {
 
 impl Domain for Cap {}
 
-impl std::convert::TryFrom<&IOValue> for Cap {
-    type Error = preserves_schema::support::ParseError;
-    fn try_from(_v: &IOValue) -> Result<Self, Self::Error> {
-        panic!("Attempted to serialize Cap via IOValue");
-    }
-}
-
-impl std::convert::From<&Cap> for IOValue {
-    fn from(_v: &Cap) -> IOValue {
-        panic!("Attempted to deserialize Ref via IOValue");
-    }
-}
-
 impl<L: Sync + Send, M> Entity<AnyValue> for Guard<L, M>
 where
-    M: for<'a> Unparse<&'a L, AnyValue>,
-    M: for<'a> Parse<&'a L, AnyValue>,
+    M: for<'a> Unparse<&'a L, Arc<Cap>>,
+    M: for<'a> Parse<&'a L, Arc<Cap>>,
 {
     fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
         match M::parse(&*self.literals, &a) {

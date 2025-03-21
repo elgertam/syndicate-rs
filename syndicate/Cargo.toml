@@ -16,34 +16,34 @@ bench = false
 vendored-openssl = ["openssl/vendored"]
 
 [build-dependencies]
-preserves-schema = "5.996"
+preserves-schema.workspace = true
 syndicate-schema-plugin = { path = "../syndicate-schema-plugin", version = "0.11.0"}
 
 [dependencies]
-preserves = "4.996"
-preserves-schema = "5.996"
+preserves.workspace = true
+preserves-schema.workspace = true
 
-tokio = { version = "1.10", features = ["io-std", "io-util", "macros", "rt", "rt-multi-thread", "time"] }
-tokio-util = "0.6"
-bytes = "1.0"
+tokio = { workspace = true, features = ["io-std", "io-util", "macros", "rt", "rt-multi-thread", "time"] }
+tokio-util.workspace = true
+bytes.workspace = true
+parking_lot.workspace = true
+futures.workspace = true
 
-futures = "0.3"
+lazy_static.workspace = true
 
 blake2 = "0.10"
 getrandom = "0.2"
 hmac = "0.12"
-lazy_static = "1.4"
-parking_lot = "0.11"
 
-tracing = "0.1"
-tracing-subscriber = "0.2"
-tracing-futures = "0.2"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-futures.workspace = true
 
 # Only used for vendored-openssl, which in turn is being used for cross-builds
 openssl = { version = "0.10", optional = true }
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion.workspace = true
 
 [[bench]]
 name = "bench_dataspace"
