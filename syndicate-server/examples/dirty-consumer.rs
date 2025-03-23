@@ -42,15 +42,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let turn = P::Turn::<IOValue>(vec![
             P::TurnEvent {
                 oid: P::Oid(1.into()),
-                event: P::Event::Assert(Box::new(P::Assert {
+                event: P::Event::Assert(P::Assert {
                     assertion: P::Assertion(iolang.unparse(&Observe {
                         pattern: syndicate_macros::pattern!{<Says $ $>},
                         observer: iolang.unparse(&sturdy::WireRef::Mine {
-                            oid: Box::new(sturdy::Oid(2.into())),
+                            oid: sturdy::Oid(2.into()),
                         }).into(),
                     })),
                     handle: P::Handle(2.into()),
-                })),
+                }),
             }
         ]);
         stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&turn).into())?)?;

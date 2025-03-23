@@ -97,10 +97,10 @@ impl Entity<http::HttpResponse> for ResponseCollector {
                 Ok(())
             }),
             http::HttpResponse::Chunk { chunk } => {
-                self.add_chunk(*chunk)
+                self.add_chunk(chunk)
             }
             http::HttpResponse::Done { chunk } => {
-                self.add_chunk(*chunk)?;
+                self.add_chunk(chunk)?;
                 self.finish(t)
             }
         }

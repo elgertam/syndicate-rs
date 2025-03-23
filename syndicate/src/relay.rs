@@ -382,8 +382,7 @@ impl TunnelRelay {
     pub fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<Arc<Cap>>) -> ActorResult {
         tracing::debug!(packet = ?p, "-->");
         match p {
-            P::Packet::Extension(b) => {
-                let P::Extension { label, fields } = *b;
+            P::Packet::Extension(P::Extension { label, fields }) => {
                 tracing::info!(?label, ?fields, "received Extension from peer");
                 Ok(())
             }
@@ -395,10 +394,9 @@ impl TunnelRelay {
                 tracing::info!(message = ?b.message.clone(),
                                detail = ?b.detail.clone(),
                                "received Error from peer");
-                Err(*b)?
+                Err(b)?
             }
-            P::Packet::Turn(b) => {
-                let P::Turn(events) = *b;
+            P::Packet::Turn(P::Turn(events)) => {
                 for P::TurnEvent { oid, event } in events {
                     tracing::trace!(?oid, ?event, "handle_inbound");
                     let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.0.clone())) {
@@ -415,7 +413,7 @@ impl TunnelRelay {
                     let target = Arc::clone(&target.obj);
                     match event {
                         P::Event::Assert(b) => {
-                            let P::Assert { assertion: P::Assertion(a), handle: remote_handle } = *b;
+                            let P::Assert { assertion: P::Assertion(a), handle: remote_handle } = b;
                             a.foreach_embedded(
                                 &mut |r| Ok(pins.push(self.membranes.lookup_ref(r)))).unwrap();
                             if let Some(local_handle) = target.assert(t, &(), &a) {
@@ -428,7 +426,7 @@ impl TunnelRelay {
                             dump_membranes!(self.membranes);
                         }
                         P::Event::Retract(b) => {
-                            let P::Retract { handle: remote_handle } = *b;
+                            let P::Retract { handle: remote_handle } = b;
                             match self.inbound_assertions.remove(&remote_handle) {
                                 None => {
                                     // This can happen when e.g. an assertion previously made
@@ -444,7 +442,7 @@ impl TunnelRelay {
                             }
                         }
                         P::Event::Message(b) => {
-                            let P::Message { body: P::Assertion(a) } = *b;
+                            let P::Message { body: P::Assertion(a) } = b;
                             a.foreach_embedded(&mut |r| {
                                 let ws = self.membranes.lookup_ref(r);
                                 let rc = ws.current_ref_count();
@@ -459,7 +457,7 @@ impl TunnelRelay {
                             dump_membranes!(self.membranes);
                         }
                         P::Event::Sync(b) => {
-                            let P::Sync { peer } = *b;
+                            let P::Sync { peer } = b;
                             pins.push(self.membranes.lookup_ref(&peer));
                             dump_membranes!(self.membranes);
                             struct SyncPeer {
@@ -499,7 +497,7 @@ impl TunnelRelay {
     ) -> ActorResult {
         match event {
             P::Event::Assert(b) => {
-                let P::Assert { assertion: P::Assertion(a), handle } = &**b;
+                let P::Assert { assertion: P::Assertion(a), handle } = b;
                 if let Some(target_ws) = self.membranes.imported.oid_map.get(&remote_oid).map(Arc::clone) {
                     target_ws.inc_ref(); // encoding won't do this; target oid is syntactically special
                     let mut pins = vec![target_ws];
@@ -517,7 +515,7 @@ impl TunnelRelay {
                 }
             }
             P::Event::Retract(b) => {
-                let P::Retract { handle } = &**b;
+                let P::Retract { handle } = b;
                 if let Some(pins) = self.outbound_assertions.remove(handle) {
                     self.membranes.release(pins);
                     dump_membranes!(self.membranes);
@@ -530,7 +528,7 @@ impl TunnelRelay {
                 }
             }
             P::Event::Message(b) => {
-                let P::Message { body: P::Assertion(a) } = &**b;
+                let P::Message { body: P::Assertion(a) } = b;
                 a.foreach_embedded(&mut |r| {
                     let ws = self.membranes.lookup_ref(r);
                     if self.membranes.release_one(ws) { // undo the inc_ref from encoding
@@ -573,7 +571,7 @@ impl TunnelRelay {
                 let events = std::mem::take(&mut tr.pending_outbound);
                 tr.send_packet(&t.account(),
                                events.len(),
-                               P::Packet::Turn(Box::new(P::Turn(events.clone()))))?;
+                               P::Packet::Turn(P::Turn(events.clone())))?;
                 for P::TurnEvent { oid, event } in events.into_iter() {
                     tr.outbound_event_bookkeeping(t, sturdy::Oid(oid.0), &event)?;
                 }
@@ -644,13 +642,13 @@ impl Membranes {
     ) -> ReaderResult<Arc<Cap>> {
         match wr {
             sturdy::WireRef::Mine{ oid: b } => {
-                let oid = *b;
+                let oid = b;
                 let ws = self.imported.oid_map.get(&oid).map(Arc::clone)
                     .unwrap_or_else(|| self.import_oid(t, relay_ref, oid));
                 Ok(Arc::clone(&ws.inc_ref().obj))
             }
             sturdy::WireRef::Yours { oid: b, attenuation } => {
-                let oid = *b;
+                let oid = b;
                 let ws = self.exported.oid_map.get(&oid).map(Arc::clone)
                     .unwrap_or_else(|| self.exported.insert_inert_entity(t, oid.clone()));
 
@@ -684,13 +682,13 @@ impl Membranes {
     fn encode_wireref(&mut self, d: &Arc<Cap>) -> sturdy::WireRef {
         match self.exported.ref_map.get(d) {
             Some(ws) => sturdy::WireRef::Mine {
-                oid: Box::new(ws.inc_ref().oid.clone()),
+                oid: ws.inc_ref().oid.clone(),
             },
             None => match self.imported.ref_map.get(d) {
                 Some(ws) => {
                     if d.attenuation.is_empty() {
                         sturdy::WireRef::Yours {
-                            oid: Box::new(ws.inc_ref().oid.clone()),
+                            oid: ws.inc_ref().oid.clone(),
                             attenuation: vec![],
                         }
                     } else {
@@ -698,13 +696,13 @@ impl Membranes {
                         // which case we can return sturdy::WireRef::Yours with an attenuation
                         // attached here, but for now we don't.
                         sturdy::WireRef::Mine {
-                            oid: Box::new(self.export_ref(Arc::clone(d)).inc_ref().oid.clone()),
+                            oid: self.export_ref(Arc::clone(d)).inc_ref().oid.clone(),
                         }
                     }
                 }
                 None =>
                     sturdy::WireRef::Mine {
-                        oid: Box::new(self.export_ref(Arc::clone(d)).inc_ref().oid.clone()),
+                        oid: self.export_ref(Arc::clone(d)).inc_ref().oid.clone(),
                     },
             }
         }
@@ -834,7 +832,7 @@ impl Entity<()> for TunnelRefEntity {
             let e = e.clone();
             let mut g = self.relay_ref.lock();
             let tr = g.as_mut().expect("initialized");
-            if let Err(f) = tr.send_packet(&t.account(), 1, P::Packet::Error(Box::new(e))) {
+            if let Err(f) = tr.send_packet(&t.account(), 1, P::Packet::Error(e)) {
                 tracing::error!("Failed to send error packet: {:?}", f);
             }
         }
@@ -844,27 +842,27 @@ impl Entity<()> for TunnelRefEntity {
 impl Entity<AnyValue> for RelayEntity {
     fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
         self.relay_ref.lock().as_mut().expect("initialized")
-            .send_event(t, self.oid.clone(), P::Event::Assert(Box::new(P::Assert {
+            .send_event(t, self.oid.clone(), P::Event::Assert(P::Assert {
                 assertion: P::Assertion(a),
                 handle: P::Handle(h.into()),
-            })))
+            }))
     }
     fn retract(&mut self, t: &mut Activation, h: Handle) -> ActorResult {
         self.relay_ref.lock().as_mut().expect("initialized")
-            .send_event(t, self.oid.clone(), P::Event::Retract(Box::new(P::Retract {
+            .send_event(t, self.oid.clone(), P::Event::Retract(P::Retract {
                 handle: P::Handle(h.into()),
-            })))
+            }))
     }
     fn message(&mut self, t: &mut Activation, m: AnyValue) -> ActorResult {
         self.relay_ref.lock().as_mut().expect("initialized")
-            .send_event(t, self.oid.clone(), P::Event::Message(Box::new(P::Message {
+            .send_event(t, self.oid.clone(), P::Event::Message(P::Message {
                 body: P::Assertion(m)
-            })))
+            }))
     }
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
         self.relay_ref.lock().as_mut().expect("initialized")
-            .send_event(t, self.oid.clone(), P::Event::Sync(Box::new(P::Sync {
+            .send_event(t, self.oid.clone(), P::Event::Sync(P::Sync {
                 peer: Cap::guard(&Arc::new(()), peer)
-            })))
+            }))
     }
 }

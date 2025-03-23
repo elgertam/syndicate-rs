@@ -82,7 +82,7 @@ impl Analyzer {
             }
             Pattern::Lit { value } => {
                 self.const_paths.push(path.clone());
-                self.const_values.push(language().unparse(&**value));
+                self.const_values.push(language().unparse(value));
             }
         }
     }
@@ -129,8 +129,8 @@ impl PatternMatcher {
                 self.captures.push(value.clone());
                 self.run(&**pattern, value)
             }
-            Pattern::Lit { value: expected } => value == &language().unparse(&**expected),
-            Pattern::Group { type_, entries } => match &**type_ {
+            Pattern::Lit { value: expected } => value == &language().unparse(expected),
+            Pattern::Group { type_, entries } => match type_ {
                 GroupType::Rec { label } =>
                     value.is_record() &&
                     &value.label() == label &&
@@ -155,26 +155,26 @@ impl PatternMatcher {
 pub fn lift_literal(v: &_Any) -> Pattern {
     match v.value_class() {
         ValueClass::Compound(CompoundClass::Record) => Pattern::Group {
-            type_: Box::new(GroupType::Rec { label: v.label() }),
+            type_: GroupType::Rec { label: v.label() },
             entries: v.iter().enumerate()
                 .map(|(i, v)| (_Any::new(i), lift_literal(&v)))
                 .collect(),
         },
         ValueClass::Compound(CompoundClass::Sequence) => Pattern::Group {
-            type_: Box::new(GroupType::Arr),
+            type_: GroupType::Arr,
             entries: v.iter().enumerate()
                 .map(|(i, v)| (_Any::new(i), lift_literal(&v)))
                 .collect(),
         },
         ValueClass::Compound(CompoundClass::Set) => panic!("Cannot express literal set in pattern"),
         ValueClass::Compound(CompoundClass::Dictionary) => Pattern::Group {
-            type_: Box::new(GroupType::Dict),
+            type_: GroupType::Dict,
             entries: v.entries()
                 .map(|(k, v)| (k, lift_literal(&v)))
                 .collect(),
         },
         _other => Pattern::Lit {
-            value: Box::new(language().parse(v).expect("Failed converting non-compound datum to AnyAtom")),
+            value: language().parse(v).expect("Failed converting non-compound datum to AnyAtom"),
         },
     }
 }
@@ -205,7 +205,7 @@ fn drop_literal_entries_seq(mut seq: Vec<_Any>, entries: &Map<_Any, Pattern>) ->
 
 pub fn drop_literal(p: &Pattern) -> Option<_Any> {
     match p {
-        Pattern::Group { type_, entries } => match &**type_ {
+        Pattern::Group { type_, entries } => match type_ {
             GroupType::Rec { label } =>
                 Some(Value::new(Record::_from_vec(drop_literal_entries_seq(vec![label.clone()], entries)?))),
             GroupType::Arr =>
@@ -215,7 +215,7 @@ pub fn drop_literal(p: &Pattern) -> Option<_Any> {
                 .map(|(k, p)| Some((k.clone(), drop_literal(p)?)))
                 .collect::<Option<Map<_Any, _Any>>>()?)),
         },
-        Pattern::Lit { value } => Some(language().unparse(&**value)),
+        Pattern::Lit { value } => Some(language().unparse(value)),
         _ => None,
     }
 }

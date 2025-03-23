@@ -46,9 +46,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0 .. config.action_count {
         events.push(P::TurnEvent::<IOValue> {
             oid: P::Oid(1.into()),
-            event: P::Event::Message(Box::new(P::Message {
+            event: P::Event::Message(P::Message {
                 body: P::Assertion(says(IOValue::new("producer"), padding.clone())),
-            })),
+            }),
         });
     }
     let turn = P::Turn(events);

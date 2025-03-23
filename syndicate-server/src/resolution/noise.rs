@@ -45,7 +45,7 @@ pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
             match validate_noise_service_spec(spec) {
                 Ok(spec) => if let gatekeeper::BindObserver::Present(o) = observer {
                     o.assert(t, language(), &gatekeeper::Bound::Bound {
-                        path_step: Box::new(gatekeeper::PathStep {
+                        path_step: gatekeeper::PathStep {
                             step_type: noise_step_type(),
                             detail: language().unparse(&noise::NoisePathStepDetail(noise::NoiseSpec {
                                 key: spec.public_key,
@@ -65,15 +65,15 @@ pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
                                     }
                                 },
                             })),
-                        }),
+                        },
                     });
                 },
                 Err(e) => {
                     if let gatekeeper::BindObserver::Present(o) = observer {
                         o.assert(t, language(), &gatekeeper::Bound::Rejected(
-                            Box::new(gatekeeper::Rejected {
+                            gatekeeper::Rejected {
                                 detail: AnyValue::new(format!("{}", &e)),
-                            })));
+                            }));
                     }
                     tracing::error!("Invalid noise bind description: {}", e);
                 }
@@ -246,7 +246,7 @@ impl Entity<noise::SessionItem> for ResponderState {
     fn message(&mut self, t: &mut Activation, item: noise::SessionItem) -> ActorResult {
         let p = match item {
             noise::SessionItem::Initiator(_) => Err("Unexpected Initiator message")?,
-            noise::SessionItem::Packet(p_box) => *p_box,
+            noise::SessionItem::Packet(p_box) => p_box,
         };
         match self {
             ResponderState::Invalid | ResponderState::Introduction { .. } =>

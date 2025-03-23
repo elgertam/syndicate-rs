@@ -215,7 +215,7 @@ impl Node {
     ) -> (usize, &mut Node) {
         let (guard, members): (ds::GroupType, Vec<(PathStep, &ds::Pattern)>) = match pat {
             ds::Pattern::Group { type_, entries } =>
-                ((&**type_).clone(),
+                (type_.clone(),
                  entries.iter().map(|(k, p)| (k.clone(), p)).collect()),
             ds::Pattern::Bind { pattern } =>
                 return self.extend_walk(path, pop_count, step, &**pattern),

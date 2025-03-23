@@ -31,10 +31,10 @@ pub fn handle_sturdy_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
             let sr = sturdy::SturdyRef::mint(desc.oid, &desc.key);
             if let gatekeeper::BindObserver::Present(o) = observer {
                 o.assert(t, language(), &gatekeeper::Bound::Bound {
-                    path_step: Box::new(gatekeeper::PathStep {
+                    path_step: gatekeeper::PathStep {
                         step_type: sturdy_step_type(),
                         detail: language().unparse(&sr.parameters),
-                    }),
+                    },
                 });
             }
             Ok(())
@@ -77,9 +77,9 @@ fn await_bind_sturdyref(
                     tracing::warn!(sturdyref = ?language().unparse(&sturdyref),
                                    "sturdyref failed validation: {}", e);
                     observer.assert(t, language(), &gatekeeper::Resolved::Rejected(
-                        Box::new(gatekeeper::Rejected {
+                        gatekeeper::Rejected {
                             detail: AnyValue::symbol("sturdyref-failed-validation"),
-                        })));
+                        }));
                 },
                 Ok(target) => {
                     tracing::trace!(sturdyref = ?language().unparse(&sturdyref),

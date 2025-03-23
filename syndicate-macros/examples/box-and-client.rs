@@ -3,7 +3,6 @@ use syndicate::enclose;
 use syndicate::dataspace::Dataspace;
 use syndicate::language;
 use syndicate::schemas::dataspace::Observe;
-use syndicate::value::NestedValue;
 
 #[tokio::main]
 async fn main() -> ActorResult {
@@ -28,9 +27,11 @@ async fn main() -> ActorResult {
 
             let set_box_handler = syndicate::entity(())
                 .on_message(enclose!((current_value) move |(), t, captures: AnyValue| {
-                    let v = captures.value().to_sequence()?[0].value().to_u64()?;
-                    tracing::info!(?v, "from set-box");
-                    t.set(&current_value, v);
+                    if let Some(v) = captures.to_sequence()?.nth(0) {
+                        let v = v.to_u64()??;
+                        tracing::info!(?v, "from set-box");
+                        t.set(&current_value, v);
+                    }
                     Ok(())
                 }))
                 .create_cap(t);
@@ -53,19 +54,23 @@ async fn main() -> ActorResult {
             let box_state_handler = syndicate::entity(0u32)
                 .on_asserted(enclose!((ds) move |count, t, captures: AnyValue| {
                     *count = *count + 1;
-                    let value = captures.value().to_sequence()?[0].value().to_u64()?;
-                    tracing::info!(?value);
-                    let next = AnyValue::new(value + 1);
-                    tracing::info!(?next, "sending");
-                    ds.message(t, &(), &syndicate_macros::template!("<set-box =next>"));
-                    Ok(Some(Box::new(|count, t| {
-                        *count = *count - 1;
-                        if *count == 0 {
-                            tracing::info!("box state retracted");
-                            t.stop();
-                        }
-                        Ok(())
-                    })))
+                    if let Some(value) = captures.to_sequence()?.nth(0) {
+                        let value = value.to_u64()??;
+                        tracing::info!(?value);
+                        let next = AnyValue::new(value + 1);
+                        tracing::info!(?next, "sending");
+                        ds.message(t, &(), &syndicate_macros::template!("<set-box =next>"));
+                        Ok(Some(Box::new(|count, t| {
+                            *count = *count - 1;
+                            if *count == 0 {
+                                tracing::info!("box state retracted");
+                                t.stop();
+                            }
+                            Ok(())
+                        })))
+                    } else {
+                        Ok(None)
+                    }
                 }))
                 .create_cap(t);
             ds.assert(t, language(), &Observe {

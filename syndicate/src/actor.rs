@@ -899,9 +899,9 @@ impl Activation {
                 detail: f(),
             };
             d.record(if internal {
-                trace::ActionDescription::EnqueueInternal { event: Box::new(event.clone()) }
+                trace::ActionDescription::EnqueueInternal { event: event.clone() }
             } else {
-                trace::ActionDescription::Enqueue { event: Box::new(event.clone()) }
+                trace::ActionDescription::Enqueue { event: event.clone() }
             });
             event
         })
@@ -960,15 +960,15 @@ impl Activation {
             enclose!((r) move |_| trace::TargetedTurnEvent {
                 target: r.as_ref().into(),
                 detail: trace::TurnEvent::Retract {
-                    handle: Box::new(protocol::Handle(handle.into())),
+                    handle: protocol::Handle(handle.into()),
                 },
             })))
         {
             tracing::trace!(?r, ?handle, ?a, "assert");
             let r = Arc::clone(r);
             let description = self.trace_targeted(false, &r, || trace::TurnEvent::Assert {
-                assertion: Box::new((&a).into()),
-                handle: Box::new(protocol::Handle(handle.into())),
+                assertion: (&a).into(),
+                handle: protocol::Handle(handle.into()),
             });
             self.queue_for(&r).push((
                 description,
@@ -988,8 +988,8 @@ impl Activation {
             enclose!((entity_ref) move |_| trace::TargetedTurnEvent {
                 target: entity_ref.as_ref().into(),
                 detail: trace::TurnEvent::BreakLink {
-                    source: Box::new(this_actor_id.into()),
-                    handle: Box::new(protocol::Handle(handle.into())),
+                    source: this_actor_id.into(),
+                    handle: protocol::Handle(handle.into()),
                 },
             }))));
         tracing::trace!(?handle, ?entity_ref, "half_link");
@@ -1011,7 +1011,7 @@ impl Activation {
             let oa = g.as_ref().expect("Present OutboundAssertion");
 
             if let Some(desc) = &oa.retractor.0 {
-                self.trace(|_| trace::ActionDescription::Enqueue { event: Box::new(desc.clone()) });
+                self.trace(|_| trace::ActionDescription::Enqueue { event: desc.clone() });
             }
 
             self.queue_for_mailbox(&oa.peer).push((
@@ -1051,7 +1051,7 @@ impl Activation {
         tracing::trace!(?r, ?m, "message");
         let r = Arc::clone(r);
         let description = self.trace_targeted(false, &r, || trace::TurnEvent::Message {
-            body: Box::new((&m).into()),
+            body: (&m).into(),
         });
         self.queue_for(&r).push((
             description,
@@ -1069,7 +1069,7 @@ impl Activation {
     pub fn sync<M: 'static + Send>(&mut self, r: &Arc<Ref<M>>, peer: Arc<Ref<Synced>>) {
         let r = Arc::clone(r);
         let description = self.trace_targeted(false, &r, || trace::TurnEvent::Sync {
-            peer: Box::new(peer.as_ref().into()),
+            peer: peer.as_ref().into(),
         });
         self.queue_for(&r).push((
             description,
@@ -1172,7 +1172,7 @@ impl Activation {
         if let Some(d) = self.turn_description.take() {
             causing_turn_id = Some(d.id.clone());
             if let Some(c) = &self.trace_collector {
-                c.record(self.actor_id, trace::ActorActivation::Turn(Box::new(d)));
+                c.record(self.actor_id, trace::ActorActivation::Turn(d));
             }
         }
 
@@ -1183,12 +1183,12 @@ impl Activation {
         // to crash, just as it was receiving thousands of messages a second, leading to
         // many, many log reports of failed send_actions from the following line.)
         if let Some((_actor_id, tx, turn)) = std::mem::take(&mut self.single_queue) {
-            let desc = causing_turn_id.as_ref().map(|id| trace::TurnCause::Turn { id: Box::new(id.clone()) });
+            let desc = causing_turn_id.as_ref().map(|id| trace::TurnCause::Turn { id: id.clone() });
             let _ = send_actions(&tx, desc, &self.account(), turn);
         }
         if let Some(table) = std::mem::take(&mut self.multiple_queues) {
             for (_actor_id, (tx, turn)) in table.into_iter() {
-                let desc = causing_turn_id.as_ref().map(|id| trace::TurnCause::Turn { id: Box::new(id.clone()) });
+                let desc = causing_turn_id.as_ref().map(|id| trace::TurnCause::Turn { id: id.clone() });
                 let _ = send_actions(&tx, desc, &self.account(), turn);
             }
         }
@@ -1254,8 +1254,8 @@ impl Activation {
         if self.active_facet().is_some() {
             let task_id = NEXT_TASK_ID.fetch_add(BUMP_AMOUNT.into(), Ordering::Relaxed);
             self.trace(|_| trace::ActionDescription::LinkedTaskStart {
-                task_name: Box::new(name.into()),
-                id: Box::new(trace::TaskId(AnyValue::new(task_id))),
+                task_name: name.into(),
+                id: trace::TaskId(AnyValue::new(task_id)),
             });
 
             let f = self.active_facet().unwrap();
@@ -1287,8 +1287,8 @@ impl Activation {
                         &release_account,
                         release_account.trace_collector.as_ref().map(
                             |_| trace::TurnCause::LinkedTaskRelease {
-                                id: Box::new(trace::TaskId(AnyValue::new(task_id))),
-                                reason: Box::new(reason),
+                                id: trace::TaskId(AnyValue::new(task_id)),
+                                reason,
                             }),
                         |t| {
                             if let Some(f) = t.active_facet() {
@@ -1317,7 +1317,7 @@ impl Activation {
     ) {
         let account = Arc::clone(self.account());
         let desc = self.turn_description.as_ref().map(|d| trace::TurnCause::Delay {
-            causing_turn: Box::new(d.id.clone()),
+            causing_turn: d.id.clone(),
             amount: duration.as_secs_f64().into(),
         });
         let instant = time::Instant::now() + duration;
@@ -1436,10 +1436,10 @@ impl Activation {
         let ac_ref = ac.ac_ref.clone();
         self.trace(|_| trace::ActionDescription::Spawn {
             link,
-            id: Box::new(ac_ref.actor_id.into()),
+            id: ac_ref.actor_id.into(),
         });
         let cause = self.turn_description.as_ref().map(
-            |d| trace::TurnCause::Turn { id: Box::new(d.id.clone()) });
+            |d| trace::TurnCause::Turn { id: d.id.clone() });
         let ac = if link { ac.link(self) } else { ac };
         self.on_commit(move |t| {
             ac.boot(name, Arc::clone(t.account()), cause, boot);
@@ -1562,7 +1562,7 @@ impl Activation {
 
             self.trace(|t| trace::ActionDescription::FacetStop {
                 path: t.facet_ids_for(&f).iter().map(|i| (*i).into()).collect(),
-                reason: Box::new(reason),
+                reason,
             });
             tracing::trace!(remaining_actor_facet_count = ?self.facet_nodes.len(),
                             ?facet_id,
@@ -2078,10 +2078,10 @@ impl Actor {
         if is_alive {
             let parent_actor = t_parent.actor_id;
             t_parent.trace(|_| trace::ActionDescription::Link {
-                parent_actor: Box::new(parent_actor.into()),
-                parent_to_child: Box::new(protocol::Handle(h_to_child.unwrap().into())),
-                child_actor: Box::new(self.ac_ref.actor_id.into()),
-                child_to_parent: Box::new(protocol::Handle(h_to_parent.unwrap().into())),
+                parent_actor: parent_actor.into(),
+                parent_to_child: protocol::Handle(h_to_child.unwrap().into()),
+                child_actor: self.ac_ref.actor_id.into(),
+                child_to_parent: protocol::Handle(h_to_parent.unwrap().into()),
             });
             self
         } else {
@@ -2105,7 +2105,7 @@ impl Actor {
         let trace_collector = boot_account.trace_collector.clone();
         if let Some(c) = &trace_collector {
             c.record(actor_id, trace::ActorActivation::Start {
-                actor_name: Box::new(name.into()),
+                actor_name: name.into(),
             });
         }
         tokio::spawn(async move {
@@ -2167,7 +2167,7 @@ impl Actor {
                                 for (maybe_desc, action) in actions.into_iter() {
                                     if let Some(desc) = maybe_desc {
                                         t.trace(|_| trace::ActionDescription::Dequeue {
-                                            event: Box::new(desc),
+                                            event: desc,
                                         });
                                     }
                                     action(t)?;
@@ -2312,10 +2312,10 @@ impl ActorState {
 
         if let Some(c) = trace_collector {
             c.record(actor.actor_id, trace::ActorActivation::Stop {
-                status: Box::new(match &*exit_status {
+                status: match &*exit_status {
                     ExitStatus::Normal | ExitStatus::Dropped => trace::ExitStatus::Ok,
-                    ExitStatus::Error(e) => trace::ExitStatus::Error(Box::new(e.clone())),
-                }),
+                    ExitStatus::Error(e) => trace::ExitStatus::Error(e.clone()),
+                },
             });
         }
     }

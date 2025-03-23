@@ -181,7 +181,7 @@ fn compile_pattern(v: Value<IOValue>) -> TokenStream {
                             };
                             let members = compile_sequence_members(v.iter().collect());
                             quote!(#P_::Pattern::Group {
-                                type_: Box::new(#P_::GroupType::Rec { label: #label_stx }),
+                                type_: #P_::GroupType::Rec { label: #label_stx },
                                 entries: #MapFrom_([#(#members),*]),
                             })
                         }
@@ -190,7 +190,7 @@ fn compile_pattern(v: Value<IOValue>) -> TokenStream {
             CompoundClass::Sequence => {
                 let members = compile_sequence_members(v.iter().collect());
                 quote!(#P_::Pattern::Group {
-                    type_: Box::new(#P_::GroupType::Arr),
+                    type_: #P_::GroupType::Arr,
                     entries: #MapFrom_([#(#members),*]),
                 })
             }
@@ -203,7 +203,7 @@ fn compile_pattern(v: Value<IOValue>) -> TokenStream {
                     quote!((#k, #v))
                 }).collect::<Vec<_>>();
                 quote!(#P_::Pattern::Group {
-                    type_: Box::new(#P_::GroupType::Dict),
+                    type_: #P_::GroupType::Dict,
                     entries: #MapFrom_([#(#members),*]),
                 })
             }

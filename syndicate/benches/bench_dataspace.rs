@@ -87,7 +87,7 @@ pub fn bench_pub(c: &mut Criterion) {
                         ds.assert(t, language(), &Observe {
                             pattern: p::Pattern::Bind {
                                 pattern: Box::new(p::Pattern::Lit {
-                                    value: Box::new(p::AnyAtom::Symbol("consumer".to_owned())),
+                                    value: p::AnyAtom::Symbol("consumer".to_owned()),
                                 }),
                             },
                             observer: shutdown,
@@ -108,12 +108,12 @@ pub fn bench_pub(c: &mut Criterion) {
                             ds.assert(t, &(), &AnyValue::symbol("consumer"));
                             ds.assert(t, language(), &Observe {
                                 pattern: p::Pattern::Group {
-                                    type_: Box::new(p::GroupType::Rec {
+                                    type_: p::GroupType::Rec {
                                         label: AnyValue::symbol("Says"),
-                                    }),
+                                    },
                                     entries: Map::from([
                                         (p::_Any::new(0), p::Pattern::Lit {
-                                            value: Box::new(p::AnyAtom::String("bench_pub".to_owned())),
+                                            value: p::AnyAtom::String("bench_pub".to_owned()),
                                         }),
                                         (p::_Any::new(1), p::Pattern::Bind {
                                             pattern: Box::new(p::Pattern::Discard),
@@ -125,7 +125,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             ds.assert(t, language(), &Observe {
                                 pattern: p::Pattern::Bind {
                                     pattern: Box::new(p::Pattern::Lit {
-                                        value: Box::new(p::AnyAtom::Bool(true)),
+                                        value: p::AnyAtom::Bool(true),
                                     }),
                                 },
                                 observer: shutdown,

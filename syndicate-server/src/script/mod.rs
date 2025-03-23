@@ -191,7 +191,7 @@ fn dlit(value: AnyValue) -> P::Pattern {
 }
 
 fn tlit(value: AnyValue) -> sturdy::Template {
-    sturdy::Template::Lit(Box::new(sturdy::Lit { value }))
+    sturdy::Template::Lit(sturdy::Lit { value })
 }
 
 fn parse_rewrite(raw_base_name: &AnyValue, e: AnyValue) -> io::Result<RewriteTemplate> {
@@ -298,10 +298,10 @@ impl<'env> PatternInstantiator<'env> {
                                 .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(&p)?)))
                                 .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?;
                             P::Pattern::Group {
-                                type_: Box::new(P::GroupType::Rec {
+                                type_: P::GroupType::Rec {
                                     label: drop_literal(&label)
                                         .ok_or(bad_instruction("Record pattern must have literal label"))?,
-                                }),
+                                },
                                 entries,
                             }
                         }
@@ -311,7 +311,7 @@ impl<'env> PatternInstantiator<'env> {
 
             ValueClass::Compound(CompoundClass::Sequence) =>
                 P::Pattern::Group {
-                    type_: Box::new(P::GroupType::Arr),
+                    type_: P::GroupType::Arr,
                     entries: template.iter().enumerate()
                         .map(|(i, p)| Ok((AnyValue::new(i), self.instantiate_pattern(&p)?)))
                         .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
@@ -322,7 +322,7 @@ impl<'env> PatternInstantiator<'env> {
 
             ValueClass::Compound(CompoundClass::Dictionary) =>
                 P::Pattern::Group {
-                    type_: Box::new(P::GroupType::Dict),
+                    type_: P::GroupType::Dict,
                     entries: template.entries()
                         .map(|(a, b)| Ok((a.clone(), self.instantiate_pattern(&b)?)))
                         .collect::<io::Result<Map<AnyValue, P::Pattern>>>()?,
@@ -598,7 +598,7 @@ impl Env {
                 let (_binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
                 Ok(sturdy::Rewrite {
                     pattern: embed_pattern(&P::Pattern::Bind { pattern: Box::new(pattern) }),
-                    template: sturdy::Template::TRef(Box::new(sturdy::TRef { binding: 0.into() })),
+                    template: sturdy::Template::TRef(sturdy::TRef { binding: 0.into() }),
                 })
             }
             RewriteTemplate::Rewrite { pattern_template, template_template } => {
@@ -620,18 +620,17 @@ impl Env {
                 let mut rewrites =
                     alternatives.iter().map(|r| self.instantiate_rewrite(r)).collect::<Result<Vec<_>, _>>()?;
                 if rewrites.len() == 1 {
-                    Ok(sturdy::Caveat::Rewrite(Box::new(rewrites.pop().unwrap())))
+                    Ok(sturdy::Caveat::Rewrite(rewrites.pop().unwrap()))
                 } else {
-                    Ok(sturdy::Caveat::Alts(Box::new(sturdy::Alts {
+                    Ok(sturdy::Caveat::Alts(sturdy::Alts {
                         alternatives: rewrites,
-                    })))
+                    }))
                 }
             }
             CaveatTemplate::Reject { pattern_template } => {
-                Ok(sturdy::Caveat::Reject(Box::new(
-                    sturdy::Reject {
-                        pattern: embed_pattern(&self.instantiate_pattern(pattern_template)?.1),
-                    })))
+                Ok(sturdy::Caveat::Reject(sturdy::Reject {
+                    pattern: embed_pattern(&self.instantiate_pattern(pattern_template)?.1),
+                }))
             }
         }
     }
@@ -653,7 +652,7 @@ impl Env {
                 Symbolic::Reference(s) =>
                     match find_bound(&s) {
                         Some(i) =>
-                            sturdy::Template::TRef(Box::new(sturdy::TRef { binding: i.into() })),
+                            sturdy::Template::TRef(sturdy::TRef { binding: i.into() }),
                         None =>
                             tlit(self.lookup(&s, "attenuation-template variable")?),
                     },
@@ -671,7 +670,7 @@ impl Env {
                         match find_bound(&base_name) {
                             Some(i) =>
                                 sturdy::Template::TAttenuate(Box::new(sturdy::TAttenuate {
-                                    template: sturdy::Template::TRef(Box::new(sturdy::TRef {
+                                    template: Box::new(sturdy::Template::TRef(sturdy::TRef {
                                         binding: i.into(),
                                     })),
                                     attenuation: caveats.iter()
@@ -685,12 +684,12 @@ impl Env {
                         // TODO: properly consolidate constant templates into literals.
                         match self.instantiate_template(binding_names, &r.label())? {
                             sturdy::Template::Lit(b) =>
-                                sturdy::Template::TCompound(Box::new(sturdy::TCompound::Rec {
+                                sturdy::Template::TCompound(sturdy::TCompound::Rec {
                                     label: b.value,
                                     fields: r.iter()
                                         .map(|t| self.instantiate_template(binding_names, &t))
                                         .collect::<io::Result<Vec<sturdy::Template>>>()?,
-                                })),
+                                }),
                             _ => Err(bad_instruction("Record template must have literal label"))?,
                         }
                     }
@@ -698,35 +697,35 @@ impl Env {
             }
 
             ValueClass::Compound(CompoundClass::Sequence) =>
-                sturdy::Template::TCompound(Box::new(sturdy::TCompound::Arr {
+                sturdy::Template::TCompound(sturdy::TCompound::Arr {
                     items: template.iter()
                         .map(|p| self.instantiate_template(binding_names, &p))
                         .collect::<io::Result<Vec<sturdy::Template>>>()?,
-                })),
+                }),
 
             ValueClass::Compound(CompoundClass::Set) =>
                 Err(bad_instruction(&format!("Sets not permitted in templates: {:?}", template)))?,
 
             ValueClass::Compound(CompoundClass::Dictionary) =>
-                sturdy::Template::TCompound(Box::new(sturdy::TCompound::Dict {
+                sturdy::Template::TCompound(sturdy::TCompound::Dict {
                     entries: template.entries()
                         .map(|(a, b)| Ok((a.clone(), self.instantiate_template(binding_names, &b)?)))
                         .collect::<io::Result<Map<_, sturdy::Template>>>()?,
-                })),
+                }),
         })
     }
 }
 
 fn embed_pattern(p: &P::Pattern) -> sturdy::Pattern {
     match p {
-        P::Pattern::Discard => sturdy::Pattern::PDiscard(Box::new(sturdy::PDiscard)),
+        P::Pattern::Discard => sturdy::Pattern::PDiscard(sturdy::PDiscard),
         P::Pattern::Bind { pattern } => sturdy::Pattern::PBind(Box::new(sturdy::PBind {
-            pattern: embed_pattern(&**pattern),
+            pattern: Box::new(embed_pattern(&**pattern)),
         })),
-        P::Pattern::Lit { value } => sturdy::Pattern::Lit(Box::new(sturdy::Lit {
-            value: language().unparse(&**value),
-        })),
-        P::Pattern::Group { type_, entries } => sturdy::Pattern::PCompound(Box::new(match &**type_ {
+        P::Pattern::Lit { value } => sturdy::Pattern::Lit(sturdy::Lit {
+            value: language().unparse(value),
+        }),
+        P::Pattern::Group { type_, entries } => sturdy::Pattern::PCompound(match type_ {
             P::GroupType::Rec { label } =>
                 sturdy::PCompound::Rec {
                     label: label.clone(),
@@ -742,7 +741,7 @@ fn embed_pattern(p: &P::Pattern) -> sturdy::Pattern {
                 sturdy::PCompound::Dict {
                     entries: entries.iter().map(|(k, v)| (k.clone(), embed_pattern(v))).collect(),
                 },
-        })),
+        }),
     }
 }
 

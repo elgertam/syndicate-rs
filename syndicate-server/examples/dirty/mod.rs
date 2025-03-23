@@ -23,15 +23,15 @@ pub fn dirty_resolve(stream: &mut TcpStream, dataspace: &str) -> Result<(), Box<
     let resolve_turn = P::Turn(vec![
         P::TurnEvent {
             oid: P::Oid(0.into()),
-            event: P::Event::Assert(Box::new(P::Assert {
+            event: P::Event::Assert(P::Assert {
                 assertion: P::Assertion(iolang.unparse(&gatekeeper::Resolve::<IOValue> {
                     step: sturdyref,
                     observer: iolang.unparse(&sturdy::WireRef::Mine {
-                        oid: Box::new(sturdy::Oid(0.into())),
+                        oid: sturdy::Oid(0.into()),
                     }).into(),
                 })),
                 handle: P::Handle(1.into()),
-            })),
+            }),
         }
     ]);
     stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&resolve_turn).into())?)?;

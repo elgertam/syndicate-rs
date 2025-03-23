@@ -201,7 +201,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
 
 fn send_done(t: &mut Activation, res: &Arc<Cap>) -> ActorResult {
     res.message(t, language(), &http::HttpResponse::Done {
-        chunk: Box::new(http::Chunk::Bytes(vec![])) });
+        chunk: http::Chunk::Bytes(vec![]) });
     Ok(())
 }
 fn send_empty(t: &mut Activation, res: &Arc<Cap>, code: u16, message: &str) -> ActorResult {
@@ -329,7 +329,7 @@ impl HttpStaticFileServer {
                 name: "content-type".into(), value: mime_type.to_owned() });
         }
         res.message(t, language(), &http::HttpResponse::Done {
-            chunk: Box::new(http::Chunk::Bytes(body)) });
+            chunk: http::Chunk::Bytes(body) });
 
         Ok(())
     }

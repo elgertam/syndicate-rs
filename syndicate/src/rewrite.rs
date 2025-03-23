@@ -44,8 +44,8 @@ impl Caveat {
     /// Yields `Ok(())` iff `self` has no [`CaveatError`].
     pub fn validate(&self) -> Result<(), CaveatError> {
         match self {
-            Caveat::Rewrite(b) => (&**b).validate(),
-            Caveat::Alts(b) => (&**b).alternatives.iter().map(Rewrite::validate).collect::<Result<(), _>>(),
+            Caveat::Rewrite(b) => b.validate(),
+            Caveat::Alts(b) => b.alternatives.iter().map(Rewrite::validate).collect::<Result<(), _>>(),
             Caveat::Reject(_) => Ok(()),
             Caveat::Unknown(_) => Ok(()), /* it's valid to have unknown caveats, they just won't pass anything */
         }
@@ -62,16 +62,14 @@ impl Caveat {
         match self {
             Caveat::Rewrite(b) =>
                 Ok(CheckedCaveat::Alts(vec![ (*b).check()? ])),
-            Caveat::Alts(b) => {
-                let Alts { alternatives } = &**b;
+            Caveat::Alts(Alts { alternatives }) =>
                 Ok(CheckedCaveat::Alts(
                     alternatives.into_iter().map(Rewrite::check)
-                        .collect::<Result<Vec<CheckedRewrite>, CaveatError>>()?))
-            }
+                        .collect::<Result<Vec<CheckedRewrite>, CaveatError>>()?)),
             Caveat::Reject(b) =>
                 Ok(CheckedCaveat::Reject(b.pattern.clone())),
             Caveat::Unknown(_) =>
-                Ok(CheckedCaveat::Reject(Pattern::PDiscard(Box::new(PDiscard)))),
+                Ok(CheckedCaveat::Reject(Pattern::PDiscard(PDiscard))),
         }
     }
 }
@@ -94,12 +92,12 @@ impl Pattern {
             }
             Pattern::PAnd(b) => {
                 let mut count = 0;
-                for p in &(&**b).patterns {
+                for p in &b.patterns {
                     count += p.binding_count()?
                 }
                 Ok(count)
             }
-            Pattern::PCompound(b) => match &**b {
+            Pattern::PCompound(b) => match b {
                 PCompound::Rec { fields: items, .. } |
                 PCompound::Arr { items } => {
                     let mut count = 0;
@@ -123,7 +121,7 @@ impl Pattern {
         let ac = a.value_class();
         match self {
             Pattern::PDiscard(_) => true,
-            Pattern::PAtom(b) => match &**b {
+            Pattern::PAtom(b) => match b {
                 PAtom::Boolean => ac == ValueClass::Atomic(AtomClass::Boolean),
                 PAtom::Double => ac == ValueClass::Atomic(AtomClass::Double),
                 PAtom::SignedInteger => ac == ValueClass::Atomic(AtomClass::SignedInteger),
@@ -137,14 +135,14 @@ impl Pattern {
                 (&**b).pattern.matches(a, bindings)
             }
             Pattern::PAnd(b) => {
-                for p in &(&**b).patterns {
+                for p in &b.patterns {
                     if !p.matches(a, bindings) { return false; }
                 }
                 true
             },
             Pattern::PNot(b) => !(&**b).pattern.matches(a, bindings),
-            Pattern::Lit(b) => &(&**b).value == a,
-            Pattern::PCompound(b) => match &**b {
+            Pattern::Lit(b) => &b.value == a,
+            Pattern::PCompound(b) => match b {
                 PCompound::Rec { label, fields } =>
                     ac == ValueClass::Compound(CompoundClass::Record)
                         && &a.label() == label
@@ -190,12 +188,12 @@ impl Template {
                 Caveat::validate_many(attenuation)?;
                 Ok(template.implied_binding_count()?)
             }
-            Template::TRef(b) => match usize::try_from(&(&**b).binding) {
+            Template::TRef(b) => match usize::try_from(&b.binding) {
                 Ok(v) => Ok(1 + v),
                 Err(_) => Err(CaveatError::UnboundRef),
             },
             Template::Lit(_) => Ok(0),
-            Template::TCompound(b) => match &**b {
+            Template::TCompound(b) => match b {
                 TCompound::Rec { fields: items, .. } |
                 TCompound::Arr { items } => {
                     let mut max = 0;
@@ -223,9 +221,9 @@ impl Template {
                     .and_then(|r| r.as_embedded().map(|c| c.into_owned()))
                     .map(|r| Value::embedded(r.attenuate(attenuation).expect("checked attenuation")))
             }
-            Template::TRef(b) => Some(bindings[usize::try_from(&(&**b).binding).expect("in-range index")].clone()),
-            Template::Lit(b) => Some((&**b).value.clone()),
-            Template::TCompound(b) => match &**b {
+            Template::TRef(b) => Some(bindings[usize::try_from(&b.binding).expect("in-range index")].clone()),
+            Template::Lit(b) => Some(b.value.clone()),
+            Template::TCompound(b) => match b {
                 TCompound::Rec { label, fields } => {
                     let mut vs = Vec::with_capacity(fields.len() + 1);
                     vs.push(label.clone());

@@ -61,12 +61,12 @@ impl Process {
     fn elaborate(self) -> FullProcess {
         match self {
             Process::Simple(command_line) => FullProcess {
-                argv: *command_line,
+                argv: command_line,
                 env: ProcessEnv::Absent,
                 dir: ProcessDir::Absent,
                 clear_env: ClearEnv::Absent,
             },
-            Process::Full(spec) => *spec,
+            Process::Full(spec) => spec,
         }
     }
 }
@@ -140,10 +140,10 @@ impl DaemonProcessSpec {
             DaemonProcessSpec::OneShot { setup } => FullDaemonProcess {
                 process: Process::Simple(setup).elaborate(),
                 ready_on_start: ReadyOnStart::Present { ready_on_start: false },
-                restart: RestartField::Present { restart: Box::new(RestartPolicy::OnError) },
+                restart: RestartField::Present { restart: RestartPolicy::OnError },
                 protocol: ProtocolField::Absent,
             },
-            DaemonProcessSpec::Full(spec) => *spec,
+            DaemonProcessSpec::Full(spec) => spec,
         }
     }
 }
@@ -155,7 +155,7 @@ impl CommandLine {
                 program: "sh".to_owned(),
                 args: vec!["-c".to_owned(), s],
             },
-            CommandLine::Full(command_line) => *command_line,
+            CommandLine::Full(command_line) => command_line,
         }
     }
 }
@@ -415,7 +415,7 @@ fn run(
                                               }
                                           };
                                           let restart_policy = match config.restart {
-                                              RestartField::Present { restart } => *restart,
+                                              RestartField::Present { restart } => restart,
                                               RestartField::Absent => RestartPolicy::Always,
                                               RestartField::Invalid { restart } => {
                                                   tracing::error!(?restart, "Invalid restart value");
@@ -423,7 +423,7 @@ fn run(
                                               }
                                           };
                                           let protocol = match config.protocol {
-                                              ProtocolField::Present { protocol } => *protocol,
+                                              ProtocolField::Present { protocol } => protocol,
                                               ProtocolField::Absent => Protocol::None,
                                               ProtocolField::Invalid { protocol } => {
                                                   tracing::error!(?protocol, "Invalid protocol value");

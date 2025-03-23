@@ -109,14 +109,14 @@ impl WildcardPattern for CompoundPattern {
             CompoundPattern::Tuple { patterns } |
             CompoundPattern::TuplePrefix { fixed: patterns, .. }=>
                 Some(P::Pattern::Group {
-                    type_: Box::new(P::GroupType::Arr),
+                    type_: P::GroupType::Arr,
                     entries: patterns.iter().enumerate()
                         .map(|(i, p)| Some((P::_Any::new(i), unname(p).wc(s)?)))
                         .collect::<Option<Map<P::_Any, P::Pattern>>>()?,
                 }),
             CompoundPattern::Dict { entries } =>
                 Some(P::Pattern::Group {
-                    type_: Box::new(P::GroupType::Dict),
+                    type_: P::GroupType::Dict,
                     entries: Map::from_iter(
                         entries.0.iter()
                             .map(|(k, p)| Some((from_io(k)?, unname_simple(p).wc(s)?)))
@@ -126,10 +126,10 @@ impl WildcardPattern for CompoundPattern {
                 }),
             CompoundPattern::Rec { label, fields } => match (unname(label), unname(fields)) {
                 (Pattern::SimplePattern(label), Pattern::CompoundPattern(fields)) =>
-                    match (*label, *fields) {
+                    match (label, *fields) {
                         (SimplePattern::Lit { value }, CompoundPattern::Tuple { patterns }) =>
                             Some(P::Pattern::Group{
-                                type_: Box::new(P::GroupType::Rec { label: from_io(&value)? }),
+                                type_: P::GroupType::Rec { label: from_io(&value)? },
                                 entries: patterns.iter().enumerate()
                                     .map(|(i, p)| Some((P::_Any::new(i), unname(p).wc(s)?)))
                                     .collect::<Option<Map<P::_Any, P::Pattern>>>()?,
@@ -164,7 +164,7 @@ impl WildcardPattern for SimplePattern {
 fn unname(np: &NamedPattern) -> Pattern {
     match np {
         NamedPattern::Anonymous(p) => (**p).clone(),
-        NamedPattern::Named(b) => Pattern::SimplePattern(Box::new(b.pattern.clone())),
+        NamedPattern::Named(b) => Pattern::SimplePattern(b.pattern.clone()),
     }
 }
 

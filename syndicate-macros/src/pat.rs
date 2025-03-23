@@ -51,14 +51,14 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
             let label = to_value_expr(&*l)?;
             let members = compile_sequence_members(fs)?;
             Ok(quote!(#P_::Pattern::Group {
-                type_: Box::new(#P_::GroupType::Rec { label: #label }),
+                type_: #P_::GroupType::Rec { label: #label },
                 entries: #MapFrom_([#(#members),*]),
             }))
         },
         Stx::Seq(stxs) => {
             let members = compile_sequence_members(stxs)?;
             Ok(quote!(#P_::Pattern::Group {
-                type_: Box::new(#P_::GroupType::Arr),
+                type_: #P_::GroupType::Arr,
                 entries: #MapFrom_([#(#members),*]),
             }))
         }
@@ -71,7 +71,7 @@ pub fn to_pattern_expr(stx: &Stx) -> Result<TokenStream2, &'static str> {
                 Ok(quote!((#k, #v)))
             }).collect::<Result<Vec<_>, &'static str>>()?;
             Ok(quote!(#P_::Pattern::Group {
-                type_: Box::new(#P_::GroupType::Dict),
+                type_: #P_::GroupType::Dict,
                 entries: #MapFrom_([#(#members),*])
             }))
         }
