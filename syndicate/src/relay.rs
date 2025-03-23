@@ -545,8 +545,8 @@ impl TunnelRelay {
         Ok(())
     }
 
-    pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: P::Packet<Arc<Cap>>) -> ActorResult {
-        let item = language().unparse(&p);
+    pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: &P::Packet<Arc<Cap>>) -> ActorResult {
+        let item = language().unparse(p);
         tracing::debug!(packet = ?item, "<--");
 
         let bs = if self.output_text {
@@ -568,10 +568,14 @@ impl TunnelRelay {
             t.pre_commit(move |t| {
                 let mut g = self_ref.lock();
                 let tr = g.as_mut().expect("initialized");
+
                 let events = std::mem::take(&mut tr.pending_outbound);
-                tr.send_packet(&t.account(),
-                               events.len(),
-                               P::Packet::Turn(P::Turn(events.clone())))?;
+                // Avoid a .clone() of events by putting it into a packet and then *getting it back out again*
+                let count = events.len();
+                let packet = P::Packet::Turn(P::Turn(events));
+                tr.send_packet(&t.account(), count, &packet)?;
+                let events = match packet { P::Packet::Turn(P::Turn(e)) => e, _ => unreachable!() };
+
                 for P::TurnEvent { oid, event } in events.into_iter() {
                     tr.outbound_event_bookkeeping(t, sturdy::Oid(oid.0), &event)?;
                 }
@@ -832,7 +836,7 @@ impl Entity<()> for TunnelRefEntity {
             let e = e.clone();
             let mut g = self.relay_ref.lock();
             let tr = g.as_mut().expect("initialized");
-            if let Err(f) = tr.send_packet(&t.account(), 1, P::Packet::Error(e)) {
+            if let Err(f) = tr.send_packet(&t.account(), 1, &P::Packet::Error(e)) {
                 tracing::error!("Failed to send error packet: {:?}", f);
             }
         }
