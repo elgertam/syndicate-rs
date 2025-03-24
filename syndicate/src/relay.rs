@@ -330,7 +330,7 @@ impl TunnelRelay {
         (result, tr_ref, output_rx)
     }
 
-    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> (Result<P::Packet<Arc<Cap>>, preserves::Error>, usize) {
+    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> Result<(P::Packet<Arc<Cap>>, usize), preserves::Error> {
         let mut src = BytesBinarySource::new(&bs);
         let mut dec = ActivatedMembranes {
             turn: t,
@@ -341,22 +341,22 @@ impl TunnelRelay {
             Ok(Some(v)) => if v >= 128 {
                 self.output_text = false;
                 let mut r = src.packed();
-                let res = P::Packet::deserialize(&mut r, &mut dec);
-                (res, r.source.index as usize)
+                let res = P::Packet::deserialize(&mut r, &mut dec)?;
+                Ok((res, r.source.index as usize))
             } else {
                 self.output_text = true;
                 let mut r = src.text();
-                let res = P::Packet::deserialize(&mut r, &mut dec);
-                (res, r.source.index as usize)
+                let res = P::Packet::deserialize(&mut r, &mut dec)?;
+                Ok((res, r.source.index as usize))
             },
-            Ok(None) => (Err(SyntaxError::eof().at(None)), 0),
-            Err(e) => (Err(e.into()), 0),
+            Ok(None) => Err(SyntaxError::eof().at(None)),
+            Err(e) => Err(e.into()),
         }
     }
 
     pub fn handle_inbound_datagram(&mut self, t: &mut Activation, bs: &[u8]) -> ActorResult {
         tracing::trace!(bytes = ?bs, "inbound datagram");
-        let item = self.deserialize_one(t, bs).0?;
+        let (item, _count) = self.deserialize_one(t, bs)?;
         self.handle_inbound_packet(t, item)
     }
 
@@ -364,14 +364,13 @@ impl TunnelRelay {
         use preserves::{Error, SyntaxError, UnexpectedKind};
         loop {
             tracing::trace!(buffer = ?buf, "inbound stream");
-            let (result, count) = self.deserialize_one(t, buf);
-            match result {
+            match self.deserialize_one(t, buf) {
                 Err(Error::SyntaxError {
                     detail: SyntaxError::Unexpected(UnexpectedKind::Eof),
                     ..
                 }) => return Ok(()),
                 Err(e) => return Err(e)?,
-                Ok(item) => {
+                Ok((item, count)) => {
                     buf.advance(count);
                     self.handle_inbound_packet(t, item)?;
                 }
