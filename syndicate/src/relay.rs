@@ -23,6 +23,7 @@ use preserves::BinarySource;
 use preserves::BytesBinarySource;
 use preserves::DomainDecode;
 use preserves::DomainEncode;
+use preserves::ExpectedKind;
 use preserves::IOValue;
 use preserves::IOValueReader;
 use preserves::Map;
@@ -30,7 +31,9 @@ use preserves::PackedWriter;
 use preserves::Reader;
 use preserves::ReaderResult;
 use preserves::Set;
+use preserves::SyntaxError;
 use preserves::TextWriter;
+use preserves::packed::constants::Tag;
 use preserves::signed_integer::SignedInteger;
 use preserves::value_map_embedded;
 
@@ -335,6 +338,29 @@ impl TunnelRelay {
             Ok(Some(v)) => if v >= 128 {
                 self.output_text = false;
                 let mut r = src.into_packed();
+
+                // Fast path for Turns.
+                if r.peek()? == Some(Tag::Sequence.into()) {
+                    r.skip()?;
+                    while r.peek()? != Some(Tag::End.into()) {
+                        let mut dec = ActivatedMembranes {
+                            turn: t,
+                            tr_ref: &self.self_ref,
+                            membranes: &mut self.membranes,
+                        };
+                        r.open_sequence()?;
+                        let oid = r.next_signedinteger()?;
+                        let event = P::Event::deserialize(&mut r, &mut dec)?;
+                        if !r.peekend()? {
+                            return Err(SyntaxError::Expected(ExpectedKind::CloseDelimiter).at(Some(r.source.index as usize)))?;
+                        }
+                        self._handle_inbound_event(t, oid.as_ref(), event)?;
+                    }
+                    r.skip()?;
+                    t.commit()?;
+                    return Ok(Some(r.source.index as usize));
+                }
+
                 Ok(self.deserialize_one_from(t, &mut r)?.then(|| r.source.index as usize))
             } else {
                 self.output_text = true;
