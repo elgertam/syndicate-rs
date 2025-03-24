@@ -1,7 +1,7 @@
 [package]
 name = "syndicate-macros"
 description = "Support macros for programming with the Syndicated Actor model and Dataspaces."
-version = "0.34.1"
+version = "0.35.0-rc.0"
 
 authors.workspace = true
 homepage.workspace = true
@@ -13,7 +13,7 @@ edition.workspace = true
 proc-macro = true
 
 [dependencies]
-syndicate = { path = "../syndicate", version = "0.43.0"}
+syndicate = { path = "../syndicate", version = "0.44.0-rc.0"}
 
 proc-macro2 = { version = "^1.0", features = ["span-locations"] }
 quote = "^1.0"

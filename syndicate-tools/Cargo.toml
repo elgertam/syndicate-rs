@@ -1,7 +1,7 @@
 [package]
 name = "syndicate-tools"
 description = "Syndicate command-line utilities."
-version = "0.20.1"
+version = "0.21.0-rc.0"
 
 authors.workspace = true
 homepage.workspace = true
@@ -11,7 +11,7 @@ edition.workspace = true
 
 [dependencies]
 preserves.workspace = true
-syndicate = { path = "../syndicate", version = "0.43.0"}
+syndicate = { path = "../syndicate", version = "0.44.0-rc.0"}
 
 clap = { version = "^4.0", features = ["derive"] }
 clap_complete = "^4.0"

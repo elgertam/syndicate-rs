@@ -1,7 +1,7 @@
 [package]
 name = "syndicate"
 description = "Syndicated Actor model for Rust, including network communication and Dataspaces."
-version = "0.43.0"
+version = "0.44.0-rc.0"
 
 authors.workspace = true
 homepage.workspace = true
@@ -17,7 +17,7 @@ vendored-openssl = ["openssl/vendored"]
 
 [build-dependencies]
 preserves-schema.workspace = true
-syndicate-schema-plugin = { path = "../syndicate-schema-plugin", version = "0.11.0"}
+syndicate-schema-plugin = { path = "../syndicate-schema-plugin", version = "0.12.0-rc.0"}
 
 [dependencies]
 preserves.workspace = true
