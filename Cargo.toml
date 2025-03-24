@@ -17,8 +17,8 @@ license = "Apache-2.0"
 edition = "2018"
 
 [workspace.dependencies]
-preserves = "5.0.0-rc.0"
-preserves-schema = "6.0.0-rc.0"
+preserves = "5.0.0-rc.4"
+preserves-schema = "6.0.0-rc.4"
 
 tokio = "1.10"
 tokio-util = "0.6"
@@ -35,15 +35,15 @@ lazy_static = "1.4"
 
 criterion = "0.5.1"
 
-[patch.crates-io]
-#
-# Use a bind mount for localdev:
-#
-#   mkdir localdev
-#   sudo mount --bind /home/tonyg/src localdev
-#
-preserves = { path = "localdev/preserves-rs/preserves" }
-preserves-schema = { path = "localdev/preserves-rs/preserves-schema" }
+# [patch.crates-io]
+# #
+# # Use a bind mount for localdev:
+# #
+# #   mkdir localdev
+# #   sudo mount --bind /home/tonyg/src localdev
+# #
+# preserves = { path = "localdev/preserves-rs/preserves" }
+# preserves-schema = { path = "localdev/preserves-rs/preserves-schema" }
 
 [profile.release]
 strip = true
