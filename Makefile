@@ -18,6 +18,7 @@ ws-bump:
 		--no-global-tag \
 		--individual-tag-prefix '%n-v' \
 		--allow-branch 'main' \
+		--pre-id rc \
 		$(BUMP_ARGS)
 
 ws-publish:
