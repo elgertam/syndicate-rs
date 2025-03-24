@@ -340,12 +340,12 @@ impl TunnelRelay {
         match src.peek() {
             Ok(Some(v)) => if v >= 128 {
                 self.output_text = false;
-                let mut r = src.packed();
+                let mut r = src.into_packed();
                 let res = P::Packet::deserialize(&mut r, &mut dec)?;
                 Ok((res, r.source.index as usize))
             } else {
                 self.output_text = true;
-                let mut r = src.text();
+                let mut r = src.into_text();
                 let res = P::Packet::deserialize(&mut r, &mut dec)?;
                 Ok((res, r.source.index as usize))
             },
