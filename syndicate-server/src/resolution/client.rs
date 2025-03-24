@@ -1,4 +1,3 @@
-use preserves_schema::Codec;
 use syndicate::dataspace::Dataspace;
 use syndicate::preserves::Set;
 
@@ -11,7 +10,8 @@ use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::schemas::gatekeeper as G;
 use syndicate::schemas::rpc as R;
 
-use crate::language;
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
 
 use syndicate::enclose;
 use syndicate_macros::during;
@@ -19,9 +19,9 @@ use syndicate_macros::template;
 
 pub fn start(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("path_resolver")), enclose!((ds) move |t| {
-        during!(t, ds, language(), <q <resolve-path $route0>>, |t| {
-            if let Ok(route) = language().parse::<G::Route>(&route0) {
-                let route_v = language().unparse(&route);
+        during!(t, ds, <q <resolve-path $route0>>, |t| {
+            if let Ok(route) = G::Route::parse(&route0) {
+                let route_v = route.unparse();
                 Supervisor::start(
                     t,
                     Some(template!("<path_resolver =route_v>")),
@@ -47,9 +47,9 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
     let candidates = t.named_field("candidates", Set::new());
 
     for addr in &route.transports {
-        ds.assert(t, language(), &rpc::question(language(), G::ConnectTransport { addr: addr.clone() }));
+        ds.assert(t, &rpc::question(G::ConnectTransport { addr: addr.clone() }));
         enclose!((candidates) during!(
-            t, ds, language(),
+            t, ds,
             <a <connect-transport #(addr)> <ok $c: G::ConnectedTransport::<Arc<Cap>>>>,
             |t: &mut Activation| {
                 t.get_mut(&candidates).insert(c.clone());
@@ -85,29 +85,29 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
 
     for (i, step) in route.path_steps.clone().into_iter().enumerate() {
         enclose!((ds, steps_ds) during!(
-            t, steps_ds, language(),
+            t, steps_ds,
             [#(&AnyValue::new(i)), $origin: G::ResolvedPathStep::<Arc<Cap>>],
             enclose!((ds, step, steps_ds) move |t: &mut Activation| {
                 let q = G::ResolvePathStep { origin: origin.0, path_step: step };
-                ds.assert(t, language(), &rpc::question(language(), q.clone()));
+                ds.assert(t, &rpc::question(q.clone()));
                 let q2 = q.clone();
                 during!(
-                    t, ds, language(),
-                    <a #(&language().unparse(&q2)) $a>,
+                    t, ds,
+                    <a #(&q2.unparse()) $a>,
                     enclose!((q) |t| {
-                        if let Ok(a) = language().parse::<R::Result>(&a) {
+                        if let Ok(a) = R::Result::parse(&a) {
                             match a {
                                 R::Result::Error { .. } => {
-                                    ds.assert(t, language(), &rpc::answer(language(), q, a));
+                                    ds.assert(t, &rpc::answer(q, a));
                                 }
                                 R::Result::Ok { value } => {
                                     if let Some(next) = value.as_embedded() {
-                                        steps_ds.assert(t, language(), &AnyValue::new(
+                                        steps_ds.assert(t, &AnyValue::new(
                                             vec![AnyValue::new(i + 1),
                                                  AnyValue::embedded(next.into_owned())]));
                                     } else {
-                                        ds.assert(t, language(), &rpc::answer(
-                                            language(), q, R::Result::Error {
+                                        ds.assert(t, &rpc::answer(
+                                            q, R::Result::Error {
                                                 error: AnyValue::symbol("invalid-path-step-result"),
                                             }));
                                     }
@@ -121,17 +121,16 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
     }
 
     let i = route.path_steps.len();
-    during!(t, steps_ds, language(),
+    during!(t, steps_ds,
             [#(&AnyValue::new(i)), $r: G::ResolvedPathStep::<Arc<Cap>>],
             enclose!((best, ds, route) move |t: &mut Activation| {
                 let G::ConnectedTransport { addr, control, .. } =
                     t.get(&best).as_ref().unwrap().clone();
                 let responder_session = r.0;
-                ds.assert(t, language(), &rpc::answer(
-                    language(),
+                ds.assert(t, &rpc::answer(
                     G::ResolvePath { route },
-                    R::Result::Ok { value: language().unparse(
-                        &G::ResolvedPath { addr, control, responder_session }) }));
+                    R::Result::Ok { value: (
+                        G::ResolvedPath { addr, control, responder_session }).unparse() }));
                 Ok(())
             }));
 

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use structopt::StructOpt;
 
 use syndicate::actor::*;
-use syndicate::language;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
@@ -37,13 +36,13 @@ async fn main() -> ActorResult {
                     Ok(())
                 })
                 .create_cap(t);
-            ds.assert(t, language(), &Observe {
+            ds.assert(t, &Observe {
                 pattern: syndicate_macros::pattern!{<Says $ $>},
                 observer: Arc::clone(&consumer),
             });
 
             t.every(Duration::from_secs(1), move |t| {
-                consumer.message(t, &(), &AnyValue::new(true));
+                consumer.message(t, &AnyValue::new(true));
                 Ok(())
             })?;
 

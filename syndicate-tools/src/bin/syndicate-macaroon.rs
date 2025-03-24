@@ -14,8 +14,8 @@ use noise_rust_crypto::X25519;
 use preserves::hex::HexParser;
 use preserves::NoEmbeddedDomainCodec;
 use preserves::TextWriter;
-use syndicate::language;
-use syndicate::preserves_schema::Codec;
+use syndicate::preserves_schema::Parse;
+use syndicate::preserves_schema::Unparse;
 use syndicate::schemas::noise;
 use syndicate::sturdy::Caveat;
 use syndicate::sturdy::SturdyRef;
@@ -132,8 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     secret_key: key.to_vec(),
                 },
             };
-            println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec,
-                                              &language().unparse(&n))?);
+            println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec, &n.unparse())?);
         }
 
         Action::Mint { oid, phrase, hex, caveat: caveats } => {
@@ -146,15 +145,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     unreachable!()
                 };
             let attenuation = caveats.into_iter().map(|c| {
-                let r = language().parse(&c.0);
+                let r = Caveat::parse(&c.0);
                 if let Ok(Caveat::Unknown(_)) = &r {
                     eprintln!("Warning: Unknown caveat format: {:?}", &c.0);
                 }
                 r
             }).collect::<Result<Vec<Caveat>, _>>()?;
             let m = SturdyRef::mint(oid.0, &key).attenuate(&attenuation)?;
-            println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec,
-                                              &language().unparse(&m))?);
+            println!("{}", TextWriter::encode(&mut NoEmbeddedDomainCodec, &m.unparse())?);
         }
     }
 

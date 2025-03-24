@@ -1,4 +1,3 @@
-use preserves_schema::Codec;
 use syndicate::relay;
 use syndicate::schemas::trace;
 
@@ -13,9 +12,9 @@ use syndicate::schemas::transport_address::Tcp;
 use syndicate::schemas::rpc as R;
 use syndicate::schemas::gatekeeper as G;
 
-use tokio::net::TcpStream;
+use preserves_schema::Unparse;
 
-use crate::language;
+use tokio::net::TcpStream;
 
 use syndicate::enclose;
 use syndicate_macros::during;
@@ -33,8 +32,8 @@ impl Entity<G::TransportControl> for TransportControl {
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("transport_connector")), move |t| {
-        during!(t, ds, language(), <q <connect-transport $addr: Tcp>>, |t| {
-            let addr_v = language().unparse(&addr);
+        during!(t, ds, <q <connect-transport $addr: Tcp>>, |t| {
+            let addr_v = addr.unparse();
             Supervisor::start(
                 t,
                 Some(template!("<relay =addr_v>")),
@@ -48,7 +47,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 
 fn run(t: &mut Activation, ds: Arc<Cap>, addr: Tcp) -> ActorResult {
     tracing::info!(?addr, "Connecting");
-    let name = AnyValue::new(vec![AnyValue::symbol("connector"), language().unparse(&addr)]);
+    let name = AnyValue::new(vec![AnyValue::symbol("connector"), addr.unparse()]);
     let trace_collector = t.trace_collector();
     let facet = t.facet_ref();
     t.linked_task(Some(name.clone()), async move {
@@ -64,24 +63,22 @@ fn run(t: &mut Activation, ds: Arc<Cap>, addr: Tcp) -> ActorResult {
                 facet.activate(&account, cause, |t| {
                     let peer = relay::TunnelRelay::run(t, i, o, None, initial_oid, false)
                         .expect("missing initial cap on connection");
-                    let control = Cap::guard(&language().syndicate, t.create(TransportControl));
-                    ds.assert(t, language(), &rpc::answer(
-                        language(),
-                        G::ConnectTransport { addr: language().unparse(&addr) },
-                        R::Result::Ok { value: language().unparse(&G::ConnectedTransport {
-                            addr: language().unparse(&addr),
+                    let control = Cap::guard(t.create(TransportControl));
+                    ds.assert(t, &rpc::answer(
+                        G::ConnectTransport { addr: addr.unparse() },
+                        R::Result::Ok { value: (G::ConnectedTransport {
+                            addr: addr.unparse(),
                             control,
                             responder_session: peer,
-                        }) }));
+                        }).unparse() }));
                     Ok(())
                 });
                 Ok(LinkedTaskTermination::KeepFacet)
             }
             Err(e) => {
                 facet.activate(&account, cause, |t| {
-                    ds.assert(t, language(), &rpc::answer(
-                        language(),
-                        G::ConnectTransport { addr: language().unparse(&addr) },
+                    ds.assert(t, &rpc::answer(
+                        G::ConnectTransport { addr: addr.unparse() },
                         R::Result::Error { error: AnyValue::symbol(format!("{:?}", e.kind())) }));
                     Ok(())
                 });

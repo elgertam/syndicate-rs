@@ -4,11 +4,10 @@ use std::sync::Arc;
 
 use super::actor::AnyValue;
 use super::actor::Cap;
-use super::language;
 use super::schemas::protocol as P;
 
 use preserves::Value;
-use preserves_schema::Codec;
+use preserves_schema::Unparse;
 
 pub type Error = P::Error<Arc<Cap>>;
 
@@ -56,8 +55,7 @@ pub fn encode_error(result: Result<(), Error>) -> AnyValue {
             Value::record(AnyValue::symbol("Ok"), vec![
                 Value::record(AnyValue::symbol("tuple"), vec![])]),
         Err(e) =>
-            Value::record(AnyValue::symbol("Err"), vec![
-                language().unparse(&e)]),
+            Value::record(AnyValue::symbol("Err"), vec![e.unparse()]),
     }
 }
 

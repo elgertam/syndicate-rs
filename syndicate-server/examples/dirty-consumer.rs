@@ -2,11 +2,8 @@
 //! possible, so that the consumer isn't the bottleneck in
 //! single-producer/single-consumer broker throughput measurement.
 
-use preserves_schema::Codec;
-
 use structopt::StructOpt;
 
-use syndicate::schemas::Language;
 use syndicate::schemas::protocol as P;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
@@ -15,6 +12,8 @@ use syndicate::preserves::BytesBinarySource;
 use syndicate::preserves::IOValue;
 use syndicate::preserves::PackedWriter;
 use syndicate::preserves::Reader;
+
+use preserves_schema::Unparse;
 
 use std::io::Read;
 use std::io::Write;
@@ -36,24 +35,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = TcpStream::connect("127.0.0.1:9001")?;
     dirty::dirty_resolve(&mut stream, &config.dataspace)?;
 
-    let iolang = Language::<IOValue>::default();
-
     {
         let turn = P::Turn::<IOValue>(vec![
             P::TurnEvent {
                 oid: P::Oid(1.into()),
                 event: P::Event::Assert(P::Assert {
-                    assertion: P::Assertion(iolang.unparse(&Observe {
+                    assertion: P::Assertion((Observe {
                         pattern: syndicate_macros::pattern!{<Says $ $>},
-                        observer: iolang.unparse(&sturdy::WireRef::Mine {
+                        observer: (sturdy::WireRef::Mine {
                             oid: sturdy::Oid(2.into()),
-                        }).into(),
-                    })),
+                        }).unparse().into(),
+                    }).unparse()),
                     handle: P::Handle(2.into()),
                 }),
             }
         ]);
-        stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&turn).into())?)?;
+        stream.write_all(&PackedWriter::encode_iovalue(&turn.unparse().into())?)?;
     }
 
     let mut buf = [0; 131072];

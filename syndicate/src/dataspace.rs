@@ -8,13 +8,12 @@
 //!   on the web](https://syndicate-lang.org/tonyg-dissertation/).
 //!   [PDF](https://syndicate-lang.org/papers/conversational-concurrency-201712310922.pdf).
 
-use super::language;
 use super::skeleton;
 use super::actor::*;
 use super::schemas::dataspace::*;
 
 use preserves::Map;
-use preserves_schema::Codec;
+use preserves_schema::Parse;
 
 /// A Dataspace object (entity).
 #[derive(Debug)]
@@ -62,7 +61,7 @@ impl Entity<_Any> for Dataspace {
         tracing::trace!(dataspace = ?self.name, assertion = ?a, handle = ?h, ?is_new, "assert");
 
         if is_new {
-            if let Ok(o) = language().parse::<Observe>(&a) {
+            if let Ok(o) = Observe::parse(&a) {
                 self.index.add_observer(t, &o.pattern, &o.observer);
             }
         }
@@ -79,7 +78,7 @@ impl Entity<_Any> for Dataspace {
                 tracing::trace!(dataspace = ?self.name, assertion = ?a, handle = ?h, ?is_last, "retract");
 
                 if is_last {
-                    if let Ok(o) = language().parse::<Observe>(&a) {
+                    if let Ok(o) = Observe::parse(&a) {
                         self.index.remove_observer(t, o.pattern, &o.observer);
                     }
                 }

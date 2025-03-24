@@ -24,7 +24,6 @@ use syndicate::preserves::NoEmbeddedDomainCodec;
 use syndicate::preserves::Reader;
 use syndicate::preserves::ReaderResult;
 
-use crate::language::language;
 use crate::lifecycle;
 use crate::schemas::internal_services;
 use crate::script;
@@ -34,7 +33,7 @@ use syndicate_macros::template;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("config_watcher")), move |t| {
-        Ok(during!(t, config_ds, language(), <run-service $spec: internal_services::ConfigWatcher::<Arc<Cap>>>, |t| {
+        Ok(during!(t, config_ds, <run-service $spec: internal_services::ConfigWatcher::<Arc<Cap>>>, |t| {
             let path_v = AnyValue::new(spec.path.clone());
             Supervisor::start(
                 t,
@@ -195,7 +194,7 @@ fn run(
             if !facet.activate(
                 &account, cause, |t| {
                     initial_scan(t, &mut path_state, &config_ds, env.clone());
-                    config_ds.assert(t, language(), &lifecycle::ready(&spec));
+                    config_ds.assert(t, &lifecycle::ready(&spec));
                     Ok(())
                 })
             {

@@ -28,7 +28,7 @@ async fn main() -> ActorResult {
                 loop {
                     let mut handle = None;
                     facet.activate(&account, None, |t| {
-                        handle = ds.assert(t, &(), &presence);
+                        handle = ds.assert(t, &presence);
                         Ok(())
                     });
                     account.ensure_clear_funds().await;

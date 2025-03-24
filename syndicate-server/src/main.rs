@@ -1,4 +1,3 @@
-use preserves_schema::Codec;
 use services::gatekeeper;
 
 use std::convert::TryInto;
@@ -18,10 +17,11 @@ use syndicate::trace;
 
 use syndicate::preserves::Map;
 
+use preserves_schema::Unparse;
+
 mod counter;
 mod dependencies;
 mod http;
-mod language;
 mod lifecycle;
 mod protocol;
 mod resolution;
@@ -36,8 +36,6 @@ mod schemas {
     include!(concat!(env!("OUT_DIR"), "/src/schemas/mod.rs"));
 }
 
-use language::Language;
-use language::language;
 use schemas::internal_services;
 
 #[derive(Clone, StructOpt)]
@@ -132,7 +130,7 @@ async fn main() -> ActorResult {
         env.insert("gatekeeper".to_owned(), AnyValue::embedded(Arc::clone(&gatekeeper)));
 
         if config.control {
-            env.insert("control".to_owned(), AnyValue::embedded(Cap::guard(Language::arc(), t.create(
+            env.insert("control".to_owned(), AnyValue::embedded(Cap::guard(t.create(
                 syndicate::entity(())
                     .on_message(|_, _t, m: crate::schemas::control::ExitServer| {
                         tracing::info!("$control received exit request with code {}", m.code);
@@ -157,42 +155,42 @@ async fn main() -> ActorResult {
         resolution::transports::on_demand(t, Arc::clone(&server_config_ds));
 
         if config.debt_reporter {
-            server_config_ds.assert(t, language(), &service::RunService {
-                service_name: language().unparse(&internal_services::DebtReporter {
+            server_config_ds.assert(t, &service::RunService {
+                service_name: (internal_services::DebtReporter {
                     interval_seconds: (1.0).into(),
-                }),
+                }).unparse(),
             });
         }
 
         for port in config.ports.clone() {
-            server_config_ds.assert(t, language(), &service::RunService {
-                service_name: language().unparse(&internal_services::TcpWithoutHttp {
+            server_config_ds.assert(t, &service::RunService {
+                service_name: (internal_services::TcpWithoutHttp {
                     addr: transport_address::Tcp {
                         host: "0.0.0.0".to_owned(),
                         port: (port as i32).into(),
                     },
                     gatekeeper: gatekeeper.clone(),
-                }),
+                }).unparse(),
             });
         }
 
         for path in config.sockets.clone() {
-            server_config_ds.assert(t, language(), &service::RunService {
-                service_name: language().unparse(&internal_services::UnixRelayListener {
+            server_config_ds.assert(t, &service::RunService {
+                service_name: (internal_services::UnixRelayListener {
                     addr: transport_address::Unix {
                         path: path.to_str().expect("representable UnixListener path").to_owned(),
                     },
                     gatekeeper: gatekeeper.clone(),
-                }),
+                }).unparse(),
             });
         }
 
         for path in config.config.clone() {
-            server_config_ds.assert(t, language(), &service::RunService {
-                service_name: language().unparse(&internal_services::ConfigWatcher {
+            server_config_ds.assert(t, &service::RunService {
+                service_name: (internal_services::ConfigWatcher {
                     path: path.to_str().expect("representable ConfigWatcher path").to_owned(),
                     env: internal_services::ConfigEnv(env.clone()),
-                }),
+                }).unparse(),
             });
         }
 
@@ -232,7 +230,7 @@ async fn main() -> ActorResult {
                     Ok(())
                 })
                 .create_cap(t);
-            log_ds.assert(t, language(), &syndicate::schemas::dataspace::Observe {
+            log_ds.assert(t, &syndicate::schemas::dataspace::Observe {
                 pattern: syndicate_macros::pattern!(<log $ $>),
                 observer: e,
             });

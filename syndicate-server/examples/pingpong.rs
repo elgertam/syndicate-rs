@@ -6,7 +6,6 @@ use structopt::StructOpt;
 
 use syndicate::actor::*;
 use syndicate::enclose;
-use syndicate::language;
 use syndicate::relay;
 use syndicate::schemas::dataspace::Observe;
 use syndicate::sturdy;
@@ -129,9 +128,9 @@ async fn main() -> ActorResult {
                                     let padding = &bindings[1];
 
                                     if should_echo || (report_latency_every == 0) {
-                                        ds.message(t, &(), &simple_record2(&send_label,
-                                                                           timestamp.clone(),
-                                                                           padding.clone()));
+                                        ds.message(t, &simple_record2(&send_label,
+                                                                      timestamp.clone(),
+                                                                      padding.clone()));
                                     } else {
                                         let mut g = current_reply.lock().expect("unpoisoned");
                                         if let None = *g {
@@ -154,7 +153,7 @@ async fn main() -> ActorResult {
                                                                      Value::new(now()),
                                                                      padding.clone()));
                                         }
-                                        ds.message(t, &(), g.as_ref().expect("some reply"));
+                                        ds.message(t, g.as_ref().expect("some reply"));
                                     }
                                 }
                             }
@@ -162,7 +161,7 @@ async fn main() -> ActorResult {
                         })))
             };
 
-            ds.assert(t, language(), &Observe {
+            ds.assert(t, &Observe {
                 pattern: {
                     let recv_label = AnyValue::symbol(recv_label);
                     syndicate_macros::pattern!{<#(recv_label) $ $>}
@@ -171,7 +170,7 @@ async fn main() -> ActorResult {
             });
 
             t.every(Duration::from_secs(1), move |t| {
-                consumer.message(t, &(), &AnyValue::new(true));
+                consumer.message(t, &AnyValue::new(true));
                 Ok(())
             })?;
 
@@ -188,7 +187,7 @@ async fn main() -> ActorResult {
                                                          padding.clone());
                         facet.activate(&account, None, |t| {
                             for _ in 0..action_count {
-                                ds.message(t, &(), &current_rec);
+                                ds.message(t, &current_rec);
                             }
                             Ok(())
                         });

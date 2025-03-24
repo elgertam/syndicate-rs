@@ -5,7 +5,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use syndicate::language;
 use syndicate::actor::*;
 use syndicate::during::entity;
 use syndicate::dataspace::Dataspace;
@@ -84,7 +83,7 @@ pub fn bench_pub(c: &mut Criterion) {
                             .on_asserted(|_, _, _| Ok(Some(Box::new(|_, t| Ok(t.stop())))))
                             .create_cap(t);
 
-                        ds.assert(t, language(), &Observe {
+                        ds.assert(t, &Observe {
                             pattern: p::Pattern::Bind {
                                 pattern: Box::new(p::Pattern::Lit {
                                     value: p::AnyAtom::Symbol("consumer".to_owned()),
@@ -105,8 +104,8 @@ pub fn bench_pub(c: &mut Criterion) {
                             let shutdown = Cap::new(&t.create(ShutdownEntity));
                             let receiver = Cap::new(&t.create(Receiver(Arc::clone(&turn_count))));
 
-                            ds.assert(t, &(), &AnyValue::symbol("consumer"));
-                            ds.assert(t, language(), &Observe {
+                            ds.assert(t, &AnyValue::symbol("consumer"));
+                            ds.assert(t, &Observe {
                                 pattern: p::Pattern::Group {
                                     type_: p::GroupType::Rec {
                                         label: AnyValue::symbol("Says"),
@@ -122,7 +121,7 @@ pub fn bench_pub(c: &mut Criterion) {
                                 },
                                 observer: receiver,
                             });
-                            ds.assert(t, language(), &Observe {
+                            ds.assert(t, &Observe {
                                 pattern: p::Pattern::Bind {
                                     pattern: Box::new(p::Pattern::Lit {
                                         value: p::AnyAtom::Bool(true),
@@ -133,10 +132,10 @@ pub fn bench_pub(c: &mut Criterion) {
 
                             t.after(core::time::Duration::from_secs(0), move |t| {
                                 for _i in 0..iters {
-                                    ds.message(t, &(), &says(AnyValue::new("bench_pub"),
-                                                             Value::bytes(vec![])));
+                                    ds.message(t, &says(AnyValue::new("bench_pub"),
+                                                        Value::bytes(vec![])));
                                 }
-                                ds.message(t, &(), &AnyValue::new(true));
+                                ds.message(t, &AnyValue::new(true));
                                 Ok(())
                             });
 

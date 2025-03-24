@@ -2,15 +2,14 @@ use std::sync::Arc;
 
 use crate::schemas::dataspace_patterns::*;
 
-use super::language;
-
 use preserves::CompoundClass;
 use preserves::Map;
 use preserves::Record;
 use preserves::Value;
 use preserves::ValueClass;
 use preserves::signed_integer::OutOfRange;
-use preserves_schema::Codec;
+use preserves_schema::Unparse;
+use preserves_schema::parse;
 
 pub type PathStep = _Any;
 pub type Path = Vec<PathStep>;
@@ -82,7 +81,7 @@ impl Analyzer {
             }
             Pattern::Lit { value } => {
                 self.const_paths.push(path.clone());
-                self.const_values.push(language().unparse(value));
+                self.const_values.push(value.unparse());
             }
         }
     }
@@ -129,7 +128,7 @@ impl PatternMatcher {
                 self.captures.push(value.clone());
                 self.run(&**pattern, value)
             }
-            Pattern::Lit { value: expected } => value == &language().unparse(expected),
+            Pattern::Lit { value: expected } => value == &expected.unparse(),
             Pattern::Group { type_, entries } => match type_ {
                 GroupType::Rec { label } =>
                     value.is_record() &&
@@ -174,7 +173,7 @@ pub fn lift_literal(v: &_Any) -> Pattern {
                 .collect(),
         },
         _other => Pattern::Lit {
-            value: language().parse(v).expect("Failed converting non-compound datum to AnyAtom"),
+            value: parse(v).expect("Failed converting non-compound datum to AnyAtom"),
         },
     }
 }
@@ -215,7 +214,7 @@ pub fn drop_literal(p: &Pattern) -> Option<_Any> {
                 .map(|(k, p)| Some((k.clone(), drop_literal(p)?)))
                 .collect::<Option<Map<_Any, _Any>>>()?)),
         },
-        Pattern::Lit { value } => Some(language().unparse(value)),
+        Pattern::Lit { value } => Some(value.unparse()),
         _ => None,
     }
 }

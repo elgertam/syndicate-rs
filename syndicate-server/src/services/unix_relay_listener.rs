@@ -1,5 +1,3 @@
-use preserves_schema::Codec;
-
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,10 +9,11 @@ use syndicate::relay;
 use syndicate::supervise::{Supervisor, SupervisorConfiguration};
 use syndicate::trace;
 
+use preserves_schema::Unparse;
+
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
 
-use crate::language::language;
 use crate::lifecycle;
 use crate::protocol::run_connection;
 use crate::schemas::internal_services::UnixRelayListener;
@@ -24,8 +23,8 @@ use syndicate_macros::template;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("unix_relay_listener")), move |t| {
-        Ok(during!(t, ds, language(), <run-service $spec: UnixRelayListener::<Arc<Cap>>>, |t| {
-            let spec_v = language().unparse(&spec);
+        Ok(during!(t, ds, <run-service $spec: UnixRelayListener::<Arc<Cap>>>, |t| {
+            let spec_v = spec.unparse();
             Supervisor::start(
                 t,
                 Some(template!("<relay =spec_v>")),
@@ -50,7 +49,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
             if !facet.activate(
                 &account, cause, |t| {
                     tracing::info!("listening");
-                    ds.assert(t, language(), &lifecycle::ready(&spec));
+                    ds.assert(t, &lifecycle::ready(&spec));
                     Ok(())
                 })
             {

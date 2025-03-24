@@ -10,11 +10,11 @@ use preserves::ReaderResult;
 use preserves::Value;
 use preserves::packed::PackedWriter;
 use preserves::read_packed;
-use preserves_schema::Codec;
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
 
 use std::io;
 
-use super::language;
 use super::error::Error;
 use super::rewrite::CaveatError;
 pub use super::schemas::sturdy::*;
@@ -60,7 +60,7 @@ fn signature(key: &[u8], data: &[u8]) -> Vec<u8> {
 fn chain_signature(key: &[u8], chain: &[Caveat]) -> Vec<u8> {
     let mut key = key.to_vec();
     for c in chain {
-        key = signature(&key, &encode(&language().unparse(c)));
+        key = signature(&key, &encode(&c.unparse()));
     }
     key
 }
@@ -101,11 +101,11 @@ impl SturdyRef {
 
     pub fn from_hex(s: &str) -> Result<Self, Error> {
         let binary = HexParser::Liberal.decode(s).expect("hex encoded sturdyref");
-        Ok(language().parse(&decode(&binary)?)?)
+        Ok(Self::parse(&decode(&binary)?)?)
     }
 
     pub fn to_hex(&self) -> String {
-        HexFormatter::Packed.encode(&encode(&language().unparse(self)))
+        HexFormatter::Packed.encode(&encode(&self.unparse()))
     }
 
     pub fn caveat_chain(&self) -> Result<&[Caveat], ValidationError> {

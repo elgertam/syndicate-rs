@@ -1,5 +1,3 @@
-use preserves_schema::Codec;
-
 use std::convert::TryFrom;
 use std::io::Read;
 use std::sync::Arc;
@@ -11,7 +9,9 @@ use syndicate::preserves::Map;
 use syndicate::preserves::signed_integer::SignedInteger;
 use syndicate::schemas::http;
 
-use crate::language::language;
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
+
 use crate::lifecycle;
 use crate::schemas::internal_services::HttpRouter;
 use crate::schemas::internal_services::HttpStaticFileServer;
@@ -47,13 +47,13 @@ pub fn load_mime_table(path: &str) -> Result<Map<String, String>, std::io::Error
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("http_router_listener")), move |t| {
-        enclose!((ds) during!(t, ds, language(), <run-service $spec: HttpRouter::<Arc<Cap>>>, |t: &mut Activation| {
-            let spec_v = language().unparse(&spec);
+        enclose!((ds) during!(t, ds, <run-service $spec: HttpRouter::<Arc<Cap>>>, |t: &mut Activation| {
+            let spec_v = spec.unparse();
             t.spawn_link(Some(template!("<http_router =spec_v>")), enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }));
-        enclose!((ds) during!(t, ds, language(), <run-service $spec: HttpStaticFileServer>, |t: &mut Activation| {
-            let spec_v = language().unparse(&spec);
+        enclose!((ds) during!(t, ds, <run-service $spec: HttpStaticFileServer>, |t: &mut Activation| {
+            let spec_v = spec.unparse();
             t.spawn_link(Some(template!("<http_static_file_server =spec_v>")),
                          enclose!((ds) |t| run_static_file_server(t, ds, spec)));
             Ok(())
@@ -79,22 +79,22 @@ fn request_host(value: &http::RequestHost) -> Option<String> {
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
-    ds.assert(t, language(), &lifecycle::started(&spec));
-    ds.assert(t, language(), &lifecycle::ready(&spec));
+    ds.assert(t, &lifecycle::started(&spec));
+    ds.assert(t, &lifecycle::ready(&spec));
     let httpd = spec.httpd;
 
     let routes: Arc<Field<RoutingTable>> = t.named_field("routes", Map::new());
 
-    enclose!((httpd, routes) during!(t, httpd, language(), <http-bind _ $port _ _ _>, |t: &mut Activation| {
+    enclose!((httpd, routes) during!(t, httpd, <http-bind _ $port _ _ _>, |t: &mut Activation| {
         let port1 = port.clone();
-        enclose!((httpd, routes) during!(t, httpd, language(), <http-listener #(&port1)>, enclose!((routes, port) |t: &mut Activation| {
+        enclose!((httpd, routes) during!(t, httpd, <http-listener #(&port1)>, enclose!((routes, port) |t: &mut Activation| {
             let port2 = port.clone();
-            during!(t, httpd, language(), <http-bind $host #(&port2) $method $path $handler>, |t: &mut Activation| {
+            during!(t, httpd, <http-bind $host #(&port2) $method $path $handler>, |t: &mut Activation| {
                 tracing::debug!("+HTTP binding {:?} {:?} {:?} {:?} {:?}", host, port, method, path, handler);
                 let port = match port.to_signed_integer() { Ok(v) => v.into_owned(), Err(_) => return Ok(()) };
-                let host = language().parse::<http::HostPattern>(&host)?;
-                let path = language().parse::<http::PathPattern>(&path)?;
-                let method = language().parse::<http::MethodPattern>(&method)?;
+                let host = http::HostPattern::parse(&host)?;
+                let path = http::PathPattern::parse(&path)?;
+                let method = http::MethodPattern::parse(&method)?;
                 let handler_cap = match handler.to_embedded() { Ok(v) => v.into_owned(), Err(_) => return Ok(()) };
                 let handler_terminated = t.named_field("handler-terminated", false);
                 t.get_mut(&routes)
@@ -140,8 +140,8 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
         Ok(())
     }));
 
-    during!(t, httpd, language(), <request $req $res>, |t: &mut Activation| {
-        let req = match language().parse::<http::HttpRequest>(&req) { Ok(v) => v, Err(_) => return Ok(()) };
+    during!(t, httpd, <request $req $res>, |t: &mut Activation| {
+        let req = match http::HttpRequest::parse(&req) { Ok(v) => v, Err(_) => return Ok(()) };
         let res = match res.to_embedded() { Ok(v) => v, Err(_) => return Ok(()) };
         let res = res.as_ref();
 
@@ -169,9 +169,9 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
                         http::MethodPattern::Specific(m) => m.to_uppercase(),
                         http::MethodPattern::Any => unreachable!(),
                     }).collect::<Vec<String>>().join(", ");
-                    res.message(t, language(), &http::HttpResponse::Status {
+                    res.message(t, &http::HttpResponse::Status {
                         code: 405.into(), message: "Method Not Allowed".into() });
-                    res.message(t, language(), &http::HttpResponse::Header {
+                    res.message(t, &http::HttpResponse::Header {
                         name: "allow".into(), value: allowed });
                     return send_done(t, res);
                 }
@@ -192,7 +192,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
             Ok(())
         }))?;
 
-        cap.assert(t, language(), &http::HttpContext { req, res: res.clone() });
+        cap.assert(t, &http::HttpContext { req, res: res.clone() });
         Ok(())
     });
 
@@ -200,12 +200,12 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: HttpRouter) -> ActorResult {
 }
 
 fn send_done(t: &mut Activation, res: &Arc<Cap>) -> ActorResult {
-    res.message(t, language(), &http::HttpResponse::Done {
+    res.message(t, &http::HttpResponse::Done {
         chunk: http::Chunk::Bytes(vec![]) });
     Ok(())
 }
 fn send_empty(t: &mut Activation, res: &Arc<Cap>, code: u16, message: &str) -> ActorResult {
-    res.message(t, language(), &http::HttpResponse::Status {
+    res.message(t, &http::HttpResponse::Status {
         code: code.into(), message: message.into() });
     send_done(t, res)
 }
@@ -305,9 +305,9 @@ impl HttpStaticFileServer {
             Ok(mut fh) => {
                 if fh.metadata().is_ok_and(|m| m.is_dir()) {
                     drop(fh);
-                    res.message(t, language(), &http::HttpResponse::Status {
+                    res.message(t, &http::HttpResponse::Status {
                         code: 301.into(), message: "Moved permanently".into() });
-                    res.message(t, language(), &http::HttpResponse::Header {
+                    res.message(t, &http::HttpResponse::Header {
                         name: "location".into(), value: format!("/{}/", req.path.join("/")) });
                     return send_done(t, res);
                 } else {
@@ -322,13 +322,13 @@ impl HttpStaticFileServer {
             }
         };
 
-        res.message(t, language(), &http::HttpResponse::Status {
+        res.message(t, &http::HttpResponse::Status {
             code: 200.into(), message: "OK".into() });
         if let Some(mime_type) = mime_type {
-            res.message(t, language(), &http::HttpResponse::Header {
+            res.message(t, &http::HttpResponse::Header {
                 name: "content-type".into(), value: mime_type.to_owned() });
         }
-        res.message(t, language(), &http::HttpResponse::Done {
+        res.message(t, &http::HttpResponse::Done {
             chunk: http::Chunk::Bytes(body) });
 
         Ok(())
@@ -347,9 +347,9 @@ impl Entity<http::HttpContext<Arc<Cap>>> for HttpStaticFileServer {
 }
 
 fn run_static_file_server(t: &mut Activation, ds: Arc<Cap>, spec: HttpStaticFileServer) -> ActorResult {
-    let object = Cap::guard(&language().syndicate, t.create(spec.clone()));
-    ds.assert(t, language(), &syndicate::schemas::service::ServiceObject {
-        service_name: language().unparse(&spec),
+    let object = Cap::guard(t.create(spec.clone()));
+    ds.assert(t, &syndicate::schemas::service::ServiceObject {
+        service_name: spec.unparse(),
         object: AnyValue::embedded(object),
     });
     Ok(())

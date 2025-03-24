@@ -35,7 +35,7 @@ async fn main() -> ActorResult {
                     account.ensure_clear_funds().await;
                     facet.activate(&account, None, |t| {
                         for _ in 0..action_count {
-                            ds.message(t, &(), &AnyValue::record(AnyValue::symbol("Says"), vec![
+                            ds.message(t, &AnyValue::record(AnyValue::symbol("Says"), vec![
                                 AnyValue::new("producer"),
                                 padding.clone()]));
                         }

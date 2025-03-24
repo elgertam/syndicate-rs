@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use preserves::Domain;
 
 mod schemas {
@@ -14,10 +13,6 @@ mod placeholder {
 #[derive(Debug, Clone, Hash, Ord, Eq, PartialOrd, PartialEq)]
 pub enum Cap {}
 impl Domain for Cap {}
-
-preserves_schema::define_language!(language(): Language<Arc<Cap>> {
-    syndicate: schemas::Language,
-});
 
 mod pattern;
 mod pattern_plugin;

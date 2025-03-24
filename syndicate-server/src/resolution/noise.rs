@@ -8,8 +8,6 @@ use noise_rust_crypto::X25519;
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use preserves_schema::Codec;
-
 use syndicate::actor::*;
 use syndicate::relay::Mutex;
 use syndicate::relay::TunnelRelay;
@@ -30,24 +28,27 @@ use syndicate::schemas::noise;
 use syndicate::schemas::rpc as R;
 use syndicate::schemas::sturdy;
 
-use crate::language;
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
+use preserves_schema::parse;
+use preserves_schema::unparse_iovalue;
 
 fn noise_step_type() -> String {
-    language().unparse(&noise::NoiseStepType).to_symbol().unwrap().into_owned()
+    unparse_iovalue(&noise::NoiseStepType).to_symbol().unwrap().into_owned()
 }
 
 pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
-    during!(t, ds, language(), <bind <noise $desc> $target $observer>, |t: &mut Activation| {
+    during!(t, ds, <bind <noise $desc> $target $observer>, |t: &mut Activation| {
         t.spawn_link(None, move |t| {
             target.to_embedded()?;
-            let observer = language().parse::<gatekeeper::BindObserver>(&observer)?;
-            let spec = language().parse::<noise::NoiseDescriptionDetail<Arc<Cap>>>(&desc)?.0;
+            let observer = gatekeeper::BindObserver::parse(&observer)?;
+            let spec = noise::NoiseDescriptionDetail::parse(&desc)?.0;
             match validate_noise_service_spec(spec) {
                 Ok(spec) => if let gatekeeper::BindObserver::Present(o) = observer {
-                    o.assert(t, language(), &gatekeeper::Bound::Bound {
+                    o.assert(t, &gatekeeper::Bound::Bound {
                         path_step: gatekeeper::PathStep {
                             step_type: noise_step_type(),
-                            detail: language().unparse(&noise::NoisePathStepDetail(noise::NoiseSpec {
+                            detail: (noise::NoisePathStepDetail(noise::NoiseSpec {
                                 key: spec.public_key,
                                 service: noise::ServiceSelector(spec.service),
                                 protocol: if spec.protocol == default_noise_protocol() {
@@ -64,13 +65,13 @@ pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
                                         pre_shared_keys: spec.psks,
                                     }
                                 },
-                            })),
+                            })).unparse(),
                         },
                     });
                 },
                 Err(e) => {
                     if let gatekeeper::BindObserver::Present(o) = observer {
-                        o.assert(t, language(), &gatekeeper::Bound::Rejected(
+                        o.assert(t, &gatekeeper::Bound::Rejected(
                             gatekeeper::Rejected {
                                 detail: AnyValue::new(format!("{}", &e)),
                             }));
@@ -88,7 +89,7 @@ pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
 pub fn take_noise_step(t: &mut Activation, ds: &mut Arc<Cap>, a: &gatekeeper::Resolve, detail: &mut &'static str) -> Result<bool, ActorError> {
     if a.step.step_type == noise_step_type() {
         *detail = "invalid";
-        if let Ok(s) = language().parse::<noise::NoiseStepDetail<Arc<Cap>>>(&a.step.detail) {
+        if let Ok(s) = noise::NoiseStepDetail::parse(&a.step.detail) {
             t.facet(|t| {
                 let f = super::handle_direct_resolution(ds, t, a.clone())?;
                 await_bind_noise(ds, t, s.0.0, a.observer.clone(), f)
@@ -109,7 +110,7 @@ struct ValidatedNoiseSpec {
 }
 
 fn default_noise_protocol() -> String {
-    language().unparse(&noise::DefaultProtocol).to_str().unwrap().into_owned()
+    unparse_iovalue(&noise::DefaultProtocol).to_str().unwrap().into_owned()
 }
 
 fn validate_noise_spec(
@@ -176,19 +177,18 @@ fn await_bind_noise(
             let observer = Arc::clone(&observer);
             t.spawn_link(None, move |t| {
                 let bindings = a.collect_sequence().ok_or(ExpectedKind::Sequence)?;
-                let spec = validate_noise_service_spec(language().parse(&bindings[0])?)?;
+                let spec = validate_noise_service_spec(parse(&bindings[0])?)?;
                 let service = bindings[1].to_embedded()?.into_owned();
                 let hs = make_handshake(&spec, false)?;
-                let responder_session = Cap::guard(crate::Language::arc(), t.create(
+                let responder_session = Cap::guard(t.create(
                     ResponderState::Introduction{ service, hs }));
-                observer.assert(
-                    t, language(), &gatekeeper::Resolved::Accepted { responder_session });
+                observer.assert(t, &gatekeeper::Resolved::Accepted { responder_session });
                 Ok(())
             });
             Ok(())
         })
         .create_cap(t);
-    ds.assert(t, language(), &dataspace::Observe {
+    ds.assert(t, &dataspace::Observe {
         // TODO: codegen plugin to generate pattern constructors
         pattern: pattern!{
             <bind <noise $spec:NoiseServiceSpec{ { service: #(&service_selector) } }> $service _>
@@ -293,7 +293,7 @@ impl HandshakeState {
     ) -> Result<Option<(Option<Arc<Cap>>, TransportState)>, ActorError> {
         let mut reply = vec![0u8; self.hs.get_next_message_overhead()];
         self.hs.write_message(&[], &mut reply[..])?;
-        self.peer.message(t, language(), &noise::Packet::Complete(reply.into()));
+        self.peer.message(t, &noise::Packet::Complete(reply.into()));
         if self.hs.completed() {
             self.complete_handshake(t)
         } else {
@@ -335,7 +335,7 @@ impl HandshakeState {
                             noise::Packet::Complete(c_send.encrypt_vec(&loaned_item.item))
                         };
                         if !transport_facet.activate(&account, Some(cause.clone()), |t| {
-                            peer.message(t, language(), &p);
+                            peer.message(t, &p);
                             Ok(())
                         }) {
                             break;
@@ -455,10 +455,10 @@ fn make_handshake(
 }
 
 pub fn handle_noise_path_steps(t: &mut Activation, ds: Arc<Cap>) -> ActorResult {
-    during!(t, ds, language(),
+    during!(t, ds,
             <q <resolve-path-step $origin <noise $spec0>>>,
             enclose!((ds) move |t: &mut Activation| {
-                if let Ok(spec) = language().parse::<noise::NoiseSpec>(&spec0) {
+                if let Ok(spec) = noise::NoiseSpec::parse(&spec0) {
                     if let Some(origin) = origin.as_embedded() {
                         let origin = origin.into_owned();
                         t.spawn_link(None, move |t| run_noise_initiator(t, ds, origin, spec));
@@ -475,22 +475,22 @@ fn run_noise_initiator(
     origin: Arc<Cap>,
     spec: noise::NoiseSpec,
 ) -> ActorResult {
-    let q = language().unparse(&gatekeeper::ResolvePathStep {
+    let q = (gatekeeper::ResolvePathStep {
         origin: origin.clone(),
         path_step: gatekeeper::PathStep {
             step_type: "noise".to_string(),
-            detail: language().unparse(&spec),
+            detail: spec.unparse(),
         }
-    });
+    }).unparse();
     let service = spec.service.clone();
     let validated = validate_noise_spec(spec)?;
-    let observer = Cap::guard(&language().syndicate, t.create(
+    let observer = Cap::guard(t.create(
         syndicate::entity(()).on_asserted_facet(
             enclose!((ds, q) move |_, t, r: gatekeeper::Resolved| {
                 match r {
                     gatekeeper::Resolved::Rejected(b) => {
-                        ds.assert(t, language(), &rpc::answer(
-                            language(), q.clone(), R::Result::Error {
+                        ds.assert(t, &rpc::answer(
+                            q.clone(), R::Result::Error {
                                 error: b.detail }));
                     }
                     gatekeeper::Resolved::Accepted { responder_session } =>
@@ -499,10 +499,10 @@ fn run_noise_initiator(
                 }
                 Ok(())
             }))));
-    origin.assert(t, language(), &gatekeeper::Resolve {
+    origin.assert(t, &gatekeeper::Resolve {
         step: gatekeeper::Step {
             step_type: "noise".to_string(),
-            detail: language().unparse(&service),
+            detail: service.unparse(),
         },
         observer,
     });
@@ -517,8 +517,8 @@ fn run_initiator_session(
     responder_session: Arc<Cap>,
 ) -> ActorResult {
     let initiator_session_ref = t.create_inert();
-    let initiator_session = Cap::guard(crate::Language::arc(), initiator_session_ref.clone());
-    responder_session.assert(t, language(), &noise::Initiator { initiator_session });
+    let initiator_session = Cap::guard(initiator_session_ref.clone());
+    responder_session.assert(t, &noise::Initiator { initiator_session });
     let mut hss = HandshakeState {
         peer: responder_session.clone(),
         hs: make_handshake(spec, true)?,
@@ -552,7 +552,7 @@ impl Entity<noise::Packet> for InitiatorState {
                     let ds = ds.clone();
                     let question = question.clone();
                     *self = InitiatorState::Transport(ts);
-                    ds.assert(t, language(), &rpc::answer(language(), question, R::Result::Ok {
+                    ds.assert(t, &rpc::answer(question, R::Result::Ok {
                         value: AnyValue::embedded(peer_service) }));
                 }
             }

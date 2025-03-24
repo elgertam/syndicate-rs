@@ -19,8 +19,6 @@ use tokio::sync::oneshot;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate::language;
-
 static NEXT_SEQ: AtomicU64 = AtomicU64::new(0);
 
 pub fn empty_response(code: StatusCode) -> Response<Body> {
@@ -178,8 +176,8 @@ pub async fn serve(
                 body,
             };
             tracing::debug!(?sreq);
-            let srep = Cap::guard(&language().syndicate, t.create(ResponseCollector::new(tx)));
-            httpd.assert(t, language(), &http::HttpContext { req: sreq, res: srep });
+            let srep = Cap::guard(t.create(ResponseCollector::new(tx)));
+            httpd.assert(t, &http::HttpContext { req: sreq, res: srep });
             Ok(())
         })?;
         Ok(())

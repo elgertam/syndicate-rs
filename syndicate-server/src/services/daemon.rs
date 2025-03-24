@@ -1,5 +1,3 @@
-use preserves_schema::Codec;
-
 use std::sync::Arc;
 
 use syndicate::actor::*;
@@ -9,13 +7,15 @@ use syndicate::supervise::Supervisor;
 use syndicate::supervise::SupervisorConfiguration;
 use syndicate::trace;
 
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
+
 use tokio::io::AsyncRead;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process;
 
 use crate::counter;
-use crate::language::language;
 use crate::lifecycle;
 use crate::schemas::external_services::*;
 
@@ -24,7 +24,7 @@ use syndicate_macros::template;
 
 pub fn on_demand(t: &mut Activation, config_ds: Arc<Cap>, root_ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("daemon_listener")), move |t| {
-        Ok(during!(t, config_ds, language(), <run-service $spec: DaemonService::<Arc<Cap>>>,
+        Ok(during!(t, config_ds, <run-service $spec: DaemonService::<Arc<Cap>>>,
                    enclose!((config_ds, root_ds) move |t: &mut Activation| {
                        supervise_daemon(t, config_ds, root_ds, spec)
                    })))
@@ -48,7 +48,7 @@ fn supervise_daemon(
             }));
         Supervisor::start(
             t,
-            Some(language().unparse(&spec)),
+            Some(spec.unparse()),
             SupervisorConfiguration::on_error_only(),
             enclose!((config_ds, spec) lifecycle::updater(config_ds, spec)),
             enclose!((config_ds, root_ds) move |t|
@@ -257,7 +257,7 @@ impl DaemonInstance {
                     let now = AnyValue::new(chrono::Utc::now().to_rfc3339());
                     if !facet.activate(
                         &account, cause.clone(), enclose!((pid, service, kind) |t| {
-                            log_ds.message(t, &(), &syndicate_macros::template!(
+                            log_ds.message(t, &syndicate_macros::template!(
                                 "<log =now {
                                    pid: =pid,
                                    service: =service,
@@ -346,7 +346,7 @@ impl DaemonInstance {
             let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text)
                 .ok_or("initial capability reference unavailable")?;
             tracing::info!(?cap);
-            self.config_ds.assert(t, language(), &service::ServiceObject {
+            self.config_ds.assert(t, &service::ServiceObject {
                 service_name: self.service.clone(),
                 object: AnyValue::embedded(cap),
             });
@@ -362,7 +362,7 @@ fn run(
     root_ds: Arc<Cap>,
     service: DaemonService,
 ) -> ActorResult {
-    let spec = language().unparse(&service);
+    let spec = service.unparse();
 
     let total_configs = t.named_field("total_configs", 0isize);
     let unready_configs = t.named_field("unready_configs", 1isize);
@@ -374,7 +374,7 @@ fn run(
         enclose!((config_ds, unready_configs) move |t| {
             let busy_count = *t.get(&unready_configs);
             tracing::debug!(?busy_count);
-            config_ds.update(t, &mut handle, language(), if busy_count == 0 { Some(&ready) } else { None });
+            config_ds.update(t, &mut handle, if busy_count == 0 { Some(&ready) } else { None });
             Ok(())
         })
     })?;
@@ -391,14 +391,14 @@ fn run(
 
     let trace_collector = t.trace_collector();
     enclose!((config_ds, unready_configs, completed_processes)
-             during!(t, config_ds.clone(), language(), <daemon #(&service.id) $config>, {
+             during!(t, config_ds.clone(), <daemon #(&service.id) $config>, {
                  enclose!((spec, config_ds, root_ds, unready_configs, completed_processes, trace_collector)
                           |t: &mut Activation| {
                               tracing::debug!(?config, "new config");
                               counter::adjust(t, &unready_configs, 1);
                               counter::adjust(t, &total_configs, 1);
 
-                              match language().parse::<DaemonProcessSpec>(&config) {
+                              match DaemonProcessSpec::parse(&config) {
                                   Ok(config) => {
                                       tracing::info!(?config);
                                       let config = config.elaborate();

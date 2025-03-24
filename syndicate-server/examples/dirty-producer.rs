@@ -2,16 +2,15 @@
 //! quickly as possible, so that the producer isn't the bottleneck in
 //! single-producer/single-consumer broker throughput measurement.
 
-use preserves_schema::Codec;
-
 use structopt::StructOpt;
 
-use syndicate::schemas::Language;
 use syndicate::schemas::protocol as P;
 use syndicate::preserves::IOValue;
 use syndicate::preserves::PackedWriter;
 use syndicate::preserves::Record;
 use syndicate::preserves::Value;
+
+use preserves_schema::Unparse;
 
 use std::io::Write;
 use std::net::TcpStream;
@@ -54,9 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let turn = P::Turn(events);
 
     let mut buf: Vec<u8> = vec![];
-    let iolang = Language::<IOValue>::default();
     while buf.len() < 16384 {
-        buf.extend(&PackedWriter::encode_iovalue(&iolang.unparse(&turn).into())?);
+        buf.extend(&PackedWriter::encode_iovalue(&turn.unparse().into())?);
     }
 
     loop {

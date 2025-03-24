@@ -1,5 +1,3 @@
-use preserves_schema::Codec;
-
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -7,7 +5,8 @@ use syndicate::actor::*;
 use syndicate::enclose;
 use syndicate_macros::template;
 
-use crate::language::language;
+use preserves_schema::Unparse;
+
 use crate::lifecycle;
 use crate::schemas::internal_services::DebtReporter;
 
@@ -15,8 +14,8 @@ use syndicate_macros::during;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("debt_reporter_listener")), move |t| {
-        Ok(during!(t, ds, language(), <run-service $spec: DebtReporter>, |t: &mut Activation| {
-            let spec_v = language().unparse(&spec);
+        Ok(during!(t, ds, <run-service $spec: DebtReporter>, |t: &mut Activation| {
+            let spec_v = spec.unparse();
             t.spawn_link(Some(template!("<debt_reporter =spec_v>")), enclose!((ds) |t| run(t, ds, spec)));
             Ok(())
         }))
@@ -24,8 +23,8 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 }
 
 fn run(t: &mut Activation, ds: Arc<Cap>, spec: DebtReporter) -> ActorResult {
-    ds.assert(t, language(), &lifecycle::started(&spec));
-    ds.assert(t, language(), &lifecycle::ready(&spec));
+    ds.assert(t, &lifecycle::started(&spec));
+    ds.assert(t, &lifecycle::ready(&spec));
     t.every(core::time::Duration::from_millis((spec.interval_seconds.0 * 1000.0) as u64), |_t| {
         for (account_id, (name, debt)) in syndicate::actor::ACCOUNTS.read().iter() {
             tracing::info!(account_id, ?name, debt = ?debt.load(Ordering::Relaxed));

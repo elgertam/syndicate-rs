@@ -8,10 +8,9 @@ pub use super::schemas::trace::*;
 
 use preserves::IOValue;
 use preserves::Writer;
-use preserves_schema::Codec;
+use preserves_schema::Unparse;
 
 use super::actor::{self, AnyValue, Ref, Cap};
-use super::language;
 
 use std::num::NonZeroU64;
 use std::sync::Arc;
@@ -134,7 +133,7 @@ impl TraceCollector {
         let mut writer = preserves::TextWriter::new(w);
         Self::new(move |event| match event {
             CollectorEvent::Event(entry) => {
-                language().unparse(&entry).write(&mut writer, &mut CapEncoder)
+                entry.unparse().write(&mut writer, &mut CapEncoder)
                     .expect("failed to write TraceCollector entry");
                 writer.borrow_write().write_all(b"\n")
                     .expect("failed to write TraceCollector newline");
@@ -148,7 +147,7 @@ impl TraceCollector {
         let mut writer = preserves::PackedWriter::new(w);
         Self::new(move |event| match event {
             CollectorEvent::Event(entry) =>
-                language().unparse(&entry).write(&mut writer, &mut CapEncoder)
+                entry.unparse().write(&mut writer, &mut CapEncoder)
                 .expect("failed to write TraceCollector entry"),
             CollectorEvent::PeriodicFlush =>
                 writer.flush().expect("failed to flush TraceCollector output"),

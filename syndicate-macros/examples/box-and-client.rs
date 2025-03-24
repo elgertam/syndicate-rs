@@ -1,7 +1,6 @@
 use syndicate::actor::*;
 use syndicate::enclose;
 use syndicate::dataspace::Dataspace;
-use syndicate::language;
 use syndicate::schemas::dataspace::Observe;
 
 #[tokio::main]
@@ -19,7 +18,7 @@ async fn main() -> ActorResult {
                 enclose!((ds, current_value) move |t| {
                     let v = AnyValue::new(*t.get(&current_value));
                     tracing::info!(?v, "asserting");
-                    ds.update(t, &mut state_assertion_handle, &(),
+                    ds.update(t, &mut state_assertion_handle,
                               Some(&syndicate_macros::template!("<box-state =v>")));
                     Ok(())
                 })
@@ -35,7 +34,7 @@ async fn main() -> ActorResult {
                     Ok(())
                 }))
                 .create_cap(t);
-            ds.assert(t, language(), &Observe {
+            ds.assert(t, &Observe {
                 pattern: syndicate_macros::pattern!{<set-box $>},
                 observer: set_box_handler,
             });
@@ -59,7 +58,7 @@ async fn main() -> ActorResult {
                         tracing::info!(?value);
                         let next = AnyValue::new(value + 1);
                         tracing::info!(?next, "sending");
-                        ds.message(t, &(), &syndicate_macros::template!("<set-box =next>"));
+                        ds.message(t, &syndicate_macros::template!("<set-box =next>"));
                         Ok(Some(Box::new(|count, t| {
                             *count = *count - 1;
                             if *count == 0 {
@@ -73,7 +72,7 @@ async fn main() -> ActorResult {
                     }
                 }))
                 .create_cap(t);
-            ds.assert(t, language(), &Observe {
+            ds.assert(t, &Observe {
                 pattern: syndicate_macros::pattern!{<box-state $>},
                 observer: box_state_handler,
             });

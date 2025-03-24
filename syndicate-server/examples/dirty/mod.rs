@@ -1,6 +1,3 @@
-use preserves_schema::Codec;
-
-use syndicate::schemas::Language;
 use syndicate::schemas::gatekeeper;
 use syndicate::schemas::protocol as P;
 use syndicate::sturdy;
@@ -8,33 +5,33 @@ use syndicate::preserves::IOValue;
 use syndicate::preserves::PackedWriter;
 use syndicate::preserves::value_map_embedded;
 
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
+
 use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
 
 pub fn dirty_resolve(stream: &mut TcpStream, dataspace: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let iolang = Language::<IOValue>::default();
-
     let sturdyref = sturdy::SturdyRef::from_hex(dataspace)?;
-    let sturdyref = iolang.parse::<gatekeeper::Step<IOValue>>(
-        &value_map_embedded(&syndicate::language().unparse(&sturdyref),
-                            &mut |_| Err("no!"))?)?;
+    let sturdyref = gatekeeper::Step::<IOValue>::parse(
+        &value_map_embedded(&sturdyref.unparse(), &mut |_| Err("no!"))?)?;
 
     let resolve_turn = P::Turn(vec![
         P::TurnEvent {
             oid: P::Oid(0.into()),
             event: P::Event::Assert(P::Assert {
-                assertion: P::Assertion(iolang.unparse(&gatekeeper::Resolve::<IOValue> {
+                assertion: P::Assertion((gatekeeper::Resolve::<IOValue> {
                     step: sturdyref,
-                    observer: iolang.unparse(&sturdy::WireRef::Mine {
+                    observer: (sturdy::WireRef::Mine {
                         oid: sturdy::Oid(0.into()),
-                    }).into(),
-                })),
+                    }).unparse().into(),
+                }).unparse()),
                 handle: P::Handle(1.into()),
             }),
         }
     ]);
-    stream.write_all(&PackedWriter::encode_iovalue(&iolang.unparse(&resolve_turn).into())?)?;
+    stream.write_all(&PackedWriter::encode_iovalue(&resolve_turn.unparse().into())?)?;
 
     {
         let mut buf = [0; 1024];

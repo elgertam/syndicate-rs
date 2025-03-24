@@ -4,8 +4,6 @@ use syndicate::schemas::gatekeeper;
 
 use syndicate::enclose;
 
-use crate::language;
-
 pub mod client;
 pub mod noise;
 pub mod sturdy;
@@ -22,13 +20,13 @@ fn handle_direct_resolution(
             .on_asserted(move |observer, t, a: AnyValue| {
                 t.stop_facet_and_continue(outer_facet, Some(
                     enclose!((observer, a) move |t: &mut Activation| {
-                        observer.assert(t, language(), &a);
+                        observer.assert(t, &a);
                         Ok(())
                     })))?;
                 Ok(None)
             })
             .create_cap(t);
-        ds.assert(t, language(), &gatekeeper::Resolve {
+        ds.assert(t, &gatekeeper::Resolve {
             step: a.step.clone(),
             observer: handler,
         });

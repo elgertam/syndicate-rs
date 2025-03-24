@@ -1,5 +1,3 @@
-use preserves_schema::Codec;
-
 use std::io;
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -24,7 +22,7 @@ use syndicate::preserves::Value;
 use syndicate::preserves::ValueClass;
 use syndicate::preserves::ValueImpl;
 
-use crate::language::language;
+use preserves_schema::Unparse;
 
 #[derive(Debug)]
 struct PatternInstantiator<'env> {
@@ -492,10 +490,10 @@ impl Env {
     pub fn eval(&mut self, t: &mut Activation, i: &Instruction) -> Result<(), ActorError> {
         match i {
             Instruction::Assert { target, template } => {
-                self.lookup_target(target)?.assert(t, &(), &self.instantiate_value(template)?);
+                self.lookup_target(target)?.assert(t, &self.instantiate_value(template)?);
             }
             Instruction::Message { target, template } => {
-                self.lookup_target(target)?.message(t, &(), &self.instantiate_value(template)?);
+                self.lookup_target(target)?.message(t, &self.instantiate_value(template)?);
             }
             Instruction::During { target, pattern_template, body } => {
                 let (binding_names, pattern) = self.instantiate_pattern(pattern_template)?;
@@ -503,7 +501,7 @@ impl Env {
                     .on_asserted_facet(enclose!((binding_names, body) move |env, t, cs: AnyValue| {
                         env.bind_and_run(t, &binding_names, cs, &*body) }))
                     .create_cap(t);
-                self.lookup_target(target)?.assert(t, language(), &dataspace::Observe {
+                self.lookup_target(target)?.assert(t, &dataspace::Observe {
                     pattern,
                     observer,
                 });
@@ -516,7 +514,7 @@ impl Env {
                         Ok(())
                     }))
                     .create_cap(t);
-                self.lookup_target(target)?.assert(t, language(), &dataspace::Observe {
+                self.lookup_target(target)?.assert(t, &dataspace::Observe {
                     pattern,
                     observer,
                 });
@@ -723,7 +721,7 @@ fn embed_pattern(p: &P::Pattern) -> sturdy::Pattern {
             pattern: Box::new(embed_pattern(&**pattern)),
         })),
         P::Pattern::Lit { value } => sturdy::Pattern::Lit(sturdy::Lit {
-            value: language().unparse(value),
+            value: value.unparse(),
         }),
         P::Pattern::Group { type_, entries } => sturdy::Pattern::PCompound(match type_ {
             P::GroupType::Rec { label } =>

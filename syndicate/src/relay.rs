@@ -1,8 +1,6 @@
 use bytes::Buf;
 use bytes::BytesMut;
 
-use crate::Language;
-use crate::language;
 use crate::actor::*;
 use crate::during;
 use crate::error::Error;
@@ -37,9 +35,9 @@ use preserves::packed::constants::Tag;
 use preserves::signed_integer::SignedInteger;
 use preserves::value_map_embedded;
 
-use preserves_schema::Codec;
 use preserves_schema::Deserialize;
-use preserves_schema::support::Unparse;
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
 
 use std::io;
 use std::pin::Pin;
@@ -196,7 +194,7 @@ pub fn connect_stream<I, O, Step, E, F>(
 ) -> ActorResult where
     I: 'static + Send + AsyncRead,
     O: 'static + Send + AsyncWrite,
-    Step: for<'a> Unparse<&'a Language<Arc<Cap>>, Arc<Cap>>,
+    Step: Unparse<Arc<Cap>>,
     E: 'static + Send,
     F: 'static + Send + FnMut(&mut E, &mut Activation, Arc<Cap>) -> during::DuringResult<E>
 {
@@ -209,10 +207,10 @@ pub fn connect_stream<I, O, Step, E, F>(
             gatekeeper::Resolved::Rejected(r) => Err(error("Resolve rejected", r.detail))?,
         }
     }));
-    let step = language().parse::<gatekeeper::Step>(&language().unparse(&step))?;
-    gatekeeper.assert(t, language(), &gatekeeper::Resolve::<Arc<Cap>> {
+    let step = gatekeeper::Step::parse(&step.unparse())?;
+    gatekeeper.assert(t, &gatekeeper::Resolve::<Arc<Cap>> {
         step,
-        observer: Cap::guard(Language::arc(), main_entity),
+        observer: Cap::guard(main_entity),
     });
     Ok(())
 }
@@ -415,7 +413,7 @@ impl TunnelRelay {
                 ws.inc_ref(),
             None => {
                 tracing::debug!(
-                    event = ?language().unparse(&P::TurnEvent { oid: P::Oid(oid.to_owned()), event }),
+                    event = ?(&P::TurnEvent { oid: P::Oid(oid.to_owned()), event }).unparse(),
                     "Cannot deliver event: nonexistent oid");
                 return Ok(());
             }
@@ -427,7 +425,7 @@ impl TunnelRelay {
                 let P::Assert { assertion: P::Assertion(a), handle: remote_handle } = b;
                 a.foreach_embedded(
                     &mut |r| Ok(pins.push(self.membranes.lookup_ref(r)))).unwrap();
-                if let Some(local_handle) = target.assert(t, &(), &a) {
+                if let Some(local_handle) = target.assert(t, &a) {
                     if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, pins)) {
                         return Err(error("Assertion with duplicate handle", AnyValue::new(false)))?;
                     }
@@ -463,7 +461,7 @@ impl TunnelRelay {
                         _ => Ok(()),
                     }
                 }).map_err(|_| error("Cannot receive transient reference", AnyValue::new(false)))?;
-                target.message(t, &(), &a);
+                target.message(t, &a);
                 self.membranes.release(pins);
                 dump_membranes!(self.membranes);
             }
@@ -478,7 +476,7 @@ impl TunnelRelay {
                 }
                 impl Entity<Synced> for SyncPeer {
                     fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
-                        self.peer.message(t, &(), &AnyValue::new(true));
+                        self.peer.message(t, &AnyValue::new(true));
                         let mut g = self.relay_ref.lock();
                         let tr = g.as_mut().expect("initialized");
                         tr.membranes.release(std::mem::take(&mut self.pins));
@@ -580,7 +578,7 @@ impl TunnelRelay {
     }
 
     pub fn send_packet(&mut self, account: &Arc<Account>, cost: usize, p: &P::Packet<Arc<Cap>>) -> ActorResult {
-        let item = language().unparse(p);
+        let item = p.unparse();
         tracing::debug!(packet = ?item, "<--");
 
         let bs = if self.output_text {
@@ -757,7 +755,7 @@ impl<'a, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'm> {
 
     fn decode_value(&mut self, v: IOValue) -> ReaderResult<Arc<Cap>> {
         let v = value_map_embedded(&v, &mut |c| self.decode_value(c.clone()))?;
-        let wr = language().parse::<sturdy::WireRef>(&v)?;
+        let wr = sturdy::WireRef::parse(&v)?;
         self.membranes.decode_wireref(self.turn, self.tr_ref, wr)
     }
 }
@@ -768,11 +766,11 @@ impl DomainEncode<Arc<Cap>> for Membranes {
         w: &mut dyn preserves::Writer,
         d: &Arc<Cap>,
     ) -> io::Result<()> {
-        language().unparse(&self.encode_wireref(d)).write(w, self)
+        self.encode_wireref(d).unparse().write(w, self)
     }
 
     fn encode_value(&mut self, d: &Arc<Cap>) -> io::Result<IOValue> {
-        let v = language().unparse(&self.encode_wireref(d));
+        let v = self.encode_wireref(d).unparse();
         let v = value_map_embedded(&v, &mut |c| self.encode_value(c))?;
         Ok(v.into())
     }
@@ -898,7 +896,7 @@ impl Entity<AnyValue> for RelayEntity {
     fn sync(&mut self, t: &mut Activation, peer: Arc<Ref<Synced>>) -> ActorResult {
         self.relay_ref.lock().as_mut().expect("initialized")
             .send_event(t, self.oid.clone(), P::Event::Sync(P::Sync {
-                peer: Cap::guard(&Arc::new(()), peer)
+                peer: Cap::guard(peer)
             }))
     }
 }

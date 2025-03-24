@@ -504,13 +504,12 @@ pub struct Cap {
 /// The [`Entity`] implementation for `Guard` decodes `AnyValue`
 /// assertions/messages to type `M` before passing them on to the
 /// underlying entity.
-pub struct Guard<L, M>
+pub struct Guard<M>
 where
-    M: for<'a> Unparse<&'a L, Arc<Cap>>,
-    M: for<'a> Parse<&'a L, Arc<Cap>>,
+    M: Unparse<Arc<Cap>>,
+    M: Parse<Arc<Cap>>,
 {
     underlying: Arc<Ref<M>>,
-    literals: Arc<L>,
 }
 
 /// Simple entity that stops its containing facet when any assertion it receives is
@@ -601,14 +600,14 @@ impl From<&Synced> for AnyValue {
     }
 }
 
-impl<'a> Parse<&'a (), Arc<Cap>> for Synced {
-    fn parse(_language: &'a (), value: &AnyValue) -> Result<Self, preserves::Error> {
+impl Parse<Arc<Cap>> for Synced {
+    fn parse(value: &AnyValue) -> Result<Self, preserves::Error> {
         Synced::try_from(value)
     }
 }
 
-impl<'a> Unparse<&'a (), Arc<Cap>> for Synced {
-    fn unparse(&self, _language: &'a ()) -> AnyValue {
+impl Unparse<Arc<Cap>> for Synced {
+    fn unparse(&self) -> AnyValue {
         self.into()
     }
 }
@@ -2443,19 +2442,15 @@ impl Cap {
     /// `AnyValue`, yields a `Cap` for the referenced entity. The
     /// `Cap` automatically decodes presented `AnyValue`s into
     /// instances of `M`.
-    pub fn guard<L: 'static + Sync + Send, M: 'static + Send>(
-        literals: &Arc<L>,
-        underlying: Arc<Ref<M>>,
-    ) -> Arc<Self>
+    pub fn guard<M: 'static + Send>(underlying: Arc<Ref<M>>) -> Arc<Self>
     where
-        M: for<'a> Unparse<&'a L, Arc<Cap>>,
-        M: for<'a> Parse<&'a L, Arc<Cap>>,
+        M: Unparse<Arc<Cap>>,
+        M: Parse<Arc<Cap>>,
     {
-        let literals = Arc::clone(literals);
         Self::new(&Arc::new(Ref {
             mailbox: Arc::clone(&underlying.mailbox),
             facet_id: underlying.facet_id,
-            target: Mutex::new(Some(Box::new(Guard { underlying, literals }))),
+            target: Mutex::new(Some(Box::new(Guard { underlying }))),
         }))
     }
 
@@ -2492,28 +2487,27 @@ impl Cap {
     /// Translates `m` into an `AnyValue`, passes it through
     /// [`rewrite`][Self::rewrite], and then
     /// [`assert`s][Activation::assert] it using the activation `t`.
-    pub fn assert<L, M: Unparse<L, Arc<Cap>>>(&self, t: &mut Activation, literals: L, m: &M) -> Option<Handle>
+    pub fn assert<M: Unparse<Arc<Cap>>>(&self, t: &mut Activation, m: &M) -> Option<Handle>
     {
-        self.rewrite(m.unparse(literals)).map(|m| t.assert(&self.underlying, m))
+        self.rewrite(m.unparse()).map(|m| t.assert(&self.underlying, m))
     }
 
     /// `update` is to [`assert`] as [`Activation::update`] is to [`Activation::assert`].
-    pub fn update<L, M: Unparse<L, Arc<Cap>>>(
+    pub fn update<M: Unparse<Arc<Cap>>>(
         &self,
         t: &mut Activation,
         handle: &mut Option<Handle>,
-        literals: L,
         m: Option<&M>,
     ) {
-        t.update(handle, &self.underlying, m.and_then(|m| self.rewrite(m.unparse(literals))))
+        t.update(handle, &self.underlying, m.and_then(|m| self.rewrite(m.unparse())))
     }
 
     /// Translates `m` into an `AnyValue`, passes it through
     /// [`rewrite`][Self::rewrite], and then sends it via method
     /// [`message`][Activation::message] on the activation `t`.
-    pub fn message<L, M: Unparse<L, Arc<Cap>>>(&self, t: &mut Activation, literals: L, m: &M)
+    pub fn message<M: Unparse<Arc<Cap>>>(&self, t: &mut Activation, m: &M)
     {
-        if let Some(m) = self.rewrite(m.unparse(literals)) {
+        if let Some(m) = self.rewrite(m.unparse()) {
             t.message(&self.underlying, m)
         }
     }
@@ -2544,13 +2538,13 @@ impl std::fmt::Debug for Cap {
 
 impl Domain for Cap {}
 
-impl<L: Sync + Send, M> Entity<AnyValue> for Guard<L, M>
+impl<M> Entity<AnyValue> for Guard<M>
 where
-    M: for<'a> Unparse<&'a L, Arc<Cap>>,
-    M: for<'a> Parse<&'a L, Arc<Cap>>,
+    M: Unparse<Arc<Cap>>,
+    M: Parse<Arc<Cap>>,
 {
     fn assert(&mut self, t: &mut Activation, a: AnyValue, h: Handle) -> ActorResult {
-        match M::parse(&*self.literals, &a) {
+        match M::parse(&a) {
             Ok(a) => t.with_entity(&self.underlying, |t, e| e.assert(t, a, h)),
             Err(_) => Ok(()),
         }
@@ -2559,7 +2553,7 @@ where
         t.with_entity(&self.underlying, |t, e| e.retract(t, h))
     }
     fn message(&mut self, t: &mut Activation, m: AnyValue) -> ActorResult {
-        match M::parse(&*self.literals, &m) {
+        match M::parse(&m) {
             Ok(m) => t.with_entity(&self.underlying, |t, e| e.message(t, m)),
             Err(_) => Ok(()),
         }

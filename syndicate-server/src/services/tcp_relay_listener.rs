@@ -1,5 +1,3 @@
-use preserves_schema::Codec;
-
 use std::convert::TryFrom;
 use std::sync::Arc;
 
@@ -9,9 +7,10 @@ use syndicate::supervise::Supervisor;
 use syndicate::supervise::SupervisorConfiguration;
 use syndicate::trace;
 
+use preserves_schema::Unparse;
+
 use tokio::net::TcpListener;
 
-use crate::language::language;
 use crate::lifecycle;
 use crate::protocol::detect_protocol;
 use crate::schemas::internal_services::TcpWithoutHttp;
@@ -21,7 +20,7 @@ use syndicate_macros::template;
 
 pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
     t.spawn(Some(AnyValue::symbol("tcp_relay_listener")), move |t| {
-        enclose!((ds) during!(t, ds, language(), <run-service $spec: TcpWithoutHttp::<Arc<Cap>>>, |t| {
+        enclose!((ds) during!(t, ds, <run-service $spec: TcpWithoutHttp::<Arc<Cap>>>, |t| {
             run_supervisor(t, ds.clone(), spec)
         }));
         Ok(())
@@ -29,7 +28,7 @@ pub fn on_demand(t: &mut Activation, ds: Arc<Cap>) {
 }
 
 fn run_supervisor(t: &mut Activation, ds: Arc<Cap>, spec: TcpWithoutHttp) -> ActorResult {
-    let spec_v = language().unparse(&spec);
+    let spec_v = spec.unparse();
     Supervisor::start(
         t,
         Some(template!("<relay =spec_v>")),
@@ -47,10 +46,10 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpWithoutHttp) -> ActorResult {
         let ad = spec.addr.clone();
         let ad2 = ad.clone();
         let gk = spec.gatekeeper.clone();
-        enclose!((ds, httpd) during!(t, ds, language(),
-            <run-service <relay-listener #(&language().unparse(&ad)) #(&AnyValue::embedded(gk)) $h>>, |t: &mut Activation| {
+        enclose!((ds, httpd) during!(t, ds,
+            <run-service <relay-listener #(&ad.unparse()) #(&AnyValue::embedded(gk)) $h>>, |t: &mut Activation| {
                 if let Some(h) = h.as_embedded().map(|c| c.into_owned()) {
-                    h.assert(t, language(), &syndicate::schemas::http::HttpListener { port: ad2.port.clone() });
+                    h.assert(t, &syndicate::schemas::http::HttpListener { port: ad2.port.clone() });
                     *t.get_mut(&httpd) = Some(h.clone());
                     t.on_stop(enclose!((httpd) move |t| {
                         let f = t.get_mut(&httpd);
@@ -78,7 +77,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: TcpWithoutHttp) -> ActorResult {
             if !facet.activate(
                 &account, cause, |t| {
                     tracing::info!("listening");
-                    ds.assert(t, language(), &lifecycle::ready(&spec));
+                    ds.assert(t, &lifecycle::ready(&spec));
                     Ok(())
                 })
             {

@@ -61,10 +61,6 @@ pub fn syndicate_package_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-preserves_schema::define_language!(language(): Language<std::sync::Arc<actor::Cap>> {
-    syndicate: schemas::Language,
-});
-
 #[cfg(test)]
 mod protocol_test {
     use crate::*;

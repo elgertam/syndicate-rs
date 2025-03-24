@@ -48,7 +48,7 @@ impl Plugin for PatternPlugin {
                                          Purpose::Codegen,
                                          definition_name,
                                          definition);
-                let v = crate::language().unparse(&p);
+                let v = p.unparse();
                 let v = preserves::TextWriter::encode(&mut NoEmbeddedDomainCodec, &v).unwrap();
                 ctxt.define_type(item(seq![
                     "impl",
@@ -61,12 +61,11 @@ impl Plugin for PatternPlugin {
                              seq!["-> ", self.syndicate_crate.clone(), "::schemas::dataspace_patterns::Pattern "],
                              codeblock![
                                  seq!["use ", self.syndicate_crate.clone(), "::schemas::dataspace_patterns::*;"],
-                                 "use preserves_schema::Codec;",
                                  seq!["let _v = ", self.syndicate_crate.clone(), "::preserves::read_text(",
                                       escape_string(&v),
                                       ", false, ",
                                       "&mut ", self.syndicate_crate.clone(), "::preserves::NoEmbeddedDomainCodec).unwrap();"],
-                                 seq![self.syndicate_crate.clone(), "::language().parse(&_v).unwrap()"]]]]]));
+                                 seq!["preserves_schema::parse(&_v).unwrap()"]]]]]));
             }
         }
     }
