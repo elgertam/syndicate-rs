@@ -58,7 +58,7 @@ enum WireSymbolSide {
 }
 
 struct WireSymbol {
-    oid: sturdy::Oid,
+    oid: SignedInteger,
     obj: Arc<Cap>,
     ref_count: AtomicUsize,
     side: WireSymbolSide,
@@ -66,7 +66,7 @@ struct WireSymbol {
 
 struct Membrane {
     side: WireSymbolSide,
-    oid_map: Map<sturdy::Oid, Arc<WireSymbol>>,
+    oid_map: Map<SignedInteger, Arc<WireSymbol>>,
     ref_map: Map<Arc<Cap>, Arc<WireSymbol>>,
 }
 
@@ -75,7 +75,7 @@ struct Membranes {
     exported: Membrane,
     imported: Membrane,
     next_export_oid: usize,
-    reimported_attenuations: Map<sturdy::Oid, Set<Arc<Cap>>>,
+    reimported_attenuations: Map<SignedInteger, Set<Arc<Cap>>>,
 }
 
 pub enum Input {
@@ -105,7 +105,7 @@ pub struct TunnelRelay
 
 struct RelayEntity {
     relay_ref: TunnelRelayRef,
-    oid: sturdy::Oid,
+    oid: SignedInteger,
 }
 
 struct TunnelRefEntity {
@@ -145,7 +145,7 @@ impl std::fmt::Debug for WireSymbol {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "#<WireSymbol oid={:?}:{} obj={:?} ref_count={}>",
                self.side,
-               self.oid.0,
+               self.oid,
                self.obj,
                self.current_ref_count())
     }
@@ -160,7 +160,7 @@ impl Membrane {
         }
     }
 
-    fn insert(&mut self, oid: sturdy::Oid, obj: Arc<Cap>) -> Arc<WireSymbol> {
+    fn insert(&mut self, oid: SignedInteger, obj: Arc<Cap>) -> Arc<WireSymbol> {
         let ws = Arc::new(WireSymbol {
             oid: oid.clone(),
             obj: Arc::clone(&obj),
@@ -177,7 +177,7 @@ impl Membrane {
         self.ref_map.remove(&ws.obj);
     }
 
-    fn insert_inert_entity(&mut self, t: &mut Activation, oid: sturdy::Oid) -> Arc<WireSymbol> {
+    fn insert_inert_entity(&mut self, t: &mut Activation, oid: SignedInteger) -> Arc<WireSymbol> {
         self.insert(oid, Cap::new(&t.inert_entity()))
     }
 }
@@ -322,7 +322,7 @@ impl TunnelRelay {
             tr.membranes.export_ref(ir).inc_ref();
         }
         let result = initial_oid.map(
-            |io| Arc::clone(&tr.membranes.import_oid(t, &tr_ref, io).inc_ref().obj));
+            |io| Arc::clone(&tr.membranes.import_oid(t, &tr_ref, io.0).inc_ref().obj));
         dump_membranes!(tr.membranes);
         *tr_ref.lock() = Some(tr);
         t.add_exit_hook(&self_entity);
@@ -384,7 +384,7 @@ impl TunnelRelay {
 
     fn _handle_inbound_event(&mut self, t: &mut Activation, oid: &SignedInteger, event: P::Event<Arc<Cap>>) -> ActorResult {
         tracing::trace!(?oid, ?event, "handle_inbound");
-        let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.clone())) {
+        let target = match self.membranes.exported.oid_map.get(oid) {
             Some(ws) =>
                 ws.inc_ref(),
             None => {
@@ -500,7 +500,7 @@ impl TunnelRelay {
     fn outbound_event_bookkeeping(
         &mut self,
         _t: &mut Activation,
-        remote_oid: sturdy::Oid,
+        remote_oid: SignedInteger,
         event: &P::Event<Arc<Cap>>,
     ) -> ActorResult {
         match event {
@@ -570,7 +570,7 @@ impl TunnelRelay {
         Ok(())
     }
 
-    pub fn send_event(&mut self, t: &mut Activation, remote_oid: sturdy::Oid, event: P::Event<Arc<Cap>>) -> ActorResult {
+    pub fn send_event(&mut self, t: &mut Activation, remote_oid: SignedInteger, event: P::Event<Arc<Cap>>) -> ActorResult {
         if self.pending_outbound.is_empty() {
             let self_ref = Arc::clone(&self.self_ref);
             t.pre_commit(move |t| {
@@ -585,19 +585,19 @@ impl TunnelRelay {
                 let events = match packet { P::Packet::Turn(P::Turn(e)) => e, _ => unreachable!() };
 
                 for P::TurnEvent { oid, event } in events.into_iter() {
-                    tr.outbound_event_bookkeeping(t, sturdy::Oid(oid.0), &event)?;
+                    tr.outbound_event_bookkeeping(t, oid.0, &event)?;
                 }
                 Ok(())
             });
         }
-        self.pending_outbound.push(P::TurnEvent { oid: P::Oid(remote_oid.0), event });
+        self.pending_outbound.push(P::TurnEvent { oid: P::Oid(remote_oid), event });
         Ok(())
     }
 }
 
 impl Membranes {
     fn export_ref(&mut self, obj: Arc<Cap>) -> Arc<WireSymbol> {
-        let oid = sturdy::Oid(SignedInteger::from(self.next_export_oid as u128));
+        let oid = SignedInteger::from(self.next_export_oid as u128);
         self.next_export_oid += 1;
         self.exported.insert(oid, obj)
     }
@@ -606,7 +606,7 @@ impl Membranes {
         &mut self,
         t: &mut Activation,
         relay_ref: &TunnelRelayRef,
-        oid: sturdy::Oid,
+        oid: SignedInteger,
     ) -> Arc<WireSymbol> {
         let obj = t.create(RelayEntity { relay_ref: Arc::clone(relay_ref), oid: oid.clone() });
         self.imported.insert(oid, Cap::new(&obj))
@@ -653,16 +653,14 @@ impl Membranes {
         wr: sturdy::WireRef,
     ) -> ReaderResult<Arc<Cap>> {
         match wr {
-            sturdy::WireRef::Mine{ oid: b } => {
-                let oid = b;
-                let ws = self.imported.oid_map.get(&oid).map(Arc::clone)
-                    .unwrap_or_else(|| self.import_oid(t, relay_ref, oid));
+            sturdy::WireRef::Mine{ oid } => {
+                let ws = self.imported.oid_map.get(&oid.0).map(Arc::clone)
+                    .unwrap_or_else(|| self.import_oid(t, relay_ref, oid.0));
                 Ok(Arc::clone(&ws.inc_ref().obj))
             }
-            sturdy::WireRef::Yours { oid: b, attenuation } => {
-                let oid = b;
-                let ws = self.exported.oid_map.get(&oid).map(Arc::clone)
-                    .unwrap_or_else(|| self.exported.insert_inert_entity(t, oid.clone()));
+            sturdy::WireRef::Yours { oid, attenuation } => {
+                let ws = self.exported.oid_map.get(&oid.0).map(Arc::clone)
+                    .unwrap_or_else(|| self.exported.insert_inert_entity(t, oid.0.clone()));
 
                 if attenuation.is_empty() {
                     Ok(Arc::clone(&ws.inc_ref().obj))
@@ -676,7 +674,7 @@ impl Membranes {
 
                     ws.inc_ref();
 
-                    let variations = self.reimported_attenuations.entry(oid).or_default();
+                    let variations = self.reimported_attenuations.entry(oid.0).or_default();
                     match variations.get(&attenuated_obj) {
                         None => {
                             variations.insert(Arc::clone(&attenuated_obj));
@@ -694,13 +692,13 @@ impl Membranes {
     fn encode_wireref(&mut self, d: &Arc<Cap>) -> sturdy::WireRef {
         match self.exported.ref_map.get(d) {
             Some(ws) => sturdy::WireRef::Mine {
-                oid: ws.inc_ref().oid.clone(),
+                oid: sturdy::Oid(ws.inc_ref().oid.clone()),
             },
             None => match self.imported.ref_map.get(d) {
                 Some(ws) => {
                     if d.attenuation.is_empty() {
                         sturdy::WireRef::Yours {
-                            oid: ws.inc_ref().oid.clone(),
+                            oid: sturdy::Oid(ws.inc_ref().oid.clone()),
                             attenuation: vec![],
                         }
                     } else {
@@ -708,13 +706,13 @@ impl Membranes {
                         // which case we can return sturdy::WireRef::Yours with an attenuation
                         // attached here, but for now we don't.
                         sturdy::WireRef::Mine {
-                            oid: self.export_ref(Arc::clone(d)).inc_ref().oid.clone(),
+                            oid: sturdy::Oid(self.export_ref(Arc::clone(d)).inc_ref().oid.clone()),
                         }
                     }
                 }
                 None =>
                     sturdy::WireRef::Mine {
-                        oid: self.export_ref(Arc::clone(d)).inc_ref().oid.clone(),
+                        oid: sturdy::Oid(self.export_ref(Arc::clone(d)).inc_ref().oid.clone()),
                     },
             }
         }
