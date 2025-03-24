@@ -30,7 +30,6 @@ use preserves::PackedWriter;
 use preserves::Reader;
 use preserves::ReaderResult;
 use preserves::Set;
-use preserves::SyntaxError;
 use preserves::TextWriter;
 use preserves::signed_integer::SignedInteger;
 use preserves::value_map_embedded;
@@ -330,52 +329,146 @@ impl TunnelRelay {
         (result, tr_ref, output_rx)
     }
 
-    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> Result<(P::Packet<Arc<Cap>>, usize), preserves::Error> {
+    fn deserialize_one(&mut self, t: &mut Activation, bs: &[u8]) -> Result<Option<usize>, ActorError> {
         let mut src = BytesBinarySource::new(&bs);
+        match src.peek() {
+            Ok(Some(v)) => if v >= 128 {
+                self.output_text = false;
+                let mut r = src.into_packed();
+                Ok(self.deserialize_one_from(t, &mut r)?.then(|| r.source.index as usize))
+            } else {
+                self.output_text = true;
+                let mut r = src.into_text();
+                Ok(self.deserialize_one_from(t, &mut r)?.then(|| r.source.index as usize))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(e)?,
+        }
+    }
+
+    fn deserialize_one_from<'de, R: Reader<'de>>(
+        &mut self,
+        t: &mut Activation,
+        r: &mut R,
+    ) -> Result<bool, ActorError> {
         let mut dec = ActivatedMembranes {
             turn: t,
             tr_ref: &self.self_ref,
             membranes: &mut self.membranes,
         };
-        match src.peek() {
-            Ok(Some(v)) => if v >= 128 {
-                self.output_text = false;
-                let mut r = src.into_packed();
-                let res = P::Packet::deserialize(&mut r, &mut dec)?;
-                Ok((res, r.source.index as usize))
-            } else {
-                self.output_text = true;
-                let mut r = src.into_text();
-                let res = P::Packet::deserialize(&mut r, &mut dec)?;
-                Ok((res, r.source.index as usize))
-            },
-            Ok(None) => Err(SyntaxError::eof().at(None)),
-            Err(e) => Err(e.into()),
+        match P::Packet::deserialize(r, &mut dec) {
+            Ok(res) => {
+                self.handle_inbound_packet(t, res)?;
+                Ok(true)
+            }
+            Err(e) if e.is_eof() => Ok(false),
+            Err(e) => Err(e)?,
         }
     }
 
     pub fn handle_inbound_datagram(&mut self, t: &mut Activation, bs: &[u8]) -> ActorResult {
         tracing::trace!(bytes = ?bs, "inbound datagram");
-        let (item, _count) = self.deserialize_one(t, bs)?;
-        self.handle_inbound_packet(t, item)
+        self.deserialize_one(t, bs)?;
+        Ok(())
     }
 
     pub fn handle_inbound_stream(&mut self, t: &mut Activation, buf: &mut BytesMut) -> ActorResult {
-        use preserves::{Error, SyntaxError, UnexpectedKind};
         loop {
             tracing::trace!(buffer = ?buf, "inbound stream");
-            match self.deserialize_one(t, buf) {
-                Err(Error::SyntaxError {
-                    detail: SyntaxError::Unexpected(UnexpectedKind::Eof),
-                    ..
-                }) => return Ok(()),
-                Err(e) => return Err(e)?,
-                Ok((item, count)) => {
-                    buf.advance(count);
-                    self.handle_inbound_packet(t, item)?;
-                }
+            match self.deserialize_one(t, buf)? {
+                Some(count) => buf.advance(count),
+                None => return Ok(()),
             }
         }
+    }
+
+    fn _handle_inbound_event(&mut self, t: &mut Activation, oid: &SignedInteger, event: P::Event<Arc<Cap>>) -> ActorResult {
+        tracing::trace!(?oid, ?event, "handle_inbound");
+        let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.clone())) {
+            Some(ws) =>
+                ws.inc_ref(),
+            None => {
+                tracing::debug!(
+                    event = ?language().unparse(&P::TurnEvent { oid: P::Oid(oid.to_owned()), event }),
+                    "Cannot deliver event: nonexistent oid");
+                return Ok(());
+            }
+        };
+        let mut pins = vec![target.clone()];
+        let target = Arc::clone(&target.obj);
+        match event {
+            P::Event::Assert(b) => {
+                let P::Assert { assertion: P::Assertion(a), handle: remote_handle } = b;
+                a.foreach_embedded(
+                    &mut |r| Ok(pins.push(self.membranes.lookup_ref(r)))).unwrap();
+                if let Some(local_handle) = target.assert(t, &(), &a) {
+                    if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, pins)) {
+                        return Err(error("Assertion with duplicate handle", AnyValue::new(false)))?;
+                    }
+                } else {
+                    self.membranes.release(pins);
+                }
+                dump_membranes!(self.membranes);
+            }
+            P::Event::Retract(b) => {
+                let P::Retract { handle: remote_handle } = b;
+                match self.inbound_assertions.remove(&remote_handle) {
+                    None => {
+                        // This can happen when e.g. an assertion previously made
+                        // failed to pass an attenuation filter
+                        tracing::debug!(?remote_handle, "Retraction of nonexistent handle");
+                    }
+                    Some((local_handle, previous_pins)) => {
+                        self.membranes.release(previous_pins);
+                        self.membranes.release(pins);
+                        t.retract(local_handle);
+                        dump_membranes!(self.membranes);
+                    }
+                }
+            }
+            P::Event::Message(b) => {
+                let P::Message { body: P::Assertion(a) } = b;
+                a.foreach_embedded(&mut |r| {
+                    let ws = self.membranes.lookup_ref(r);
+                    let rc = ws.current_ref_count();
+                    pins.push(ws);
+                    match rc {
+                        1 => Err(()),
+                        _ => Ok(()),
+                    }
+                }).map_err(|_| error("Cannot receive transient reference", AnyValue::new(false)))?;
+                target.message(t, &(), &a);
+                self.membranes.release(pins);
+                dump_membranes!(self.membranes);
+            }
+            P::Event::Sync(b) => {
+                let P::Sync { peer } = b;
+                pins.push(self.membranes.lookup_ref(&peer));
+                dump_membranes!(self.membranes);
+                struct SyncPeer {
+                    relay_ref: TunnelRelayRef,
+                    peer: Arc<Cap>,
+                    pins: Vec<Arc<WireSymbol>>,
+                }
+                impl Entity<Synced> for SyncPeer {
+                    fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
+                        self.peer.message(t, &(), &AnyValue::new(true));
+                        let mut g = self.relay_ref.lock();
+                        let tr = g.as_mut().expect("initialized");
+                        tr.membranes.release(std::mem::take(&mut self.pins));
+                        dump_membranes!(tr.membranes);
+                        Ok(())
+                    }
+                }
+                let k = t.create(SyncPeer {
+                    relay_ref: Arc::clone(&self.self_ref),
+                    peer: Arc::clone(&peer),
+                    pins,
+                });
+                target.sync(t, k);
+            }
+        }
+        Ok(())
     }
 
     pub fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<Arc<Cap>>) -> ActorResult {
@@ -397,91 +490,7 @@ impl TunnelRelay {
             }
             P::Packet::Turn(P::Turn(events)) => {
                 for P::TurnEvent { oid, event } in events {
-                    tracing::trace!(?oid, ?event, "handle_inbound");
-                    let target = match self.membranes.exported.oid_map.get(&sturdy::Oid(oid.0.clone())) {
-                        Some(ws) =>
-                            ws.inc_ref(),
-                        None => {
-                            tracing::debug!(
-                                event = ?language().unparse(&P::TurnEvent { oid, event }),
-                                "Cannot deliver event: nonexistent oid");
-                            continue;
-                        }
-                    };
-                    let mut pins = vec![target.clone()];
-                    let target = Arc::clone(&target.obj);
-                    match event {
-                        P::Event::Assert(b) => {
-                            let P::Assert { assertion: P::Assertion(a), handle: remote_handle } = b;
-                            a.foreach_embedded(
-                                &mut |r| Ok(pins.push(self.membranes.lookup_ref(r)))).unwrap();
-                            if let Some(local_handle) = target.assert(t, &(), &a) {
-                                if let Some(_) = self.inbound_assertions.insert(remote_handle, (local_handle, pins)) {
-                                    return Err(error("Assertion with duplicate handle", AnyValue::new(false)))?;
-                                }
-                            } else {
-                                self.membranes.release(pins);
-                            }
-                            dump_membranes!(self.membranes);
-                        }
-                        P::Event::Retract(b) => {
-                            let P::Retract { handle: remote_handle } = b;
-                            match self.inbound_assertions.remove(&remote_handle) {
-                                None => {
-                                    // This can happen when e.g. an assertion previously made
-                                    // failed to pass an attenuation filter
-                                    tracing::debug!(?remote_handle, "Retraction of nonexistent handle");
-                                }
-                                Some((local_handle, previous_pins)) => {
-                                    self.membranes.release(previous_pins);
-                                    self.membranes.release(pins);
-                                    t.retract(local_handle);
-                                    dump_membranes!(self.membranes);
-                                }
-                            }
-                        }
-                        P::Event::Message(b) => {
-                            let P::Message { body: P::Assertion(a) } = b;
-                            a.foreach_embedded(&mut |r| {
-                                let ws = self.membranes.lookup_ref(r);
-                                let rc = ws.current_ref_count();
-                                pins.push(ws);
-                                match rc {
-                                    1 => Err(()),
-                                    _ => Ok(()),
-                                }
-                            }).map_err(|_| error("Cannot receive transient reference", AnyValue::new(false)))?;
-                            target.message(t, &(), &a);
-                            self.membranes.release(pins);
-                            dump_membranes!(self.membranes);
-                        }
-                        P::Event::Sync(b) => {
-                            let P::Sync { peer } = b;
-                            pins.push(self.membranes.lookup_ref(&peer));
-                            dump_membranes!(self.membranes);
-                            struct SyncPeer {
-                                relay_ref: TunnelRelayRef,
-                                peer: Arc<Cap>,
-                                pins: Vec<Arc<WireSymbol>>,
-                            }
-                            impl Entity<Synced> for SyncPeer {
-                                fn message(&mut self, t: &mut Activation, _a: Synced) -> ActorResult {
-                                    self.peer.message(t, &(), &AnyValue::new(true));
-                                    let mut g = self.relay_ref.lock();
-                                    let tr = g.as_mut().expect("initialized");
-                                    tr.membranes.release(std::mem::take(&mut self.pins));
-                                    dump_membranes!(tr.membranes);
-                                    Ok(())
-                                }
-                            }
-                            let k = t.create(SyncPeer {
-                                relay_ref: Arc::clone(&self.self_ref),
-                                peer: Arc::clone(&peer),
-                                pins,
-                            });
-                            target.sync(t, k);
-                        }
-                    }
+                    self._handle_inbound_event(t, &oid.0, event)?;
                 }
                 t.commit()
             }
