@@ -340,7 +340,19 @@ impl TunnelRelay {
                 // packets was challenging, so I've removed it again for now because I prefer
                 // the robustness to the small speed increase. We can come back to it later.
 
-                Ok(self.deserialize_one_from(t, &mut r)?.then(|| r.source.index as usize))
+                // Try skipping a value without allocating first; only if this succeeds do we
+                // actually parse. When transferring e.g. large ByteStrings this avoids repeated
+                // large allocations that then go unused.
+                //
+                let mark = preserves::Reader::mark(&mut r)?;
+                match r.skip_value() {
+                    Err(e) if e.is_eof() => Ok(None),
+                    Err(e) => Err(e)?,
+                    Ok(()) => {
+                        preserves::Reader::restore(&mut r, mark)?;
+                        Ok(self.deserialize_one_from(t, &mut r)?.then(|| r.source.index as usize))
+                    }
+                }
             } else {
                 self.output_text = true;
                 let mut r = src.into_text();
