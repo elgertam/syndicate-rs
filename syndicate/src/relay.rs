@@ -114,6 +114,7 @@ struct ActivatedMembranes<'a, 'm> {
     turn: &'a mut Activation,
     tr_ref: &'m TunnelRelayRef,
     membranes: &'m mut Membranes,
+    rollback_symbols: Vec<Arc<WireSymbol>>,
 }
 
 //---------------------------------------------------------------------------
@@ -359,14 +360,21 @@ impl TunnelRelay {
             turn: t,
             tr_ref: &self.self_ref,
             membranes: &mut self.membranes,
+            rollback_symbols: vec![],
         };
         match P::Packet::deserialize(r, &mut dec) {
             Ok(res) => {
                 self.handle_inbound_packet(t, res)?;
                 Ok(true)
             }
-            Err(e) if e.is_eof() => Ok(false),
-            Err(e) => Err(e)?,
+            Err(e) => {
+                dec.rollback();
+                if e.is_eof() {
+                    Ok(false)
+                } else {
+                    Err(e)?
+                }
+            }
         }
     }
 
@@ -655,19 +663,21 @@ impl Membranes {
         t: &mut Activation,
         relay_ref: &TunnelRelayRef,
         wr: sturdy::WireRef,
-    ) -> ReaderResult<Arc<Cap>> {
-        match wr {
+    ) -> ReaderResult<(Arc<WireSymbol>, Arc<Cap>)> {
+        let (ws, cap) = match wr {
             sturdy::WireRef::Mine{ oid } => {
                 let ws = self.imported.oid_map.get(&oid.0).map(Arc::clone)
                     .unwrap_or_else(|| self.import_oid(t, relay_ref, oid.0));
-                Ok(Arc::clone(&ws.inc_ref().obj))
+                let obj = Arc::clone(&ws.obj);
+                (ws, obj)
             }
             sturdy::WireRef::Yours { oid, attenuation } => {
                 let ws = self.exported.oid_map.get(&oid.0).map(Arc::clone)
                     .unwrap_or_else(|| self.exported.insert_inert_entity(t, oid.0.clone()));
 
                 if attenuation.is_empty() {
-                    Ok(Arc::clone(&ws.inc_ref().obj))
+                    let obj = Arc::clone(&ws.obj);
+                    (ws, obj)
                 } else {
                     let attenuated_obj = ws.obj.attenuate(&attenuation)
                         .map_err(|e| {
@@ -676,21 +686,21 @@ impl Membranes {
                                 format!("Invalid capability attenuation: {:?}", e))
                         })?;
 
-                    ws.inc_ref();
-
                     let variations = self.reimported_attenuations.entry(oid.0).or_default();
                     match variations.get(&attenuated_obj) {
                         None => {
                             variations.insert(Arc::clone(&attenuated_obj));
                             self.exported.ref_map.insert(Arc::clone(&attenuated_obj), Arc::clone(&ws));
-                            Ok(attenuated_obj)
+                            (ws, attenuated_obj)
                         }
                         Some(existing) =>
-                            Ok(Arc::clone(existing))
+                            (ws, Arc::clone(existing))
                     }
                 }
             }
-        }
+        };
+        ws.inc_ref();
+        Ok((ws, cap))
     }
 
     fn encode_wireref(&mut self, d: &Arc<Cap>) -> sturdy::WireRef {
@@ -723,6 +733,20 @@ impl Membranes {
     }
 }
 
+impl<'a, 'm> ActivatedMembranes<'a, 'm> {
+    fn store_rollback(&mut self, ws: Arc<WireSymbol>, obj: Arc<Cap>) -> ReaderResult<Arc<Cap>> {
+        self.rollback_symbols.push(ws);
+        Ok(obj)
+    }
+
+    fn rollback(&mut self) {
+        let symbols = std::mem::replace(&mut self.rollback_symbols, vec![]);
+        for ws in symbols.into_iter() {
+            ws.dec_ref();
+        }
+    }
+}
+
 impl<'a, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'm> {
     fn decode_embedded<'de, R: Reader<'de> + ?Sized, VR: IOValueReader + ?Sized>(
         &mut self,
@@ -730,13 +754,15 @@ impl<'a, 'm> DomainDecode<Arc<Cap>> for ActivatedMembranes<'a, 'm> {
         _read_annotations: bool,
     ) -> ReaderResult<Arc<Cap>> {
         let wr = sturdy::WireRef::deserialize(r, self)?;
-        self.membranes.decode_wireref(self.turn, self.tr_ref, wr)
+        let (ws, obj) = self.membranes.decode_wireref(self.turn, self.tr_ref, wr)?;
+        self.store_rollback(ws, obj)
     }
 
     fn decode_value(&mut self, v: IOValue) -> ReaderResult<Arc<Cap>> {
         let v = value_map_embedded(&v, &mut |c| self.decode_value(c.clone()))?;
         let wr = sturdy::WireRef::parse(&v)?;
-        self.membranes.decode_wireref(self.turn, self.tr_ref, wr)
+        let (ws, obj) = self.membranes.decode_wireref(self.turn, self.tr_ref, wr)?;
+        self.store_rollback(ws, obj)
     }
 }
 
