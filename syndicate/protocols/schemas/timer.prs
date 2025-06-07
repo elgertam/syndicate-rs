@@ -5,3 +5,5 @@ TimerExpired = <timer-expired @label any @seconds double>.
 TimerKind = =relative / =absolute / =clear .
 
 LaterThan = <later-than @seconds double>.
+
+PeriodicTick = <periodic-tick @interval double>.

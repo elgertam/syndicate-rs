@@ -18,3 +18,40 @@ Assert  = <A @assertion Assertion @handle Handle>.
 Retract = <R @handle Handle>.
 Message = <M @body Assertion>.
 Sync    = <S @peer #:#t>.
+
+# # Extensions
+#
+# These generally draw on Telnet-style DO/DONT/WILL/WONT option negotiation.
+# (https://www.rfc-editor.org/rfc/rfc854.html)
+
+# ## EXPERIMENTAL: Credit-based flow control
+#
+# This is an opt-in protocol. Without it, peers SHOULD use fullness of the underlying transport
+# buffers as a signal to slow down, where possible. Unfortunately it's not always possible to do
+# so: for example, the in-browser and node.js WebSocket API has no way to expose information about
+# full transmit buffers.
+#
+# This is a SOFT flow control protocol: that is, the receiver ADVISES the sender when `Turn`s
+# have been received, but cannot *require* the sender to slow down. It's up to the sender how it
+# interprets notifications from the receiver.
+#
+# - As a sender, to request credits, send `EnableCreditFlowControl`.
+# - As a receiver, to accept an `EnableCreditFlowControl`, send `EnabledCreditFlowControl`.
+# - Receivers reject `EnableCreditFlowControl` by ignoring it.
+#
+# After sending EnabledCreditFlowControl, a receiver MUST keep count of subsequent received
+# `Turn`s. Note that `Packet`s which are NOT `Turn`s are not counted. The receiver periodically
+# sends `IssueCredit` packets, carrying the number of `Turn`s received since the later of the
+# previous `IssueCredit` packet or the `EnabledCreditFlowControl` packet. That is, `IssueCredit`
+# packets contain a delta, not an absolute count.
+#
+# Receivers MAY send `IssueCredit` as often as for each received `Turn`. If a receiver batches
+# `IssueCredit` messages to cover multiple `Turn`s, it SHOULD keep the delay between a `Turn`
+# and its covering `IssueCredit` less than about a second.
+
+# Sender -> Receiver
+EnableCreditFlowControl = <do <credit-flow-control 202506>> .
+
+# Receiver -> Sender
+EnabledCreditFlowControl = <will <credit-flow-control 202506>> .
+IssueCredit = <C @count int> .
