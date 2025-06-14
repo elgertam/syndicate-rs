@@ -3,9 +3,13 @@ use futures::StreamExt;
 use hyper::header::HeaderValue;
 use hyper::service::service_fn;
 
+use preserves_schema::Parse;
+use preserves_schema::Unparse;
+
 use std::future::ready;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use syndicate::actor::*;
@@ -32,10 +36,11 @@ pub fn run_io_relay(
     i: relay::Input,
     o: relay::Output,
     initial_ref: Arc<Cap>,
+    options: relay::TunnelRelayOptions,
 ) -> ActorResult {
     let exit_listener = t.create(ExitListener);
     t.add_exit_hook(&exit_listener);
-    relay::TunnelRelay::run(t, i, o, Some(initial_ref), None, false);
+    relay::TunnelRelay::run(t, i, o, Some(initial_ref), None, options);
     Ok(())
 }
 
@@ -45,10 +50,73 @@ pub fn run_connection(
     i: relay::Input,
     o: relay::Output,
     initial_ref: Arc<Cap>,
+    options: relay::TunnelRelayOptions,
 ) {
     let cause = trace_collector.as_ref().map(|_| trace::TurnCause::external("start-session"));
     let account = Account::new(Some(AnyValue::symbol("start-session")), trace_collector);
-    facet.activate(&account, cause, |t| run_io_relay(t, i, o, initial_ref));
+    facet.activate(&account, cause, |t| run_io_relay(t, i, o, initial_ref, options));
+}
+
+#[derive(Debug)]
+pub struct CreditFlowControl {
+    enabled: bool,
+    pending_count: Arc<AtomicUsize>,
+}
+
+impl Default for CreditFlowControl {
+    fn default() -> Self {
+        CreditFlowControl {
+            enabled: false,
+            pending_count: Arc::new(0.into()),
+        }
+    }
+}
+
+impl relay::ExtensionHandler for CreditFlowControl {
+    fn start(
+        &mut self,
+        t: &mut Activation,
+        relay: &mut relay::TunnelRelay,
+    ) -> ActorResult {
+        Ok(())
+    }
+
+    fn handle_received_extension(
+        &mut self,
+        t: &mut Activation,
+        relay: &mut relay::TunnelRelay,
+        extension: syndicate::schemas::protocol::Extension<Arc<Cap>>,
+    ) -> ActorResult {
+        let extension = extension.unparse();
+        if let Ok(_) = syndicate::schemas::protocol::EnableCreditFlowControl::parse(&extension) {
+            self.enabled = true;
+            tracing::info!("Enabled credit-based flow control");
+            let reply = syndicate::schemas::protocol::EnabledCreditFlowControl;
+            relay.send_extension(t, syndicate::schemas::protocol::Extension::parse(&reply.unparse())?)?;
+        } else {
+            tracing::info!(?extension, "received extension from peer");
+        }
+        Ok(())
+    }
+
+    fn handle_received_turn(
+        &mut self,
+        t: &mut Activation,
+        relay: &mut relay::TunnelRelay,
+        _events: &mut Vec<syndicate::schemas::protocol::TurnEvent<Arc<Cap>>>,
+    ) -> ActorResult {
+        if self.enabled {
+            if self.pending_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                let pc = Arc::clone(&self.pending_count);
+                t.after(std::time::Duration::from_millis(200), relay.action(move |t, tr| {
+                    let count = pc.swap(0, Ordering::SeqCst);
+                    let c = syndicate::schemas::protocol::IssueCredit { count: count.into() };
+                    tr.send_extension(t, syndicate::schemas::protocol::Extension::parse(&c.unparse())?)
+                }));
+            }
+        }
+        Ok(())
+    }
 }
 
 pub async fn detect_protocol(
@@ -68,7 +136,7 @@ pub async fn detect_protocol(
                 let (i, o) = stream.into_split();
                 let i = relay::Input::Bytes(Box::pin(i));
                 let o = relay::Output::Bytes(Box::pin(o /* BufWriter::new(o) */));
-                run_connection(trace_collector, facet, i, o, gateway);
+                run_connection(trace_collector, facet, i, o, gateway, Default::default());
                 Ok(())
             }
             _ => {
@@ -93,7 +161,9 @@ pub async fn detect_protocol(
                                 let o = o.sink_map_err(message_error).with(|bs| ready(Ok(Message::Binary(bs))));
                                 let i = relay::Input::Packets(Box::pin(i));
                                 let o = relay::Output::Packets(Box::pin(o));
-                                run_connection(trace_collector, facet, i, o, gateway);
+                                let mut options = relay::TunnelRelayOptions::default();
+                                options.extension_handler = Some(Box::new(CreditFlowControl::default()));
+                                run_connection(trace_collector, facet, i, o, gateway, options);
                                 drop(keepalive);
                                 Ok(()) as ActorResult
                             }));

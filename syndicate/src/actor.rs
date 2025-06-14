@@ -242,7 +242,7 @@ pub struct InertEntity;
 impl<M> Entity<M> for InertEntity {}
 
 type TracedAction = (Option<trace::TargetedTurnEvent>, Action);
-type Action = Box<dyn Send + FnOnce(&mut Activation) -> ActorResult>;
+pub type Action = Box<dyn Send + FnOnce(&mut Activation) -> ActorResult>;
 type Block = Box<dyn Send + FnMut(&mut Activation) -> ActorResult>;
 type InfallibleAction = Box<dyn Send + FnOnce(&mut Activation)>;
 

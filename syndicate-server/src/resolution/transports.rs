@@ -61,7 +61,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, addr: Tcp) -> ActorResult {
                 let o = relay::Output::Bytes(Box::pin(o));
                 let initial_oid = Some(syndicate::sturdy::Oid(0.into()));
                 facet.activate(&account, cause, |t| {
-                    let peer = relay::TunnelRelay::run(t, i, o, None, initial_oid, false)
+                    let peer = relay::TunnelRelay::run(t, i, o, None, initial_oid, Default::default())
                         .expect("missing initial cap on connection");
                     let control = Cap::guard(t.create(TransportControl));
                     ds.assert(t, &rpc::answer(

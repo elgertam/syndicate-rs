@@ -118,7 +118,8 @@ async fn main() -> ActorResult {
                 protocol::run_io_relay(t,
                                        relay::Input::Bytes(Box::pin(tokio::io::stdin())),
                                        relay::Output::Bytes(Box::pin(tokio::io::stdout())),
-                                       server_config_ds)
+                                       server_config_ds,
+                                       Default::default())
             }));
         }
 

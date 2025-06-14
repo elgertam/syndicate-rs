@@ -78,7 +78,8 @@ fn run(t: &mut Activation, ds: Arc<Cap>, spec: UnixRelayListener) -> ActorResult
                                                facet,
                                                relay::Input::Bytes(Box::pin(i)),
                                                relay::Output::Bytes(Box::pin(o)),
-                                               gatekeeper);
+                                               gatekeeper,
+                                               Default::default());
                                 Ok(LinkedTaskTermination::KeepFacet)
                             }
                         }))

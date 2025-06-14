@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use syndicate::actor::*;
 use syndicate::enclose;
+use syndicate::relay::TunnelRelayOptions;
 use syndicate::schemas::service;
 use syndicate::supervise::Supervisor;
 use syndicate::supervise::SupervisorConfiguration;
@@ -297,8 +298,8 @@ impl DaemonInstance {
             }
 
             match self.protocol {
-                Protocol::TextSyndicate => self.relay_facet(t, &mut child, true)?,
-                Protocol::BinarySyndicate => self.relay_facet(t, &mut child, false)?,
+                Protocol::TextSyndicate => self.relay_facet(t, &mut child, TunnelRelayOptions::text())?,
+                Protocol::BinarySyndicate => self.relay_facet(t, &mut child, TunnelRelayOptions::binary())?,
                 Protocol::None => {
                     if let Some(r) = child.stdout.take() {
                         self.log(t, pid, r, "stdout")?;
@@ -332,7 +333,12 @@ impl DaemonInstance {
         Ok(())
     }
 
-    fn relay_facet(&self, t: &mut Activation, child: &mut process::Child, output_text: bool) -> ActorResult {
+    fn relay_facet(
+        &self,
+        t: &mut Activation,
+        child: &mut process::Child,
+        options: TunnelRelayOptions,
+    ) -> ActorResult {
         use syndicate::relay;
         use syndicate::schemas::sturdy;
 
@@ -343,7 +349,7 @@ impl DaemonInstance {
         let o = relay::Output::Bytes(Box::pin(to_child));
 
         t.facet(|t| {
-            let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text)
+            let cap = relay::TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), options)
                 .ok_or("initial capability reference unavailable")?;
             tracing::info!(?cap);
             self.config_ds.assert(t, &service::ServiceObject {

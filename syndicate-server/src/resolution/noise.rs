@@ -310,7 +310,7 @@ impl HandshakeState {
             (c_i_to_r, c_r_to_i)
         };
         let (peer_service, relay_input, mut relay_output) =
-            TunnelRelay::_run(t, self.initial_ref.clone(), self.initial_oid.clone(), false);
+            TunnelRelay::_run(t, self.initial_ref.clone(), self.initial_oid.clone(), Default::default());
         let trace_collector = t.trace_collector();
         let peer = self.peer.clone();
         let relay_output_name = Some(AnyValue::symbol("relay_output"));

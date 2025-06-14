@@ -89,6 +89,53 @@ pub enum Output {
 
 type TunnelRelayRef = Arc<Mutex<Option<TunnelRelay>>>;
 
+#[derive(Debug)]
+pub struct TunnelRelayOptions {
+    pub output_text: bool,
+    pub extension_handler: Option<Box<dyn ExtensionHandler>>,
+}
+
+impl TunnelRelayOptions {
+    pub fn binary() -> Self {
+        TunnelRelayOptions { output_text: true, .. Default::default() }
+    }
+
+    pub fn text() -> Self {
+        TunnelRelayOptions { output_text: false, .. Default::default() }
+    }
+}
+
+impl Default for TunnelRelayOptions {
+    fn default() -> Self {
+        TunnelRelayOptions {
+            output_text: false,
+            extension_handler: None,
+        }
+    }
+}
+
+pub trait ExtensionHandler: std::fmt::Debug + Send {
+    fn start(
+        &mut self,
+        t: &mut Activation,
+        relay: &mut TunnelRelay,
+    ) -> ActorResult;
+
+    fn handle_received_extension(
+        &mut self,
+        t: &mut Activation,
+        relay: &mut TunnelRelay,
+        extension: P::Extension<Arc<Cap>>,
+    ) -> ActorResult;
+
+    fn handle_received_turn(
+        &mut self,
+        _t: &mut Activation,
+        _relay: &mut TunnelRelay,
+        _events: &mut Vec<P::TurnEvent<Arc<Cap>>>,
+    ) -> ActorResult;
+}
+
 // There are other kinds of relay. This one has exactly two participants connected to each other.
 #[derive(Debug)]
 pub struct TunnelRelay
@@ -99,7 +146,7 @@ pub struct TunnelRelay
     membranes: Membranes,
     pending_outbound: Vec<P::TurnEvent<Arc<Cap>>>,
     output: UnboundedSender<LoanedItem<Vec<u8>>>,
-    output_text: bool,
+    pub options: TunnelRelayOptions,
 }
 
 struct RelayEntity {
@@ -186,7 +233,7 @@ pub fn connect_stream<I, O, Step, E, F>(
     t: &mut Activation,
     i: I,
     o: O,
-    output_text: bool,
+    options: TunnelRelayOptions,
     step: Step,
     initial_state: E,
     mut f: F,
@@ -199,7 +246,7 @@ pub fn connect_stream<I, O, Step, E, F>(
 {
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
-    let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text).unwrap();
+    let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), options).unwrap();
     let main_entity = t.create(during::entity(initial_state).on_asserted(move |state, t, a: rpc::Result| {
         match a {
             rpc::Result::Ok(rpc::Ok { value }) =>
@@ -232,13 +279,13 @@ macro_rules! dump_membranes { ($e:expr) => { tracing::trace!("membranes: {:#?}",
 // macro_rules! dump_membranes { ($e:expr) => { (); } }
 
 /// Main entry point for stdio-based Syndicate services.
-pub async fn stdio_service<F>(f: F) -> !
+pub async fn stdio_service<F>(f: F, options: TunnelRelayOptions) -> !
 where
     F: 'static + Send + FnOnce(&mut Activation) -> Result<Arc<Cap>, ActorError>
 {
     let result = Actor::top(None, move |t| {
         let service = f(t)?;
-        Ok(TunnelRelay::stdio_service(t, service))
+        Ok(TunnelRelay::stdio_service(t, service, options))
     }).await;
 
     // Because we're currently using tokio::io::stdin(), which can prevent shutdown of the
@@ -273,13 +320,13 @@ where
 }
 
 impl TunnelRelay {
-    pub fn stdio_service(t: &mut Activation, service: Arc<Cap>) -> () {
+    pub fn stdio_service(t: &mut Activation, service: Arc<Cap>, options: TunnelRelayOptions) -> () {
         TunnelRelay::run(t,
                          Input::Bytes(Box::pin(tokio::io::stdin())),
                          Output::Bytes(Box::pin(tokio::io::stdout())),
                          Some(service),
                          None,
-                         false);
+                         options);
     }
 
     pub fn run(
@@ -288,9 +335,9 @@ impl TunnelRelay {
         o: Output,
         initial_ref: Option<Arc<Cap>>,
         initial_oid: Option<sturdy::Oid>,
-        output_text: bool,
+        options: TunnelRelayOptions,
     ) -> Option<Arc<Cap>> {
-        let (result, tr_ref, output_rx) = TunnelRelay::_run(t, initial_ref, initial_oid, output_text);
+        let (result, tr_ref, output_rx) = TunnelRelay::_run(t, initial_ref, initial_oid, options);
         t.linked_task(Some(AnyValue::symbol("writer")),
                       output_loop(o, output_rx));
         t.linked_task(Some(AnyValue::symbol("reader")),
@@ -302,7 +349,7 @@ impl TunnelRelay {
         t: &mut Activation,
         initial_ref: Option<Arc<Cap>>,
         initial_oid: Option<sturdy::Oid>,
-        output_text: bool,
+        options: TunnelRelayOptions,
     ) -> (Option<Arc<Cap>>, Arc<Mutex<Option<TunnelRelay>>>, UnboundedReceiver<LoanedItem<Vec<u8>>>) {
         let (output_tx, output_rx) = unbounded_channel();
         let tr_ref = Arc::new(Mutex::new(None));
@@ -312,7 +359,7 @@ impl TunnelRelay {
         let mut tr = TunnelRelay {
             self_ref: Arc::clone(&tr_ref),
             output: output_tx,
-            output_text,
+            options,
             inbound_assertions: Map::new(),
             outbound_assertions: Map::new(),
             membranes: Membranes {
@@ -329,6 +376,13 @@ impl TunnelRelay {
         let result = initial_oid.map(
             |io| Arc::clone(&tr.membranes.import_oid(t, &tr_ref, io.0).inc_ref().obj));
         dump_membranes!(tr.membranes);
+        t.pre_commit(tr.action(move |t, tr| {
+            if let Some(mut handler) = tr.options.extension_handler.take() {
+                handler.start(t, tr)?;
+                tr.options.extension_handler = Some(handler);
+            }
+            Ok(())
+        }));
         *tr_ref.lock() = Some(tr);
         t.add_exit_hook(&self_entity);
         (result, tr_ref, output_rx)
@@ -338,7 +392,7 @@ impl TunnelRelay {
         let mut src = BytesBinarySource::new(&bs);
         match src.peek() {
             Ok(Some(v)) => if v >= 128 {
-                self.output_text = false;
+                self.options.output_text = false;
                 let mut r = src.into_packed();
 
                 // Previously there was a "fast path" for Turn packets here, but keeping the
@@ -360,7 +414,7 @@ impl TunnelRelay {
                     }
                 }
             } else {
-                self.output_text = true;
+                self.options.output_text = true;
                 let mut r = src.into_text();
                 Ok(self.deserialize_one_from(t, &mut r)?.then(|| r.source.index as usize))
             }
@@ -501,11 +555,20 @@ impl TunnelRelay {
         Ok(())
     }
 
+    pub fn send_extension(&mut self, t: &mut Activation, ext: P::Extension<Arc<Cap>>) -> ActorResult {
+        self.send_packet(&t.account(), 1, &P::Packet::Extension(ext))
+    }
+
     pub fn handle_inbound_packet(&mut self, t: &mut Activation, p: P::Packet<Arc<Cap>>) -> ActorResult {
         tracing::debug!(packet = ?p, "-->");
         match p {
-            P::Packet::Extension(P::Extension { label, fields }) => {
-                tracing::info!(?label, ?fields, "received Extension from peer");
+            P::Packet::Extension(ext) => {
+                if let Some(mut handler) = self.options.extension_handler.take() {
+                    handler.handle_received_extension(t, self, ext)?;
+                    self.options.extension_handler = Some(handler);
+                } else {
+                    tracing::info!(?ext, "received Extension from peer");
+                }
                 Ok(())
             }
             P::Packet::Nop(_b) => {
@@ -518,7 +581,11 @@ impl TunnelRelay {
                                "received Error from peer");
                 Err(b)?
             }
-            P::Packet::Turn(P::Turn(events)) => {
+            P::Packet::Turn(P::Turn(mut events)) => {
+                if let Some(mut handler) = self.options.extension_handler.take() {
+                    handler.handle_received_turn(t, self, &mut events)?;
+                    self.options.extension_handler = Some(handler);
+                }
                 for P::TurnEvent { oid, event } in events {
                     self._handle_inbound_event(t, &oid.0, event)?;
                 }
@@ -587,7 +654,7 @@ impl TunnelRelay {
         let item = p.unparse();
         tracing::debug!(packet = ?item, "<--");
 
-        let bs = if self.output_text {
+        let bs = if self.options.output_text {
             let mut s = TextWriter::encode(&mut self.membranes, &item)?;
             s.push('\n');
             s.into_bytes()
@@ -602,11 +669,7 @@ impl TunnelRelay {
 
     pub fn send_event(&mut self, t: &mut Activation, remote_oid: SignedInteger, event: P::Event<Arc<Cap>>) -> ActorResult {
         if self.pending_outbound.is_empty() {
-            let self_ref = Arc::clone(&self.self_ref);
-            t.pre_commit(move |t| {
-                let mut g = self_ref.lock();
-                let tr = g.as_mut().expect("initialized");
-
+            t.pre_commit(self.action(move |t, tr| {
                 let events = std::mem::take(&mut tr.pending_outbound);
                 // Avoid a .clone() of events by putting it into a packet and then *getting it back out again*
                 let count = events.len();
@@ -618,10 +681,22 @@ impl TunnelRelay {
                     tr.outbound_event_bookkeeping(t, oid.0, &event)?;
                 }
                 Ok(())
-            });
+            }));
         }
         self.pending_outbound.push(P::TurnEvent { oid: P::Oid(remote_oid), event });
         Ok(())
+    }
+
+    pub fn action<F: 'static + Send + FnOnce(&mut Activation, &mut Self) -> ActorResult>(
+        &mut self,
+        f: F,
+    ) -> Action {
+        let self_ref = Arc::clone(&self.self_ref);
+        Box::new(move |t| {
+            let mut g = self_ref.lock();
+            let tr = g.as_mut().expect("initialized");
+            f(t, tr)
+        })
     }
 }
 
