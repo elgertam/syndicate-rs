@@ -1,7 +1,7 @@
 [package]
 name = "syndicate-schema-plugin"
 description = "Support for using Preserves Schema with Syndicate macros."
-version = "0.12.0-rc.0"
+version = "0.12.0-rc.1"
 
 authors.workspace = true
 homepage.workspace = true

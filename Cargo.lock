@@ -1965,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate"
-version = "0.44.0-rc.1"
+version = "0.44.0-rc.2"
 dependencies = [
  "blake2",
  "bytes",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-schema-plugin"
-version = "0.12.0-rc.0"
+version = "0.12.0-rc.1"
 dependencies = [
  "lazy_static",
  "preserves",
@@ -2009,7 +2009,7 @@ dependencies = [
 
 [[package]]
 name = "syndicate-server"
-version = "0.51.0-rc.0"
+version = "0.51.0-rc.1"
 dependencies = [
  "chrono",
  "futures",

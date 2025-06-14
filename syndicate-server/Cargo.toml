@@ -1,7 +1,7 @@
 [package]
 name = "syndicate-server"
 description = "Dataspace server."
-version = "0.51.0-rc.0"
+version = "0.51.0-rc.1"
 
 authors.workspace = true
 homepage.workspace = true
