@@ -97,19 +97,19 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
                     enclose!((q) |t| {
                         if let Ok(a) = R::Result::parse(&a) {
                             match a {
-                                R::Result::Error { .. } => {
+                                R::Result::Error(_) => {
                                     ds.assert(t, &rpc::answer(q, a));
                                 }
-                                R::Result::Ok { value } => {
+                                R::Result::Ok(R::Ok { value }) => {
                                     if let Some(next) = value.as_embedded() {
                                         steps_ds.assert(t, &AnyValue::new(
                                             vec![AnyValue::new(i + 1),
                                                  AnyValue::embedded(next.into_owned())]));
                                     } else {
                                         ds.assert(t, &rpc::answer(
-                                            q, R::Result::Error {
+                                            q, R::Result::Error(R::Error {
                                                 error: AnyValue::symbol("invalid-path-step-result"),
-                                            }));
+                                            })));
                                     }
                                 }
                             }
@@ -129,8 +129,8 @@ fn run(t: &mut Activation, ds: Arc<Cap>, route: G::Route) -> ActorResult {
                 let responder_session = r.0;
                 ds.assert(t, &rpc::answer(
                     G::ResolvePath { route },
-                    R::Result::Ok { value: (
-                        G::ResolvedPath { addr, control, responder_session }).unparse() }));
+                    R::Result::Ok(R::Ok { value: (
+                        G::ResolvedPath { addr, control, responder_session }).unparse() })));
                 Ok(())
             }));
 

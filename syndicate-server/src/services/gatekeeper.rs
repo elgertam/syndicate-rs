@@ -3,6 +3,7 @@ use std::sync::Arc;
 use syndicate::actor::*;
 use syndicate::enclose;
 use syndicate::schemas::gatekeeper;
+use syndicate::schemas::rpc as R;
 
 use syndicate_macros::during;
 use syndicate_macros::template;
@@ -51,8 +52,7 @@ fn facet_handle_resolve(
     let mut detail: &'static str = "unsupported";
     if sturdy::take_sturdy_step(t, ds, &a, &mut detail)? { return Ok(()); }
     if noise::take_noise_step(t, ds, &a, &mut detail)? { return Ok(()); }
-    a.observer.assert(t, &gatekeeper::Rejected {
-        detail: AnyValue::symbol(detail),
-    });
+    a.observer.assert(t, &R::Result::Error(R::Error {
+        error: AnyValue::symbol(detail) }));
     Ok(())
 }

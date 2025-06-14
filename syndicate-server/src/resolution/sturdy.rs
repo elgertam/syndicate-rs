@@ -76,18 +76,17 @@ fn await_bind_sturdyref(
                 Err(e) => {
                     tracing::warn!(sturdyref = ?sturdyref.unparse(),
                                    "sturdyref failed validation: {}", e);
-                    observer.assert(t, &gatekeeper::Resolved::Rejected(
-                        gatekeeper::Rejected {
-                            detail: AnyValue::symbol("sturdyref-failed-validation"),
-                        }));
+                    observer.assert(t, &R::Result::Error(R::Error {
+                        error: AnyValue::symbol("sturdyref-failed-validation"),
+                    }));
                 },
                 Ok(target) => {
                     tracing::trace!(sturdyref = ?sturdyref.unparse(),
                                     ?target,
                                     "sturdyref resolved");
-                    observer.assert(t, &gatekeeper::Resolved::Accepted {
-                        responder_session: target,
-                    });
+                    observer.assert(t, &R::Result::Ok(R::Ok {
+                        value: AnyValue::embedded(target),
+                    }));
                 }
             }
             Ok(None)
@@ -108,7 +107,7 @@ pub fn handle_sturdy_path_steps(t: &mut Activation, ds: Arc<Cap>) -> ActorResult
                 if let Some(origin) = origin.as_embedded().map(|r| r.into_owned()) {
                     let observer = Cap::guard(t.create(
                         syndicate::entity(()).on_asserted_facet(
-                            enclose!((origin, parameters) move |_, t, r: gatekeeper::Resolved| {
+                            enclose!((origin, parameters) move |_, t, r: R::Result| {
                                 ds.assert(t, &rpc::answer(
                                     gatekeeper::ResolvePathStep {
                                         origin: origin.clone(),
@@ -117,13 +116,7 @@ pub fn handle_sturdy_path_steps(t: &mut Activation, ds: Arc<Cap>) -> ActorResult
                                             detail: parameters.unparse(),
                                         },
                                     },
-                                    match r {
-                                        gatekeeper::Resolved::Accepted { responder_session } =>
-                                            R::Result::Ok { value: (
-                                                &gatekeeper::ResolvedPathStep(responder_session)).unparse() },
-                                        gatekeeper::Resolved::Rejected(b) =>
-                                            R::Result::Error { error: b.detail },
-                                    }));
+                                    r));
                                 Ok(())
                             }))));
                     origin.assert(t, &gatekeeper::Resolve {

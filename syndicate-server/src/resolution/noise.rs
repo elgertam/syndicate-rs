@@ -71,10 +71,8 @@ pub fn handle_noise_binds(t: &mut Activation, ds: &Arc<Cap>) -> ActorResult {
                 },
                 Err(e) => {
                     if let gatekeeper::BindObserver::Present(o) = observer {
-                        o.assert(t, &gatekeeper::Bound::Rejected(
-                            gatekeeper::Rejected {
-                                detail: AnyValue::new(format!("{}", &e)),
-                            }));
+                        o.assert(t, &R::Result::Error(R::Error {
+                            error: AnyValue::new(format!("{}", &e)) }));
                     }
                     tracing::error!("Invalid noise bind description: {}", e);
                 }
@@ -182,7 +180,7 @@ fn await_bind_noise(
                 let hs = make_handshake(&spec, false)?;
                 let responder_session = Cap::guard(t.create(
                     ResponderState::Introduction{ service, hs }));
-                observer.assert(t, &gatekeeper::Resolved::Accepted { responder_session });
+                observer.assert(t, &R::Result::Ok(R::Ok { value: AnyValue::embedded(responder_session) }));
                 Ok(())
             });
             Ok(())
@@ -486,16 +484,16 @@ fn run_noise_initiator(
     let validated = validate_noise_spec(spec)?;
     let observer = Cap::guard(t.create(
         syndicate::entity(()).on_asserted_facet(
-            enclose!((ds, q) move |_, t, r: gatekeeper::Resolved| {
+            enclose!((ds, q) move |_, t, r: R::Result| {
                 match r {
-                    gatekeeper::Resolved::Rejected(b) => {
-                        ds.assert(t, &rpc::answer(
-                            q.clone(), R::Result::Error {
-                                error: b.detail }));
+                    R::Result::Ok(R::Ok { value }) =>
+                        if let Some(responder_session) = value.as_embedded() {
+                            run_initiator_session(
+                                t, ds.clone(), q.clone(), &validated, responder_session.into_owned())?;
+                        },
+                    _ => {
+                        ds.assert(t, &rpc::answer(q.clone(), r));
                     }
-                    gatekeeper::Resolved::Accepted { responder_session } =>
-                        run_initiator_session(
-                            t, ds.clone(), q.clone(), &validated, responder_session)?,
                 }
                 Ok(())
             }))));
@@ -552,8 +550,8 @@ impl Entity<noise::Packet> for InitiatorState {
                     let ds = ds.clone();
                     let question = question.clone();
                     *self = InitiatorState::Transport(ts);
-                    ds.assert(t, &rpc::answer(question, R::Result::Ok {
-                        value: AnyValue::embedded(peer_service) }));
+                    ds.assert(t, &rpc::answer(question, R::Result::Ok(R::Ok {
+                        value: AnyValue::embedded(peer_service) })));
                 }
             }
             InitiatorState::Transport(ts) => ts.handle_packet(t, p)?,

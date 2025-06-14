@@ -66,11 +66,11 @@ fn run(t: &mut Activation, ds: Arc<Cap>, addr: Tcp) -> ActorResult {
                     let control = Cap::guard(t.create(TransportControl));
                     ds.assert(t, &rpc::answer(
                         G::ConnectTransport { addr: addr.unparse() },
-                        R::Result::Ok { value: (G::ConnectedTransport {
+                        R::Result::Ok(R::Ok { value: (G::ConnectedTransport {
                             addr: addr.unparse(),
                             control,
                             responder_session: peer,
-                        }).unparse() }));
+                        }).unparse() })));
                     Ok(())
                 });
                 Ok(LinkedTaskTermination::KeepFacet)
@@ -79,7 +79,7 @@ fn run(t: &mut Activation, ds: Arc<Cap>, addr: Tcp) -> ActorResult {
                 facet.activate(&account, cause, |t| {
                     ds.assert(t, &rpc::answer(
                         G::ConnectTransport { addr: addr.unparse() },
-                        R::Result::Error { error: AnyValue::symbol(format!("{:?}", e.kind())) }));
+                        R::Result::Error(R::Error { error: AnyValue::symbol(format!("{:?}", e.kind())) })));
                     Ok(())
                 });
                 Ok(LinkedTaskTermination::Normal)

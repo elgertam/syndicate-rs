@@ -7,6 +7,7 @@ use crate::error::Error;
 use crate::error::error;
 use crate::schemas::gatekeeper;
 use crate::schemas::protocol as P;
+use crate::schemas::rpc;
 use crate::schemas::sturdy;
 use crate::trace;
 
@@ -199,10 +200,15 @@ pub fn connect_stream<I, O, Step, E, F>(
     let i = Input::Bytes(Box::pin(i));
     let o = Output::Bytes(Box::pin(o));
     let gatekeeper = TunnelRelay::run(t, i, o, None, Some(sturdy::Oid(0.into())), output_text).unwrap();
-    let main_entity = t.create(during::entity(initial_state).on_asserted(move |state, t, a: gatekeeper::Resolved| {
+    let main_entity = t.create(during::entity(initial_state).on_asserted(move |state, t, a: rpc::Result| {
         match a {
-            gatekeeper::Resolved::Accepted { responder_session } => f(state, t, responder_session),
-            gatekeeper::Resolved::Rejected(r) => Err(error("Resolve rejected", r.detail))?,
+            rpc::Result::Ok(rpc::Ok { value }) =>
+                if let Some(responder_session) = value.as_embedded() {
+                    f(state, t, responder_session.into_owned())
+                } else {
+                    Ok(None)
+                },
+            rpc::Result::Error(rpc::Error { error: r }) => Err(error("Resolve rejected", r))?,
         }
     }));
     let step = gatekeeper::Step::parse(&step.unparse())?;
