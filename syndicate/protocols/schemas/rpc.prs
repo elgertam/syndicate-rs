@@ -8,4 +8,6 @@ Question = <q @request any> .
 Answer = <a @request any @response any> .
 
 # Value. Captures a common "ok-or-error" pattern as seen in e.g. Rust.
-Result = <ok @value any> / <error @error any> .
+Result = Ok / Error .
+Ok = <ok @value any> .
+Error = <error @error any> .
