@@ -109,7 +109,7 @@ pub fn on_message(src: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         #(let #varname_stx: #type_stx = match captures.next() {
                             None => return Ok(()),
                             Some(v) => {
-                                match syndicate::preserves_schema::parse(v) {
+                                match syndicate::preserves_schema::parse(&v) {
                                     Ok(v) => v,
                                     Err(_) => return Ok(()),
                                 }
