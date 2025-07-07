@@ -114,7 +114,7 @@ impl<V: std::cmp::Ord> BTreeBag<V> {
     }
 
     /// Iterates over elements in the bag with non-zero counts.
-    pub fn keys(&self) -> Keys<V, Count> {
+    pub fn keys(&self) -> Keys<'_, V, Count> {
         self.counts.keys()
     }
 
@@ -122,7 +122,7 @@ impl<V: std::cmp::Ord> BTreeBag<V> {
     ///
     /// Note that the `Entry` will be "absent" when `key` has a zero
     /// associated count.
-    pub fn entry(&mut self, key: V) -> Entry<V, Count> {
+    pub fn entry(&mut self, key: V) -> Entry<'_, V, Count> {
         self.counts.entry(key)
     }
 }

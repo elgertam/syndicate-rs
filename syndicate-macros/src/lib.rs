@@ -43,7 +43,7 @@ fn compile_sequence_members(vs: Vec<Value<IOValue>>) -> Vec<TokenStream> {
     }).collect::<Vec<_>>()
 }
 
-fn analyze_symbol(s: &str, allow_binding_and_substitution: bool) -> SymbolVariant {
+fn analyze_symbol(s: &str, allow_binding_and_substitution: bool) -> SymbolVariant<'_> {
     if !allow_binding_and_substitution {
         SymbolVariant::Normal(s)
     } else if s.starts_with("$") {
