@@ -132,7 +132,7 @@ impl Index {
                 true
             }
             bag::Net::PresentToPresent => false,
-            _ => unreachable!(),
+            _ => unreachable!("skeleton::insert net={:?}", net),
         }
     }
 
@@ -160,7 +160,7 @@ impl Index {
                 true
             }
             bag::Net::PresentToPresent => false,
-            _ => unreachable!(),
+            _ => unreachable!("skeleton::remove net={:?}", net),
         }
     }
 
