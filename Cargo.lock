@@ -1576,9 +1576,9 @@ dependencies = [
 
 [[package]]
 name = "preserves"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4665daadaa690fe35d23fb9a378b657a53aee180b618271d33ca8bb526f4818"
+checksum = "37301580193506f8a7d4f3147ab048420216648bd4d6d07fc88533d9218ba122"
 dependencies = [
  "base64",
  "bytemuck",

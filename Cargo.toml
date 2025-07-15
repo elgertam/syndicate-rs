@@ -17,7 +17,7 @@ license = "Apache-2.0"
 edition = "2018"
 
 [workspace.dependencies]
-preserves = "5.0.0-rc.5"
+preserves = "5.0.0-rc.6"
 preserves-schema = "6.0.0-rc.5"
 
 tokio = "1.10"
